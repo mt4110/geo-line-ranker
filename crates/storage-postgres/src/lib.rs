@@ -23,6 +23,16 @@ use storage::{
 };
 use tokio_postgres::{Client, GenericClient, NoTls};
 
+const REQUIRED_READY_TABLES: [&str; 7] = [
+    "schools",
+    "events",
+    "stations",
+    "school_station_links",
+    "user_events",
+    "recommendation_traces",
+    "job_queue",
+];
+
 #[derive(Debug, Clone)]
 pub struct PgRepository {
     database_url: String,
@@ -587,9 +597,28 @@ impl RecommendationRepository for PgRepository {
 
     async fn ready_check(&self) -> Result<()> {
         let client = self.connect().await?;
-        client
-            .query_one("SELECT COUNT(*) AS table_count FROM information_schema.tables WHERE table_schema = 'public'", &[])
-            .await?;
+        let ready_tables = client
+            .query(
+                "SELECT table_name
+                 FROM information_schema.tables
+                 WHERE table_schema = 'public'
+                   AND table_name = ANY($1)",
+                &[&REQUIRED_READY_TABLES.to_vec()],
+            )
+            .await?
+            .into_iter()
+            .map(|row| row.get::<_, String>("table_name"))
+            .collect::<BTreeSet<_>>();
+        let missing_tables = REQUIRED_READY_TABLES
+            .into_iter()
+            .filter(|table_name| !ready_tables.contains(*table_name))
+            .collect::<Vec<_>>();
+        if !missing_tables.is_empty() {
+            anyhow::bail!(
+                "missing required PostgreSQL schema: {}",
+                missing_tables.join(", ")
+            );
+        }
         Ok(())
     }
 
@@ -2392,7 +2421,8 @@ async fn import_event_records(
         imported_ids.push(record.event_id.clone());
     }
 
-    let deactivated_rows = if !deactivate_stale {
+    let skipped_missing_school_deactivation = deactivate_stale && skipped_missing_school > 0;
+    let deactivated_rows = if !deactivate_stale || skipped_missing_school_deactivation {
         0
     } else if imported_ids.is_empty() {
         transaction
@@ -2458,6 +2488,21 @@ async fn import_event_records(
             details: json!({
                 "source_key": source_key,
                 "source_type": source_type
+            }),
+        });
+    }
+    if skipped_missing_school_deactivation {
+        report_entries.push(ImportReportEntry {
+            level: "warn".to_string(),
+            code: format!("{source_type}_skipped_missing_school_deactivation"),
+            message: format!(
+                "Skipped stale {source_type} deactivation because one or more rows referenced missing school_id values."
+            ),
+            row_count: Some(skipped_missing_school),
+            details: json!({
+                "source_key": source_key,
+                "source_type": source_type,
+                "skipped_missing_school": skipped_missing_school
             }),
         });
     }

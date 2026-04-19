@@ -821,17 +821,18 @@ pub async fn run_fetch_command(
     }
 
     let client = build_http_client()?;
-    let robots_txt = fetch_robots_txt(
-        &client,
-        &manifest.allowlist.robots_txt_url,
-        &manifest.allowlist.user_agent,
-    )
-    .await?;
 
     let mut fetched_targets = 0_i64;
     let mut report_count = 0_usize;
 
     let result: Result<()> = async {
+        let robots_txt = fetch_robots_txt(
+            &client,
+            &manifest.allowlist.robots_txt_url,
+            &manifest.allowlist.user_agent,
+        )
+        .await?;
+
         for (index, target) in targets.iter().enumerate() {
             if index > 0 && manifest.allowlist.min_fetch_interval_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(
@@ -1025,10 +1026,16 @@ pub async fn run_parse_command(
     let mut report_count = 0_usize;
     let mut parsed_rows = 0_i64;
     let mut imported_rows = 0_i64;
+    let mut fetched_targets = 0_i64;
     let mut parse_failed_targets = 0_usize;
-    let fetch_logs = load_crawl_fetch_logs(&settings.database_url, crawl_run_id).await?;
 
     let result: Result<()> = async {
+        let fetch_logs = load_crawl_fetch_logs(&settings.database_url, crawl_run_id).await?;
+        fetched_targets = fetch_logs
+            .iter()
+            .filter(|entry| matches!(entry.fetch_status.as_str(), "fetched" | "not_modified"))
+            .count() as i64;
+
         record_parse_report(
             &settings.database_url,
             &mut report_count,
@@ -1160,11 +1167,6 @@ pub async fn run_parse_command(
         Ok(())
     }
     .await;
-
-    let fetched_targets = fetch_logs
-        .iter()
-        .filter(|entry| matches!(entry.fetch_status.as_str(), "fetched" | "not_modified"))
-        .count() as i64;
 
     match result {
         Ok(()) => {
@@ -2827,6 +2829,140 @@ targets:
     }
 
     #[tokio::test]
+    async fn missing_school_rows_do_not_deactivate_existing_crawl_events() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler integration test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(
+                "<html><body><h1>Seaside Missing School Guard</h1><time datetime=\"2026-08-01T10:00:00+09:00\"></time></body></html>"
+                    .to_string(),
+            ),
+            page_two_html: None,
+        };
+        let app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events", get(page_handler))
+            .with_state(state);
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let manifest_path = temp.path().join("missing_school_guard.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: missing-school-guard
+source_name: Missing school guard crawler
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+  is_open_day: true
+targets:
+  - logical_name: missing_school_guard_page
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        run_fetch_command(&settings, &manifest_path).await?;
+        let initial_parse = run_parse_command(&settings, &manifest_path).await?;
+        assert_eq!(initial_parse.imported_rows, 1);
+
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: missing-school-guard
+source_name: Missing school guard crawler
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_missing
+  event_category: open_campus
+  is_open_day: true
+targets:
+  - logical_name: missing_school_guard_page
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        run_fetch_command(&settings, &manifest_path).await?;
+        let guarded_parse = run_parse_command(&settings, &manifest_path).await?;
+        assert_eq!(guarded_parse.imported_rows, 0);
+
+        let source_key = manifest_path.canonicalize()?.display().to_string();
+        let active_titles = client
+            .query(
+                "SELECT title
+                 FROM events
+                 WHERE source_type = 'crawl'
+                   AND source_key = $1
+                   AND is_active = TRUE
+                 ORDER BY title ASC",
+                &[&source_key],
+            )
+            .await?
+            .into_iter()
+            .map(|row| row.get::<_, String>("title"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            active_titles,
+            vec!["Seaside Missing School Guard".to_string()]
+        );
+
+        let warning_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM crawl_parse_reports
+                 WHERE crawl_run_id = $1
+                   AND code = 'crawl_skipped_missing_school_deactivation'",
+                &[&guarded_parse.crawl_run_id],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(warning_count, 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn fetch_and_parse_shibaura_manifest_imports_seeded_school() -> anyhow::Result<()> {
         let database_url = default_database_url();
         let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
@@ -3983,6 +4119,81 @@ targets:
         assert!(health_text.contains("latest_blocked_policy"));
         assert!(health_text.contains("source_maturity: policy_blocked"));
         assert!(health_text.contains("expected_shape: html_heading_page"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn robots_bootstrap_failure_marks_crawl_run_failed() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler integration test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let closed_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let closed_port = closed_listener.local_addr()?.port();
+        drop(closed_listener);
+
+        let manifest_path = temp.path().join("robots_bootstrap_failure.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: robots-bootstrap-failure
+source_name: Robots bootstrap failure crawler
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: robots_bootstrap_failure_page
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = closed_port
+            ),
+        )?;
+
+        let error = run_fetch_command(&settings, &manifest_path)
+            .await
+            .expect_err("robots bootstrap should fail");
+        assert!(
+            error.to_string().contains("failed"),
+            "unexpected fetch error: {error}"
+        );
+
+        let manifest_key = manifest_path.canonicalize()?.display().to_string();
+        let status = client
+            .query_one(
+                "SELECT status
+                 FROM crawl_runs
+                 WHERE manifest_path = $1
+                 ORDER BY id DESC
+                 LIMIT 1",
+                &[&manifest_key],
+            )
+            .await?
+            .get::<_, String>("status");
+        assert_eq!(status, "failed");
 
         Ok(())
     }

@@ -99,7 +99,7 @@ export default function Page() {
       <section className="workspace">
         <div className="toolPanel">
           <div className="toolHeader">
-            <p className="eyebrow">Phase 5 Example</p>
+            <p className="eyebrow">Phase 6 Example</p>
             <h1>Placement-aware ranking</h1>
             <p className="lede">
               Mixed school and event ranking with placement profiles and diversity control.
@@ -162,7 +162,7 @@ export default function Page() {
           />
           <div className="visualMeta">
             <span>{apiBaseUrl}</span>
-            <span>{response?.profile_version.slice(0, 12) ?? "phase5-profile"}</span>
+            <span>{response?.profile_version.slice(0, 12) ?? "phase6-profile"}</span>
           </div>
         </div>
       </section>

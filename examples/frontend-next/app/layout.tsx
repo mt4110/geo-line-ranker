@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "geo-line-ranker example",
-  description: "Minimal Phase 1 frontend for deterministic geo/line ranking."
+  description: "Phase 6 example frontend for deterministic geo/line ranking."
 };
 
 export default function RootLayout({
@@ -17,4 +17,3 @@ export default function RootLayout({
     </html>
   );
 }
-

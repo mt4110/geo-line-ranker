@@ -1,4 +1,8 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use api::{build_app, AppState};
 use axum::{
@@ -16,6 +20,58 @@ fn default_database_url() -> String {
     std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker".to_string()
     })
+}
+
+fn database_url_with_name(database_url: &str, database_name: &str) -> String {
+    let Some((prefix, _)) = database_url.rsplit_once('/') else {
+        return database_url.to_string();
+    };
+    format!("{prefix}/{database_name}")
+}
+
+fn unique_database_name(prefix: &str) -> String {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after unix epoch")
+        .as_nanos();
+    format!("{prefix}_{}_{}", std::process::id(), suffix)
+}
+
+async fn create_empty_database(prefix: &str) -> anyhow::Result<(String, String, String)> {
+    let admin_database_url = database_url_with_name(&default_database_url(), "postgres");
+    let database_name = unique_database_name(prefix);
+    let (client, connection) = tokio_postgres::connect(&admin_database_url, NoTls).await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client
+        .simple_query(&format!("CREATE DATABASE \"{database_name}\""))
+        .await?;
+
+    Ok((
+        admin_database_url,
+        database_url_with_name(&default_database_url(), &database_name),
+        database_name,
+    ))
+}
+
+async fn drop_database(admin_database_url: &str, database_name: &str) -> anyhow::Result<()> {
+    let (client, connection) = tokio_postgres::connect(admin_database_url, NoTls).await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client
+        .simple_query(&format!(
+            "SELECT pg_terminate_backend(pid)
+             FROM pg_stat_activity
+             WHERE datname = '{database_name}'
+               AND pid <> pg_backend_pid()"
+        ))
+        .await?;
+    client
+        .simple_query(&format!("DROP DATABASE IF EXISTS \"{database_name}\""))
+        .await?;
+    Ok(())
 }
 
 fn repo_root() -> PathBuf {
@@ -112,4 +168,57 @@ async fn track_endpoint_persists_events_and_enqueues_jobs() -> anyhow::Result<()
     assert!(queued_job_types.contains(&"refresh_user_affinity_snapshot".to_string()));
 
     Ok(())
+}
+
+#[tokio::test]
+async fn ready_endpoint_requires_application_schema() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_ready").await
+    else {
+        eprintln!("skipping ready integration test because PostgreSQL admin access is unavailable");
+        return Ok(());
+    };
+
+    let test_result = async {
+        let profiles = RankingProfiles::load_from_dir(repo_root().join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("ready response");
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["status"], "not_ready");
+        assert!(payload["database"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("missing required PostgreSQL schema"));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
 }
