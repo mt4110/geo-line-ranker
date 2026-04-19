@@ -1,0 +1,9 @@
+source_id: jp-postal
+source_name: Demo JP postal codes
+manifest_version: 1
+parser_version: jp-postal-v1
+description: Small postal fixture for deterministic import smoke tests.
+files:
+  - logical_name: postal_codes
+    path: ../../fixtures/demo_jp/jp_postal_codes.csv
+    format: csv

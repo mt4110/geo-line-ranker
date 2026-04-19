@@ -1,0 +1,9 @@
+source_id: jp-school-geodata
+source_name: Demo JP school geodata
+manifest_version: 1
+parser_version: jp-school-geodata-v1
+description: Small school geodata fixture for derive and audit tests.
+files:
+  - logical_name: school_geodata
+    path: ../../fixtures/demo_jp/jp_school_geodata.csv
+    format: csv

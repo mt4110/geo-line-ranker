@@ -1,0 +1,30 @@
+[package]
+name = "api"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+api-contracts = { path = "../../crates/api-contracts" }
+axum.workspace = true
+cache = { path = "../../crates/cache" }
+clap.workspace = true
+config = { path = "../../crates/config" }
+domain = { path = "../../crates/domain" }
+observability = { path = "../../crates/observability" }
+openapi = { path = "../../crates/openapi" }
+ranking = { path = "../../crates/ranking" }
+serde_json.workspace = true
+storage = { path = "../../crates/storage" }
+storage-opensearch = { path = "../../crates/storage-opensearch" }
+storage-postgres = { path = "../../crates/storage-postgres" }
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
+
+[dev-dependencies]
+tokio-postgres.workspace = true
+tower.workspace = true

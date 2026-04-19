@@ -1,0 +1,353 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{ensure, Context, Result};
+use reqwest::header::USER_AGENT;
+use sha2::{Digest, Sha256};
+use url::Url;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpFetchRequest<'a> {
+    pub source_id: &'a str,
+    pub logical_name: &'a str,
+    pub url: &'a str,
+    pub user_agent: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedHttpFetch {
+    pub logical_name: String,
+    pub target_url: String,
+    pub final_url: String,
+    pub staged_path: PathBuf,
+    pub checksum_sha256: String,
+    pub size_bytes: u64,
+    pub status_code: u16,
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RobotsDecision {
+    pub allowed: bool,
+    pub matched_rule: Option<String>,
+}
+
+pub fn ensure_allowed_url(raw_url: &str, allowed_domains: &[String]) -> Result<Url> {
+    let url =
+        Url::parse(raw_url).with_context(|| format!("failed to parse target URL {raw_url}"))?;
+    ensure!(
+        matches!(url.scheme(), "http" | "https"),
+        "unsupported URL scheme {} for {}",
+        url.scheme(),
+        raw_url
+    );
+
+    let host = url
+        .host_str()
+        .context("target URL must include a host name")?
+        .to_ascii_lowercase();
+    let is_allowed = allowed_domains.iter().any(|domain| {
+        let domain = domain.trim().trim_start_matches('.').to_ascii_lowercase();
+        host == domain || host.ends_with(&format!(".{domain}"))
+    });
+    ensure!(is_allowed, "host {} is outside the crawler allowlist", host);
+
+    Ok(url)
+}
+
+pub async fn fetch_robots_txt(
+    client: &reqwest::Client,
+    robots_txt_url: &str,
+    user_agent: &str,
+) -> Result<String> {
+    let response = client
+        .get(robots_txt_url)
+        .header(USER_AGENT, user_agent)
+        .send()
+        .await
+        .with_context(|| format!("failed to fetch robots.txt from {robots_txt_url}"))?;
+    ensure!(
+        response.status().is_success(),
+        "robots.txt returned HTTP {} from {}",
+        response.status(),
+        robots_txt_url
+    );
+    response
+        .text()
+        .await
+        .with_context(|| format!("failed to read robots.txt body from {robots_txt_url}"))
+}
+
+pub fn evaluate_robots(robots_txt: &str, user_agent: &str, target_path: &str) -> RobotsDecision {
+    let requested_agent = user_agent.to_ascii_lowercase();
+    let requested_path = if target_path.is_empty() {
+        "/"
+    } else {
+        target_path
+    };
+    let groups = parse_robots_groups(robots_txt);
+
+    let best_specificity = groups
+        .iter()
+        .filter_map(|group| group.match_specificity(&requested_agent))
+        .max()
+        .unwrap_or(0);
+
+    let matching_rules = groups
+        .iter()
+        .filter(|group| group.match_specificity(&requested_agent) == Some(best_specificity))
+        .flat_map(|group| group.rules.iter())
+        .filter(|rule| rule.matches(requested_path))
+        .collect::<Vec<_>>();
+
+    let selected_rule = matching_rules.into_iter().max_by(|left, right| {
+        left.path
+            .len()
+            .cmp(&right.path.len())
+            .then_with(|| left.allow.cmp(&right.allow))
+    });
+
+    match selected_rule {
+        Some(rule) => RobotsDecision {
+            allowed: rule.allow || rule.path.is_empty(),
+            matched_rule: Some(format!(
+                "{}:{}",
+                if rule.allow { "allow" } else { "disallow" },
+                rule.path
+            )),
+        },
+        None => RobotsDecision {
+            allowed: true,
+            matched_rule: None,
+        },
+    }
+}
+
+pub async fn fetch_to_raw(
+    client: &reqwest::Client,
+    request: &HttpFetchRequest<'_>,
+    raw_root: impl AsRef<Path>,
+) -> Result<PreparedHttpFetch> {
+    let response = client
+        .get(request.url)
+        .header(USER_AGENT, request.user_agent)
+        .send()
+        .await
+        .with_context(|| format!("failed to fetch {}", request.url))?;
+    ensure!(
+        response.status().is_success(),
+        "fetch returned HTTP {} for {}",
+        response.status(),
+        request.url
+    );
+
+    let status_code = response.status().as_u16();
+    let final_url = response.url().to_string();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let bytes = response
+        .bytes()
+        .await
+        .with_context(|| format!("failed to read response body from {}", request.url))?;
+    let checksum_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let size_bytes = bytes.len() as u64;
+
+    let staged_dir = raw_root
+        .as_ref()
+        .join(request.source_id)
+        .join(&checksum_sha256[..12]);
+    fs::create_dir_all(&staged_dir)
+        .with_context(|| format!("failed to create {}", staged_dir.display()))?;
+    let staged_path = staged_dir.join(format!("{}.html", sanitize_name(request.logical_name)));
+    if !staged_path.exists() {
+        fs::write(&staged_path, &bytes)
+            .with_context(|| format!("failed to stage {}", staged_path.display()))?;
+    }
+
+    Ok(PreparedHttpFetch {
+        logical_name: request.logical_name.to_string(),
+        target_url: request.url.to_string(),
+        final_url,
+        staged_path,
+        checksum_sha256,
+        size_bytes,
+        status_code,
+        content_type,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RobotsGroup {
+    user_agents: Vec<String>,
+    rules: Vec<RobotsRule>,
+}
+
+impl RobotsGroup {
+    fn match_specificity(&self, requested_agent: &str) -> Option<usize> {
+        self.user_agents
+            .iter()
+            .filter_map(|agent| {
+                if agent == "*" {
+                    Some(0)
+                } else if requested_agent == agent
+                    || requested_agent.starts_with(agent)
+                    || requested_agent.contains(agent)
+                {
+                    Some(agent.len())
+                } else {
+                    None
+                }
+            })
+            .max()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RobotsRule {
+    allow: bool,
+    path: String,
+}
+
+impl RobotsRule {
+    fn matches(&self, requested_path: &str) -> bool {
+        self.path.is_empty() || requested_path.starts_with(&self.path)
+    }
+}
+
+fn parse_robots_groups(input: &str) -> Vec<RobotsGroup> {
+    let mut groups = Vec::new();
+    let mut current_agents = Vec::new();
+    let mut current_rules = Vec::new();
+    let mut saw_rule = false;
+
+    for raw_line in input.lines() {
+        let line = raw_line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            if !current_agents.is_empty() || !current_rules.is_empty() {
+                groups.push(RobotsGroup {
+                    user_agents: std::mem::take(&mut current_agents),
+                    rules: std::mem::take(&mut current_rules),
+                });
+                saw_rule = false;
+            }
+            continue;
+        }
+
+        if let Some(value) = split_directive(line, "user-agent") {
+            if saw_rule && !current_agents.is_empty() {
+                groups.push(RobotsGroup {
+                    user_agents: std::mem::take(&mut current_agents),
+                    rules: std::mem::take(&mut current_rules),
+                });
+                saw_rule = false;
+            }
+            current_agents.push(value.to_ascii_lowercase());
+            continue;
+        }
+
+        if let Some(value) = split_directive(line, "allow") {
+            current_rules.push(RobotsRule {
+                allow: true,
+                path: value.to_string(),
+            });
+            saw_rule = true;
+            continue;
+        }
+
+        if let Some(value) = split_directive(line, "disallow") {
+            current_rules.push(RobotsRule {
+                allow: false,
+                path: value.to_string(),
+            });
+            saw_rule = true;
+        }
+    }
+
+    if !current_agents.is_empty() || !current_rules.is_empty() {
+        groups.push(RobotsGroup {
+            user_agents: current_agents,
+            rules: current_rules,
+        });
+    }
+
+    groups
+}
+
+fn split_directive<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let (left, right) = line.split_once(':')?;
+    left.trim()
+        .eq_ignore_ascii_case(name)
+        .then_some(right.trim())
+}
+
+fn sanitize_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
+            _ => '_',
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_allowed_url, evaluate_robots};
+
+    #[test]
+    fn allowlist_accepts_matching_subdomain() {
+        let url = ensure_allowed_url(
+            "https://events.example.com/open-campus",
+            &[String::from("example.com")],
+        )
+        .expect("allowed URL");
+
+        assert_eq!(url.host_str(), Some("events.example.com"));
+    }
+
+    #[test]
+    fn allowlist_rejects_outside_domain() {
+        let error = ensure_allowed_url(
+            "https://example.net/open-campus",
+            &[String::from("example.com")],
+        )
+        .expect_err("outside domain");
+
+        assert!(error.to_string().contains("outside the crawler allowlist"));
+    }
+
+    #[test]
+    fn robots_blocks_disallowed_path() {
+        let robots = r#"
+User-agent: *
+Disallow: /private
+"#;
+
+        let decision = evaluate_robots(robots, "geo-line-ranker-bot/0.1", "/private/feed");
+
+        assert!(!decision.allowed);
+        assert_eq!(decision.matched_rule.as_deref(), Some("disallow:/private"));
+    }
+
+    #[test]
+    fn robots_prefers_more_specific_allow_rule() {
+        let robots = r#"
+User-agent: *
+Disallow: /events
+Allow: /events/open-campus
+"#;
+
+        let decision = evaluate_robots(robots, "geo-line-ranker-bot/0.1", "/events/open-campus");
+
+        assert!(decision.allowed);
+        assert_eq!(
+            decision.matched_rule.as_deref(),
+            Some("allow:/events/open-campus")
+        );
+    }
+}

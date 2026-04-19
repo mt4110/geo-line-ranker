@@ -1,0 +1,282 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "openapi",
+    "description": "",
+    "license": {
+      "name": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "healthz_doc",
+        "responses": {
+          "200": {
+            "description": "liveness probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "readyz_doc",
+        "responses": {
+          "200": {
+            "description": "readiness probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/recommendations": {
+      "post": {
+        "tags": [
+          "recommendations"
+        ],
+        "operationId": "recommend_doc",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecommendationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "deterministic recommendations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/track": {
+      "post": {
+        "tags": [
+          "tracking"
+        ],
+        "operationId": "track_doc",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "accepted tracking event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ReadyResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "database",
+          "cache"
+        ],
+        "properties": {
+          "cache": {
+            "type": "string"
+          },
+          "database": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "RecommendationRequest": {
+        "type": "object",
+        "required": [
+          "target_station_id"
+        ],
+        "properties": {
+          "debug": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "placement": {
+            "type": "string"
+          },
+          "target_station_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "RecommendationResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "explanation",
+          "score_breakdown",
+          "fallback_stage",
+          "profile_version",
+          "algorithm_version"
+        ],
+        "properties": {
+          "algorithm_version": {
+            "type": "string"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "fallback_stage": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecommendationItemDto"
+            }
+          },
+          "profile_version": {
+            "type": "string"
+          },
+          "score_breakdown": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScoreComponentDto"
+            }
+          }
+        }
+      },
+      "TrackRequest": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "event_kind"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "event_kind": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "payload": {
+            "type": "object",
+            "nullable": true
+          },
+          "school_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "target_station_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
+      },
+      "TrackResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "event_id",
+          "queued_jobs"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queued_jobs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "System status endpoints"
+    },
+    {
+      "name": "recommendations",
+      "description": "Deterministic recommendation endpoints"
+    },
+    {
+      "name": "tracking",
+      "description": "Append-only user event tracking"
+    }
+  ]
+}

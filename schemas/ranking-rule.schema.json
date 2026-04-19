@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Placement ranking rule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "neighbor_max_hops",
+    "neighbor_same_line_bonus",
+    "mixed_ranking",
+    "diversity"
+  ],
+  "properties": {
+    "neighbor_max_hops": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "neighbor_same_line_bonus": {
+      "type": "number",
+      "minimum": 0
+    },
+    "mixed_ranking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled_content_kinds",
+        "featured_event_bonus",
+        "event_priority_weight"
+      ],
+      "properties": {
+        "enabled_content_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["school", "event", "article"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "score_boosts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "school": { "type": "number" },
+            "event": { "type": "number" },
+            "article": { "type": "number" }
+          }
+        },
+        "featured_event_bonus": {
+          "type": "number",
+          "minimum": 0
+        },
+        "event_priority_weight": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "diversity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "same_school_cap",
+        "same_group_cap"
+      ],
+      "properties": {
+        "same_school_cap": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "same_group_cap": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_kind_max_ratio": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "school": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "event": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "article": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

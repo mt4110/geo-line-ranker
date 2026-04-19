@@ -1,0 +1,17 @@
+[package]
+name = "compatibility-tests"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+config = { path = "../../crates/config" }
+domain = { path = "../../crates/domain" }
+geo = { path = "../../crates/geo" }
+ranking = { path = "../../crates/ranking" }
+serde_json.workspace = true
+storage-opensearch = { path = "../../crates/storage-opensearch" }
+test-support = { path = "../../crates/test-support" }
+tokio.workspace = true

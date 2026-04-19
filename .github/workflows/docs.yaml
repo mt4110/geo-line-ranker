@@ -1,0 +1,22 @@
+name: docs
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+jobs:
+  verify-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Dump OpenAPI
+        run: cargo run -p cli -- dump-openapi
+      - name: Check docs files
+        run: |
+          test -f README.md
+          test -f README_JA.md
+          test -f docs/QUICKSTART.md
+          test -f docs/ARCHITECTURE.md
+

@@ -1,0 +1,10 @@
+/target
+/.env
+/.storage/raw
+/.storage/tmp
+.next/
+node_modules
+dist
+coverage
+.DS_Store
+docs/NoCommit_*

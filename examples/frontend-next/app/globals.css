@@ -1,0 +1,287 @@
+:root {
+  color-scheme: light;
+  --background: #f5f7f4;
+  --surface: #ffffff;
+  --surface-soft: #edf4ef;
+  --ink: #161b16;
+  --muted: #5b655c;
+  --line: #d8dfd8;
+  --accent: #0f8b6d;
+  --accent-soft: #d4efe7;
+  --danger: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--background);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  min-height: 100vh;
+}
+
+main {
+  width: min(1200px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 48px;
+}
+
+.shell {
+  display: grid;
+  gap: 24px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+.toolPanel,
+.visualPanel,
+.results {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.toolPanel {
+  padding: 24px;
+  display: grid;
+  gap: 24px;
+}
+
+.toolHeader {
+  display: grid;
+  gap: 10px;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 34px;
+  line-height: 1.1;
+}
+
+h2 {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.lede {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.requestForm {
+  display: grid;
+  gap: 16px;
+}
+
+.requestForm label {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.requestForm input,
+.requestForm select,
+.requestForm button {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font: inherit;
+}
+
+.requestForm input,
+.requestForm select {
+  padding: 0 14px;
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.requestForm button {
+  border: 0;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.requestForm button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.visualPanel {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  overflow: hidden;
+}
+
+.visualImage {
+  width: 100%;
+  height: 100%;
+  min-height: 340px;
+  object-fit: cover;
+  display: block;
+}
+
+.visualMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  background: var(--surface);
+}
+
+.results {
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+}
+
+.resultsHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.resultsHeader p,
+.emptyText {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.summaryLine {
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+
+.itemList {
+  display: grid;
+  gap: 18px;
+}
+
+.itemRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 16px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.itemRow:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.itemName {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.itemHeading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.kindBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.itemMeta,
+.itemExplanation,
+.breakdownList li p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.itemScore {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.itemExplanation {
+  grid-column: 1 / -1;
+}
+
+.breakdownList {
+  grid-column: 1 / -1;
+  list-style: none;
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+}
+
+.breakdownList li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.breakdownList li:last-child {
+  border-bottom: 0;
+}
+
+.breakdownList span {
+  font-weight: 600;
+}
+
+.errorText {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .resultsHeader {
+    display: grid;
+  }
+}

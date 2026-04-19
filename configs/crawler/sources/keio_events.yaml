@@ -1,0 +1,30 @@
+source_id: keio-events
+source_name: Keio University events listing
+source_maturity: policy_blocked
+parser_key: keio_event_listing_v1
+expected_shape: html_keio_event_cards
+description: Provisional real-domain allowlist crawler manifest for the public Keio University events listing pages.
+allowlist:
+  allowed_domains:
+    - www.keio.ac.jp
+  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/your-org/geo-line-ranker)
+  min_fetch_interval_ms: 1000
+  live_fetch_enabled: false
+  live_fetch_block_reason: As of 2026-04-19, https://www.keio.ac.jp/robots.txt returned HTTP 404. Keep this manifest parser-ready but do not run live fetch until an official robots URL is confirmed.
+  robots_txt_url: https://www.keio.ac.jp/robots.txt
+  terms_url: https://www.keio.ac.jp/ja/about-this-site/
+  terms_note: Manual review required before production use. The current site policy is published at https://www.keio.ac.jp/ja/about-this-site/ and the privacy policy at https://www.keio.ac.jp/ja/privacy-policy/.
+defaults:
+  school_id: school_keio
+  event_category: general
+  is_open_day: false
+  is_featured: false
+  priority_weight: 0.1
+  placement_tags:
+    - search
+    - detail
+targets:
+  - logical_name: event_page_1
+    url: https://www.keio.ac.jp/ja/event/
+  - logical_name: event_page_2
+    url: https://www.keio.ac.jp/ja/event/?page=2

@@ -1,0 +1,26 @@
+source_id: custom-example
+source_name: Custom example crawler source
+source_maturity: parser_only
+parser_key: single_title_page_v1
+expected_shape: html_heading_page
+description: Example allowlist crawler manifest that extracts a single heading from IANA's example-domains page.
+allowlist:
+  allowed_domains:
+    - www.iana.org
+  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/your-org/geo-line-ranker)
+  min_fetch_interval_ms: 1000
+  robots_txt_url: https://www.iana.org/robots.txt
+  terms_url: https://www.iana.org/privacy-policy
+  terms_note: Manual review required before production use. Keep this manifest allowlist-only.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+  is_open_day: true
+  is_featured: false
+  priority_weight: 0.2
+  placement_tags:
+    - home
+    - detail
+targets:
+  - logical_name: example_domains
+    url: https://www.iana.org/help/example-domains

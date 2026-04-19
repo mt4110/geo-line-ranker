@@ -1,0 +1,21 @@
+[package]
+name = "storage-postgres"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+csv.workspace = true
+domain = { path = "../domain" }
+generic-csv = { path = "../connectors/generic-csv" }
+jp-postal = { path = "../connectors/jp-postal" }
+jp-rail = { path = "../connectors/jp-rail" }
+jp-school = { path = "../connectors/jp-school" }
+serde.workspace = true
+serde_json.workspace = true
+storage = { path = "../storage" }
+tokio.workspace = true
+tokio-postgres.workspace = true
+tracing.workspace = true

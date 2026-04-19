@@ -1,0 +1,15 @@
+[package]
+name = "ranking"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+config = { path = "../config" }
+domain = { path = "../domain" }
+geo = { path = "../geo" }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+test-support = { path = "../test-support" }

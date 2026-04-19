@@ -1,0 +1,45 @@
+set dotenv-load := true
+
+fmt:
+  cargo fmt --all
+
+lint:
+  cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+test:
+  cargo test --workspace
+
+up:
+  docker compose -f .docker/docker-compose.yaml up -d postgres redis
+
+down:
+  docker compose -f .docker/docker-compose.yaml down
+
+migrate:
+  cargo run -p cli -- migrate
+
+seed:
+  cargo run -p cli -- seed example
+
+generate-demo-jp:
+  cargo run -p cli -- fixtures generate-demo-jp
+
+import-demo-jp:
+  cargo run -p cli -- import jp-rail --manifest storage/sources/jp_rail/example.yaml
+  cargo run -p cli -- import jp-postal --manifest storage/sources/jp_postal/example.yaml
+  cargo run -p cli -- import jp-school-codes --manifest storage/sources/jp_school/example.yaml
+  cargo run -p cli -- import jp-school-geodata --manifest storage/sources/jp_school_geo/example.yaml
+  cargo run -p cli -- derive school-station-links
+
+api:
+  cargo run -p api -- serve
+
+worker:
+  cargo run -p worker -- serve
+
+crawler:
+  cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.yaml
+  cargo run -p crawler -- parse --manifest configs/crawler/sources/custom_example.yaml
+
+crawler-health:
+  cargo run -p crawler -- health --manifest configs/crawler/sources/custom_example.yaml

@@ -1,0 +1,9 @@
+source_id: jp-rail
+source_name: Demo JP rail stations
+manifest_version: 1
+parser_version: jp-rail-v1
+description: Small rail fixture that mirrors the official rail adapter flow.
+files:
+  - logical_name: rail_stations
+    path: ../../fixtures/demo_jp/jp_rail_stations.csv
+    format: csv

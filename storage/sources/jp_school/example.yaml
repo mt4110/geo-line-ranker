@@ -1,0 +1,9 @@
+source_id: jp-school-codes
+source_name: Demo JP school codes
+manifest_version: 1
+parser_version: jp-school-codes-v1
+description: Small school code fixture that stays safe to commit.
+files:
+  - logical_name: school_codes
+    path: ../../fixtures/demo_jp/jp_school_codes.csv
+    format: csv

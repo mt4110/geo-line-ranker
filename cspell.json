@@ -1,0 +1,23 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "axum",
+    "geojson",
+    "linefirst",
+    "ndjson",
+    "openapi",
+    "OpenAPI",
+    "openday",
+    "PostGIS",
+    "serde",
+    "tokio",
+    "utoipa"
+  ],
+  "ignorePaths": [
+    "target",
+    ".next",
+    "package-lock.json"
+  ]
+}
+

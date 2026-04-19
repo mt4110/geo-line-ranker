@@ -1,0 +1,17 @@
+neighbor_max_hops: 3
+neighbor_same_line_bonus: 0.9
+mixed_ranking:
+  enabled_content_kinds:
+    - school
+    - event
+  score_boosts:
+    school: 0.25
+    event: 0.55
+  featured_event_bonus: 0.3
+  event_priority_weight: 0.85
+diversity:
+  same_school_cap: 1
+  same_group_cap: 2
+  content_kind_max_ratio:
+    school: 0.67
+    event: 0.67

@@ -1,0 +1,7 @@
+{
+  "target_station_id": "st_tamachi",
+  "placement": "home",
+  "limit": 3,
+  "user_id": "demo-user-1",
+  "debug": false
+}
