@@ -7,7 +7,7 @@ description: Provisional real-domain allowlist crawler manifest for the public K
 allowlist:
   allowed_domains:
     - www.keio.ac.jp
-  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/your-org/geo-line-ranker)
+  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/mt4110/geo-line-ranker)
   min_fetch_interval_ms: 1000
   live_fetch_enabled: false
   live_fetch_block_reason: As of 2026-04-19, https://www.keio.ac.jp/robots.txt returned HTTP 404. Keep this manifest parser-ready but do not run live fetch until an official robots URL is confirmed.

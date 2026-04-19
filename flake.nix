@@ -5,20 +5,29 @@
 
   outputs = { self, nixpkgs }:
     let
-      system = "aarch64-darwin";
-      pkgs = import nixpkgs { inherit system; };
+      supportedSystems = [
+        "aarch64-darwin"
+        "x86_64-darwin"
+        "aarch64-linux"
+        "x86_64-linux"
+      ];
     in
     {
-      devShells.${system}.default = pkgs.mkShell {
-        buildInputs = with pkgs; [
-          cargo
-          clippy
-          nodejs_22
-          pkg-config
-          rustc
-          rustfmt
-        ];
-      };
+      devShells = nixpkgs.lib.genAttrs supportedSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          default = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              cargo
+              clippy
+              nodejs_22
+              pkg-config
+              rustc
+              rustfmt
+            ];
+          };
+        });
     };
 }
-

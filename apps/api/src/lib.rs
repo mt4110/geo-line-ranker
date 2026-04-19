@@ -271,61 +271,19 @@ async fn track(
     }
 
     let event = request.clone().into();
-    let event_id = match state.repository.record_user_event(&event).await {
+    let jobs = build_tracking_jobs(&state, &event);
+    let queued_jobs = jobs
+        .iter()
+        .map(|job| job.job_type.as_str().to_string())
+        .collect::<Vec<_>>();
+    let event_id = match state
+        .repository
+        .record_user_event_with_jobs(&event, &jobs)
+        .await
+    {
         Ok(event_id) => event_id,
         Err(error) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     };
-
-    let mut queued_jobs = Vec::new();
-    if event.event_kind.is_school_affecting() && event.school_id.is_some() {
-        if let Err(error) = enqueue_job(
-            &state,
-            JobType::RefreshPopularitySnapshot,
-            serde_json::json!({}),
-            &mut queued_jobs,
-        )
-        .await
-        {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-        }
-
-        if let Err(error) = enqueue_job(
-            &state,
-            JobType::RefreshUserAffinitySnapshot,
-            serde_json::json!({ "user_id": event.user_id }),
-            &mut queued_jobs,
-        )
-        .await
-        {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-        }
-
-        if state.cache.enabled() {
-            if let Err(error) = enqueue_job(
-                &state,
-                JobType::InvalidateRecommendationCache,
-                serde_json::json!({ "scope": "recommendations" }),
-                &mut queued_jobs,
-            )
-            .await
-            {
-                return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-            }
-        }
-
-        if state.candidate_retrieval_mode.is_full() {
-            if let Err(error) = enqueue_job(
-                &state,
-                JobType::SyncCandidateProjection,
-                serde_json::json!({ "scope": "full_rebuild" }),
-                &mut queued_jobs,
-            )
-            .await
-            {
-                return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-            }
-        }
-    }
 
     (
         StatusCode::ACCEPTED,
@@ -354,22 +312,41 @@ async fn record_trace(
     repository.record_trace(&trace).await
 }
 
-async fn enqueue_job(
-    state: &AppState,
-    job_type: JobType,
-    payload: serde_json::Value,
-    queued_jobs: &mut Vec<String>,
-) -> anyhow::Result<()> {
-    state
-        .repository
-        .enqueue_job(&NewJob {
-            job_type,
-            payload,
+fn build_tracking_jobs(state: &AppState, event: &domain::UserEvent) -> Vec<NewJob> {
+    if !event.event_kind.is_school_affecting() || event.school_id.is_none() {
+        return Vec::new();
+    }
+
+    let mut jobs = vec![
+        NewJob {
+            job_type: JobType::RefreshPopularitySnapshot,
+            payload: serde_json::json!({}),
             max_attempts: state.worker_max_attempts,
-        })
-        .await?;
-    queued_jobs.push(job_type.as_str().to_string());
-    Ok(())
+        },
+        NewJob {
+            job_type: JobType::RefreshUserAffinitySnapshot,
+            payload: serde_json::json!({ "user_id": event.user_id.clone() }),
+            max_attempts: state.worker_max_attempts,
+        },
+    ];
+
+    if state.cache.enabled() {
+        jobs.push(NewJob {
+            job_type: JobType::InvalidateRecommendationCache,
+            payload: serde_json::json!({ "scope": "recommendations" }),
+            max_attempts: state.worker_max_attempts,
+        });
+    }
+
+    if state.candidate_retrieval_mode.is_full() {
+        jobs.push(NewJob {
+            job_type: JobType::SyncCandidateProjection,
+            payload: serde_json::json!({ "scope": "full_rebuild" }),
+            max_attempts: state.worker_max_attempts,
+        });
+    }
+
+    jobs
 }
 
 fn error_response(status: StatusCode, message: String) -> axum::response::Response {

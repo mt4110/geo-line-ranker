@@ -7,7 +7,7 @@ description: Real-domain allowlist crawler manifest for the University of Tokyo 
 allowlist:
   allowed_domains:
     - www.u-tokyo.ac.jp
-  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/your-org/geo-line-ranker)
+  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/mt4110/geo-line-ranker)
   min_fetch_interval_ms: 1000
   robots_txt_url: https://www.u-tokyo.ac.jp/robots.txt
   terms_url: https://www.u-tokyo.ac.jp/ja/general/policy.html

@@ -21,7 +21,7 @@ use storage::{
     ClaimedJob, JobType, NewJob, RecommendationRepository, RecommendationTrace,
     SnapshotRefreshStats,
 };
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{Client, GenericClient, NoTls};
 
 #[derive(Debug, Clone)]
 pub struct PgRepository {
@@ -45,6 +45,21 @@ impl PgRepository {
             }
         });
         Ok(client)
+    }
+
+    pub async fn record_user_event_with_jobs(
+        &self,
+        event: &UserEvent,
+        jobs: &[NewJob],
+    ) -> Result<i64> {
+        let mut client = self.connect().await?;
+        let transaction = client.transaction().await?;
+        let event_id = insert_user_event(&transaction, event).await?;
+        for job in jobs {
+            insert_job(&transaction, job).await?;
+        }
+        transaction.commit().await?;
+        Ok(event_id)
     }
 
     pub async fn load_station(&self, station_id: &str) -> Result<Option<Station>> {
@@ -335,6 +350,46 @@ impl PgRepository {
             area_affinity_snapshots,
         })
     }
+}
+
+async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEvent) -> Result<i64> {
+    let row = client
+        .query_one(
+            "INSERT INTO user_events (
+                user_id,
+                school_id,
+                event_type,
+                event_id,
+                target_station_id,
+                occurred_at,
+                payload
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id",
+            &[
+                &event.user_id,
+                &event.school_id,
+                &event.event_kind.as_str(),
+                &event.event_id,
+                &event.target_station_id,
+                &event.occurred_at,
+                &event.payload,
+            ],
+        )
+        .await?;
+    Ok(row.get("id"))
+}
+
+async fn insert_job(client: &(impl GenericClient + Sync), job: &NewJob) -> Result<i64> {
+    let row = client
+        .query_one(
+            "INSERT INTO job_queue (job_type, payload, max_attempts)
+             VALUES ($1, $2, $3)
+             RETURNING id",
+            &[&job.job_type.as_str(), &job.payload, &job.max_attempts],
+        )
+        .await?;
+    Ok(row.get("id"))
 }
 
 #[derive(Debug, Clone)]
@@ -734,44 +789,12 @@ impl RecommendationRepository for PgRepository {
 
     async fn record_user_event(&self, event: &UserEvent) -> Result<i64> {
         let client = self.connect().await?;
-        let row = client
-            .query_one(
-                "INSERT INTO user_events (
-                    user_id,
-                    school_id,
-                    event_type,
-                    event_id,
-                    target_station_id,
-                    occurred_at,
-                    payload
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                RETURNING id",
-                &[
-                    &event.user_id,
-                    &event.school_id,
-                    &event.event_kind.as_str(),
-                    &event.event_id,
-                    &event.target_station_id,
-                    &event.occurred_at,
-                    &event.payload,
-                ],
-            )
-            .await?;
-        Ok(row.get("id"))
+        insert_user_event(&client, event).await
     }
 
     async fn enqueue_job(&self, job: &NewJob) -> Result<i64> {
         let client = self.connect().await?;
-        let row = client
-            .query_one(
-                "INSERT INTO job_queue (job_type, payload, max_attempts)
-                 VALUES ($1, $2, $3)
-                 RETURNING id",
-                &[&job.job_type.as_str(), &job.payload, &job.max_attempts],
-            )
-            .await?;
-        Ok(row.get("id"))
+        insert_job(&client, job).await
     }
 
     async fn claim_next_job(&self, worker_id: &str) -> Result<Option<ClaimedJob>> {

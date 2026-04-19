@@ -142,6 +142,65 @@
           }
         }
       },
+      "RecommendationItemDto": {
+        "type": "object",
+        "required": [
+          "content_kind",
+          "content_id",
+          "school_id",
+          "school_name",
+          "primary_station_id",
+          "primary_station_name",
+          "line_name",
+          "score",
+          "explanation",
+          "score_breakdown"
+        ],
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "content_kind": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "event_title": {
+            "type": "string",
+            "nullable": true
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "line_name": {
+            "type": "string"
+          },
+          "primary_station_id": {
+            "type": "string"
+          },
+          "primary_station_name": {
+            "type": "string"
+          },
+          "school_id": {
+            "type": "string"
+          },
+          "school_name": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          },
+          "score_breakdown": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScoreComponentDto"
+            }
+          }
+        }
+      },
       "RecommendationRequest": {
         "type": "object",
         "required": [
@@ -202,6 +261,30 @@
             "items": {
               "$ref": "#/components/schemas/ScoreComponentDto"
             }
+          }
+        }
+      },
+      "ScoreComponentDto": {
+        "type": "object",
+        "required": [
+          "feature",
+          "value",
+          "reason"
+        ],
+        "properties": {
+          "details": {
+            "type": "object",
+            "nullable": true
+          },
+          "feature": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number",
+            "format": "double"
           }
         }
       },

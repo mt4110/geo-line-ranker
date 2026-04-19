@@ -1,6 +1,6 @@
 use api_contracts::{
-    HealthResponse, ReadyResponse, RecommendationRequest, RecommendationResponse, TrackRequest,
-    TrackResponse,
+    HealthResponse, ReadyResponse, RecommendationItemDto, RecommendationRequest,
+    RecommendationResponse, ScoreComponentDto, TrackRequest, TrackResponse,
 };
 use utoipa::OpenApi;
 
@@ -57,8 +57,10 @@ fn track_doc() {}
         schemas(
             HealthResponse,
             ReadyResponse,
+            RecommendationItemDto,
             RecommendationRequest,
             RecommendationResponse,
+            ScoreComponentDto,
             TrackRequest,
             TrackResponse
         )
