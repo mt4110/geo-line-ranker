@@ -1764,7 +1764,7 @@ fn collect_aoyama_school_tour_events(
     );
 
     let mut events = Vec::new();
-    for (label_node, value_node) in labels.into_iter().zip(values.into_iter()) {
+    for (label_node, value_node) in labels.into_iter().zip(values) {
         let sequence_label = normalize_free_text(&extract_joined_text(label_node));
         let raw_date = value_node
             .select(&date_selector)
@@ -2362,7 +2362,7 @@ fn collect_nihon_junior_schedule_entries(
             "nihon_university_junior_info_session_v1 found mismatched dt/dd pairs for {month_label}"
         );
 
-        for (raw_schedule, detail_node) in schedules.into_iter().zip(details.into_iter()) {
+        for (raw_schedule, detail_node) in schedules.into_iter().zip(details) {
             let title = detail_node
                 .select(&title_selector)
                 .next()
