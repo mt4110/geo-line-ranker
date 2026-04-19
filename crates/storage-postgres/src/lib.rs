@@ -2838,7 +2838,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
                     &event.is_featured,
                     &event.priority_weight,
                     &event.starts_at,
-                    &event.normalized_placement_tags(),
+                    &event.normalized_placement_tags()?,
                 ],
             )
             .await?;
@@ -2959,12 +2959,13 @@ struct EventRow {
 }
 
 impl EventRow {
-    fn normalized_placement_tags(&self) -> Vec<String> {
+    fn normalized_placement_tags(&self) -> Result<Vec<String>> {
         self.placement_tags
             .split('|')
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
+            .map(parse_placement_kind)
+            .map(|placement| placement.map(|value| value.as_str().to_string()))
             .collect()
     }
 }

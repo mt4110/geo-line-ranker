@@ -82,7 +82,7 @@ export function createClient(baseUrl: string) {
         throw new Error(`request failed: ${response.status}`);
       }
 
-      return response.json();
+      return (await response.json()) as RecommendationResponse;
     },
 
     async track(input: TrackRequest): Promise<TrackResponse> {
@@ -98,7 +98,7 @@ export function createClient(baseUrl: string) {
         throw new Error(`request failed: ${response.status}`);
       }
 
-      return response.json();
+      return (await response.json()) as TrackResponse;
     }
   };
 }
