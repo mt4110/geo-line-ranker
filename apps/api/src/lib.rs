@@ -131,10 +131,11 @@ async fn recommend(
         {
             Ok(Some(response)) => {
                 cache_hit(cache_key);
-                if let Err(error) = record_trace(
+                record_trace_best_effort(
                     &state.repository,
                     &request,
                     &response,
+                    "cache",
                     build_trace_payload(TracePayloadInput {
                         response_source: "cache",
                         mode: state.candidate_retrieval_mode,
@@ -146,10 +147,7 @@ async fn recommend(
                         neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
                     }),
                 )
-                .await
-                {
-                    return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-                }
+                .await;
                 return (StatusCode::OK, Json(response)).into_response();
             }
             Ok(None) => cache_miss(cache_key),
@@ -231,10 +229,11 @@ async fn recommend(
     };
 
     let response: RecommendationResponse = result.into();
-    if let Err(error) = record_trace(
+    record_trace_best_effort(
         &state.repository,
         &request,
         &response,
+        "fresh",
         build_trace_payload(TracePayloadInput {
             response_source: "fresh",
             mode: state.candidate_retrieval_mode,
@@ -246,10 +245,7 @@ async fn recommend(
             neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
         }),
     )
-    .await
-    {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-    }
+    .await;
 
     if let Some(cache_key) = cache_key {
         if let Err(error) = state.cache.set_json(&cache_key, &response).await {
@@ -317,6 +313,18 @@ async fn record_trace(
         algorithm_version: response.algorithm_version.clone(),
     };
     repository.record_trace(&trace).await
+}
+
+async fn record_trace_best_effort(
+    repository: &PgRepository,
+    request: &RecommendationRequest,
+    response: &RecommendationResponse,
+    response_source: &'static str,
+    trace_payload: serde_json::Value,
+) {
+    if let Err(error) = record_trace(repository, request, response, trace_payload).await {
+        tracing::warn!(response_source, %error, "failed to persist recommendation trace");
+    }
 }
 
 fn build_tracking_jobs(state: &AppState, event: &domain::UserEvent) -> Vec<NewJob> {

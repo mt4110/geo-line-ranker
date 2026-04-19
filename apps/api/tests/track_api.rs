@@ -22,6 +22,10 @@ fn default_database_url() -> String {
     })
 }
 
+fn default_redis_url() -> String {
+    std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string())
+}
+
 fn database_url_with_name(database_url: &str, database_name: &str) -> String {
     let Some((prefix, _)) = database_url.rsplit_once('/') else {
         return database_url.to_string();
@@ -311,6 +315,114 @@ async fn ready_endpoint_requires_application_schema() -> anyhow::Result<()> {
             .as_str()
             .unwrap_or_default()
             .contains("missing required PostgreSQL schema"));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api").await
+    else {
+        eprintln!(
+            "skipping api recommendation trace test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let redis_url = default_redis_url();
+        let cache = RecommendationCache::new(Some(redis_url), 60);
+        if let Err(error) = cache
+            .set_json(
+                "geo-line-ranker:api-trace-probe",
+                &serde_json::json!({ "ok": true }),
+            )
+            .await
+        {
+            eprintln!(
+                "skipping api recommendation trace test because Redis is not reachable: {error}"
+            );
+            return Ok(());
+        }
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+        client
+            .simple_query("DROP TABLE recommendation_traces")
+            .await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache,
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+        let request_body = serde_json::json!({
+            "target_station_id": "st_tamachi",
+            "limit": 3,
+            "placement": "search"
+        })
+        .to_string();
+
+        let first_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.clone()))
+                    .expect("request"),
+            )
+            .await
+            .expect("first recommendation response");
+        assert_eq!(first_response.status(), StatusCode::OK);
+        let first_body = to_bytes(first_response.into_body(), usize::MAX).await?;
+        let first_payload: serde_json::Value = serde_json::from_slice(&first_body)?;
+        assert!(!first_payload["items"]
+            .as_array()
+            .expect("items array")
+            .is_empty());
+
+        let second_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body))
+                    .expect("request"),
+            )
+            .await
+            .expect("second recommendation response");
+        assert_eq!(second_response.status(), StatusCode::OK);
+        let second_body = to_bytes(second_response.into_body(), usize::MAX).await?;
+        let second_payload: serde_json::Value = serde_json::from_slice(&second_body)?;
+        assert!(!second_payload["items"]
+            .as_array()
+            .expect("items array")
+            .is_empty());
 
         Ok(())
     }

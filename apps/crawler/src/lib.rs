@@ -1105,32 +1105,52 @@ pub async fn run_parse_command(
                     collected.extend(records);
                 }
                 Err(error) => {
-                    parse_failed_targets += 1;
-                    record_parse_report(
-                        &settings.database_url,
-                        &mut report_count,
-                        CrawlParseReportEntry {
-                            crawl_run_id,
-                            logical_name: Some(fetch.logical_name.clone()),
-                            level: "error".to_string(),
-                            code: "parse_failed".to_string(),
-                            message: error.to_string(),
-                            parsed_rows: None,
-                            details: json!({
-                                "target_url": fetch.target_url,
-                                "staged_path": staged_path
-                            }),
-                        },
-                    )
-                    .await?;
+                    let message = error.to_string();
+                    if is_zero_event_parse_message(&message) {
+                        record_parse_report(
+                            &settings.database_url,
+                            &mut report_count,
+                            CrawlParseReportEntry {
+                                crawl_run_id,
+                                logical_name: Some(fetch.logical_name.clone()),
+                                level: "warn".to_string(),
+                                code: "parsed_zero_rows".to_string(),
+                                message,
+                                parsed_rows: Some(0),
+                                details: json!({
+                                    "target_url": fetch.target_url,
+                                    "staged_path": staged_path
+                                }),
+                            },
+                        )
+                        .await?;
+                    } else {
+                        parse_failed_targets += 1;
+                        record_parse_report(
+                            &settings.database_url,
+                            &mut report_count,
+                            CrawlParseReportEntry {
+                                crawl_run_id,
+                                logical_name: Some(fetch.logical_name.clone()),
+                                level: "error".to_string(),
+                                code: "parse_failed".to_string(),
+                                message,
+                                parsed_rows: None,
+                                details: json!({
+                                    "target_url": fetch.target_url,
+                                    "staged_path": staged_path
+                                }),
+                            },
+                        )
+                        .await?;
+                    }
                 }
             }
         }
 
-        ensure!(
-            !collected.is_empty(),
-            "no crawler events were parsed successfully"
-        );
+        if collected.is_empty() && parse_failed_targets > 0 {
+            anyhow::bail!("no crawler events were parsed successfully");
+        }
 
         let (deduped, dedupe_reports) = dedupe_events(collected);
         for report in dedupe_reports {
@@ -1499,17 +1519,31 @@ pub async fn run_dry_run_command(
             }
             Err(error) => {
                 let message = error.to_string();
-                parse_errors.push(DiagnosticIssue {
-                    level: "error".to_string(),
-                    code: "parse_failed".to_string(),
-                    message: format!("{}: {}", fetch.logical_name, message),
-                });
-                logical_name_summaries.push(LogicalDryRunSummary {
-                    logical_name: fetch.logical_name.clone(),
-                    parsed_rows: 0,
-                    date_drift_warnings: 0,
-                    parse_error: Some(message),
-                });
+                if is_zero_event_parse_message(&message) {
+                    warnings.push(DiagnosticIssue {
+                        level: "warn".to_string(),
+                        code: "no_events_found".to_string(),
+                        message: format!("{}: {}", fetch.logical_name, message),
+                    });
+                    logical_name_summaries.push(LogicalDryRunSummary {
+                        logical_name: fetch.logical_name.clone(),
+                        parsed_rows: 0,
+                        date_drift_warnings: 0,
+                        parse_error: None,
+                    });
+                } else {
+                    parse_errors.push(DiagnosticIssue {
+                        level: "error".to_string(),
+                        code: "parse_failed".to_string(),
+                        message: format!("{}: {}", fetch.logical_name, message),
+                    });
+                    logical_name_summaries.push(LogicalDryRunSummary {
+                        logical_name: fetch.logical_name.clone(),
+                        parsed_rows: 0,
+                        date_drift_warnings: 0,
+                        parse_error: Some(message),
+                    });
+                }
             }
         }
     }
@@ -1533,7 +1567,7 @@ pub async fn run_dry_run_command(
         .collect::<Vec<_>>();
     let known_school_ids = load_existing_school_ids(&settings.database_url, &school_ids)
         .await
-        .unwrap_or_default();
+        .with_context(|| "failed to load known school ids for dry-run")?;
     let imported_ids = deduped
         .iter()
         .filter(|record| known_school_ids.contains(record.school_id.as_str()))
@@ -1559,7 +1593,7 @@ pub async fn run_dry_run_command(
         &manifest_path.display().to_string(),
     )
     .await
-    .unwrap_or_default();
+    .with_context(|| "failed to load active event ids for dry-run")?;
     let deactivated_rows = if !can_deactivate_stale_rows(&fetch_logs, parse_errors.len()) {
         warnings.push(DiagnosticIssue {
             level: "warn".to_string(),
@@ -2499,6 +2533,19 @@ fn build_date_drift_warning(logical_name: &str, title: &str, details: &Value) ->
         "{} title={} month_label={} detail_url_date={}",
         logical_name, title, month_label, detail_url_date
     ))
+}
+
+fn is_zero_event_parse_message(message: &str) -> bool {
+    [
+        "did not find any event cards",
+        "did not find any usable event rows",
+        "did not find any school-tour rows",
+        "did not find any dated event rows",
+        "did not find any dated session rows",
+        "did not find any schedule entries",
+    ]
+    .iter()
+    .any(|fragment| message.contains(fragment))
 }
 
 async fn load_recent_reason_trend(
@@ -3766,6 +3813,156 @@ targets:
             rows[3].get::<_, String>("title"),
             "ニューヨーク学院（高等部）学院説明会（シンガポール）"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_allows_zero_events_and_deactivates_stale_rows() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler zero-event parse test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+
+        let initial_state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(fixture("keio_event_listing_page_1.html")),
+            page_two_html: Some(Arc::new(fixture("keio_event_listing_page_2.html"))),
+        };
+        let initial_app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events/page1", get(page_handler))
+            .route("/events/page2", get(page_two_handler))
+            .with_state(initial_state);
+        let initial_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let initial_address = initial_listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(initial_listener, initial_app).await;
+        });
+
+        let manifest_path = temp.path().join("keio_zero_events.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: keio-zero-events
+source_name: Keio zero-events crawler
+parser_key: keio_event_listing_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_keio
+  event_category: general
+  placement_tags: [search, detail]
+targets:
+  - logical_name: event_page_1
+    url: http://127.0.0.1:{port}/events/page1
+  - logical_name: event_page_2
+    url: http://127.0.0.1:{port}/events/page2
+"#,
+                port = initial_address.port()
+            ),
+        )?;
+
+        run_fetch_command(&settings, &manifest_path).await?;
+        let initial_parse = run_parse_command(&settings, &manifest_path).await?;
+        assert_eq!(initial_parse.imported_rows, 4);
+
+        let empty_state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new("<html><body><p>No events right now</p></body></html>".to_string()),
+            page_two_html: Some(Arc::new(
+                "<html><body><p>No events right now</p></body></html>".to_string(),
+            )),
+        };
+        let empty_app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events/page1", get(page_handler))
+            .route("/events/page2", get(page_two_handler))
+            .with_state(empty_state);
+        let empty_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let empty_address = empty_listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(empty_listener, empty_app).await;
+        });
+
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: keio-zero-events
+source_name: Keio zero-events crawler
+parser_key: keio_event_listing_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_keio
+  event_category: general
+  placement_tags: [search, detail]
+targets:
+  - logical_name: event_page_1
+    url: http://127.0.0.1:{port}/events/page1
+  - logical_name: event_page_2
+    url: http://127.0.0.1:{port}/events/page2
+"#,
+                port = empty_address.port()
+            ),
+        )?;
+
+        run_fetch_command(&settings, &manifest_path).await?;
+        let empty_dry_run = run_dry_run_command(&settings, &manifest_path).await?;
+        assert_eq!(empty_dry_run.parsed_rows, 0);
+        assert_eq!(empty_dry_run.imported_rows, 0);
+        assert_eq!(empty_dry_run.deactivated_rows, 4);
+        assert!(empty_dry_run
+            .warnings
+            .iter()
+            .any(|issue| issue.code == "parsed_zero_rows"));
+        assert!(empty_dry_run
+            .warnings
+            .iter()
+            .any(|issue| issue.code == "no_events_found"));
+
+        let empty_parse = run_parse_command(&settings, &manifest_path).await?;
+        assert_eq!(empty_parse.parsed_rows, 0);
+        assert_eq!(empty_parse.imported_rows, 0);
+
+        let active_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM events
+                 WHERE source_type = 'crawl'
+                   AND source_key = $1
+                   AND is_active = TRUE",
+                &[&manifest_path.canonicalize()?.display().to_string()],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(active_count, 0);
 
         Ok(())
     }
