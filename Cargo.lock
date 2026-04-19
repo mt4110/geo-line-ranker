@@ -431,6 +431,7 @@ dependencies = [
  "domain",
  "geo",
  "ranking",
+ "reqwest",
  "serde_json",
  "storage-opensearch",
  "test-support",

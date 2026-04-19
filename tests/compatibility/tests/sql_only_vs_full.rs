@@ -1,9 +1,18 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::{head, post},
     Json, Router,
 };
@@ -11,13 +20,19 @@ use config::{OpenSearchSettings, RankingProfiles};
 use domain::{PlacementKind, RankingDataset, RankingQuery, School, Station};
 use geo::haversine_meters;
 use ranking::RankingEngine;
+use reqwest::Client;
 use serde_json::{json, Value};
 use storage_opensearch::{OpenSearchStore, ProjectionDocument};
 use test_support::load_fixture_dataset;
+use tokio::time::sleep;
+
+const TEST_INDEX_NAME: &str = "candidate_projection";
 
 #[derive(Clone)]
 struct MockSearchState {
     documents: Vec<ProjectionDocument>,
+    index_name: String,
+    index_ready: Arc<AtomicBool>,
 }
 
 fn fixture_root() -> PathBuf {
@@ -63,7 +78,7 @@ async fn assert_sql_only_and_full_match(target_station_id: &str) -> Result<()> {
     let base_url = spawn_mock_opensearch(documents).await?;
     let store = OpenSearchStore::new(&OpenSearchSettings {
         url: base_url,
-        index_name: "candidate_projection".to_string(),
+        index_name: TEST_INDEX_NAME.to_string(),
         username: None,
         password: None,
         request_timeout_secs: 5,
@@ -128,27 +143,88 @@ fn build_projection_documents(dataset: &RankingDataset) -> Vec<ProjectionDocumen
 }
 
 async fn spawn_mock_opensearch(documents: Vec<ProjectionDocument>) -> Result<String> {
+    let state = MockSearchState {
+        documents,
+        index_name: TEST_INDEX_NAME.to_string(),
+        index_ready: Arc::new(AtomicBool::new(false)),
+    };
     let app = Router::new()
-        .route("/:index", head(index_exists))
+        .route("/:index", head(index_exists).put(create_index))
         .route("/:index/_search", post(search))
-        .with_state(MockSearchState { documents });
+        .with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
+    let base_url = format!("http://{address}");
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    Ok(format!("http://{address}"))
+    wait_for_mock_opensearch(&base_url).await?;
+    Ok(base_url)
 }
 
-async fn index_exists(Path(_index): Path<String>) -> StatusCode {
+async fn wait_for_mock_opensearch(base_url: &str) -> Result<()> {
+    let client = Client::builder()
+        .timeout(Duration::from_millis(200))
+        .build()
+        .context("failed to build mock OpenSearch probe client")?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+
+    loop {
+        match client
+            .head(format!("{base_url}/{TEST_INDEX_NAME}"))
+            .send()
+            .await
+        {
+            Ok(response) if matches!(response.status(), StatusCode::OK | StatusCode::NOT_FOUND) => {
+                return Ok(());
+            }
+            Ok(_) if Instant::now() < deadline => {}
+            Ok(response) => {
+                anyhow::bail!(
+                    "mock OpenSearch readiness probe returned unexpected status {}",
+                    response.status()
+                );
+            }
+            Err(_) if Instant::now() < deadline => {}
+            Err(error) => return Err(error).context("mock OpenSearch did not become ready"),
+        }
+
+        sleep(Duration::from_millis(25)).await;
+    }
+}
+
+async fn index_exists(
+    Path(index): Path<String>,
+    State(state): State<MockSearchState>,
+) -> StatusCode {
+    if index == state.index_name && state.index_ready.load(Ordering::Relaxed) {
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+async fn create_index(
+    Path(index): Path<String>,
+    State(state): State<MockSearchState>,
+) -> StatusCode {
+    if index != state.index_name {
+        return StatusCode::NOT_FOUND;
+    }
+
+    state.index_ready.store(true, Ordering::Relaxed);
     StatusCode::OK
 }
 
 async fn search(
-    Path(_index): Path<String>,
+    Path(index): Path<String>,
     State(state): State<MockSearchState>,
     Json(body): Json<Value>,
-) -> Json<Value> {
+) -> impl IntoResponse {
+    if index != state.index_name || !state.index_ready.load(Ordering::Relaxed) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
     let size = body
         .get("size")
         .and_then(Value::as_u64)
@@ -227,4 +303,5 @@ async fn search(
                 .collect::<Vec<_>>()
         }
     }))
+    .into_response()
 }

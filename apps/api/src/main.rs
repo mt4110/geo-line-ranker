@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve() -> anyhow::Result<()> {
-    let settings = AppSettings::from_env();
+    let settings = AppSettings::from_env()?;
     let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
     let profile_version = profiles.profile_version.clone();
     let neighbor_distance_cap_meters = profiles.fallback.neighbor_distance_cap_meters;

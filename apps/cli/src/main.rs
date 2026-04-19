@@ -108,7 +108,7 @@ enum ProjectionCommand {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let settings = AppSettings::from_env();
+    let settings = AppSettings::from_env()?;
     let cli = Cli::parse();
 
     match cli.command {

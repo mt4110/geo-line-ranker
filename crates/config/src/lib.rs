@@ -72,9 +72,18 @@ pub struct AppSettings {
 }
 
 impl AppSettings {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self> {
         load_dotenv();
-        Self {
+        let candidate_retrieval_mode =
+            parse_candidate_retrieval_mode(match env::var("CANDIDATE_RETRIEVAL_MODE") {
+                Ok(raw) => Some(raw),
+                Err(env::VarError::NotPresent) => None,
+                Err(env::VarError::NotUnicode(_)) => {
+                    anyhow::bail!("CANDIDATE_RETRIEVAL_MODE must be valid unicode")
+                }
+            })?;
+
+        Ok(Self {
             bind_addr: env::var("APP_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:4000".to_string()),
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
                 "postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker".to_string()
@@ -88,10 +97,7 @@ impl AppSettings {
                 .unwrap_or_else(|_| ".storage/raw".to_string()),
             algorithm_version: env::var("ALGORITHM_VERSION")
                 .unwrap_or_else(|_| "phase5-placement-mixed-ranking-v1".to_string()),
-            candidate_retrieval_mode: env::var("CANDIDATE_RETRIEVAL_MODE")
-                .ok()
-                .and_then(|raw| raw.parse().ok())
-                .unwrap_or(CandidateRetrievalMode::SqlOnly),
+            candidate_retrieval_mode,
             candidate_retrieval_limit: parse_env("CANDIDATE_RETRIEVAL_LIMIT", 256),
             opensearch: OpenSearchSettings {
                 url: env::var("OPENSEARCH_URL")
@@ -110,7 +116,7 @@ impl AppSettings {
             worker_poll_interval_ms: parse_env("WORKER_POLL_INTERVAL_MS", 1000),
             worker_retry_delay_secs: parse_env("WORKER_RETRY_DELAY_SECS", 5),
             worker_max_attempts: parse_env("WORKER_MAX_ATTEMPTS", 3),
-        }
+        })
     }
 }
 
@@ -402,6 +408,15 @@ fn read_raw(path: impl AsRef<Path>) -> Result<String> {
         .with_context(|| format!("failed to read config file {}", path.display()))
 }
 
+fn parse_candidate_retrieval_mode(raw: Option<String>) -> Result<CandidateRetrievalMode> {
+    match raw {
+        Some(raw) => raw
+            .parse()
+            .with_context(|| format!("failed to parse CANDIDATE_RETRIEVAL_MODE={raw}")),
+        None => Ok(CandidateRetrievalMode::SqlOnly),
+    }
+}
+
 fn parse_env<T>(name: &str, default: T) -> T
 where
     T: std::str::FromStr,
@@ -418,7 +433,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::RankingProfiles;
+    use super::{parse_candidate_retrieval_mode, CandidateRetrievalMode, RankingProfiles};
 
     fn repo_config_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
@@ -477,5 +492,22 @@ diversity:
         assert!(error
             .to_string()
             .contains("article is reserved until article candidates are implemented"));
+    }
+
+    #[test]
+    fn defaults_candidate_retrieval_mode_when_env_is_absent() {
+        assert_eq!(
+            parse_candidate_retrieval_mode(None).expect("default mode"),
+            CandidateRetrievalMode::SqlOnly
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_candidate_retrieval_mode_env() {
+        let error = parse_candidate_retrieval_mode(Some("nearest".to_string()))
+            .expect_err("invalid mode should fail");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("failed to parse CANDIDATE_RETRIEVAL_MODE=nearest"));
+        assert!(rendered.contains("unsupported CANDIDATE_RETRIEVAL_MODE"));
     }
 }

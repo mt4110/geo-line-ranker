@@ -54,11 +54,3 @@ CREATE TABLE IF NOT EXISTS recommendation_traces (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS worker_jobs (
-    id BIGSERIAL PRIMARY KEY,
-    job_type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'queued',
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-

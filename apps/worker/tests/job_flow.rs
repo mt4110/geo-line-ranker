@@ -81,7 +81,7 @@ async fn worker_processes_snapshot_and_cache_jobs() -> anyhow::Result<()> {
         })
         .await?;
 
-    let settings = AppSettings::from_env();
+    let settings = AppSettings::from_env()?;
     let worker = WorkerService::new(
         Arc::clone(&repository),
         cache.clone(),

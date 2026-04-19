@@ -93,3 +93,39 @@ CREATE TABLE IF NOT EXISTS job_attempts (
     finished_at TIMESTAMPTZ,
     UNIQUE (job_id, attempt_number)
 );
+
+DO $$
+BEGIN
+    IF to_regclass('public.worker_jobs') IS NOT NULL THEN
+        INSERT INTO job_queue (
+            id,
+            job_type,
+            payload,
+            status,
+            run_after,
+            created_at,
+            updated_at
+        )
+        SELECT
+            id,
+            job_type,
+            payload,
+            status,
+            created_at,
+            created_at,
+            created_at
+        FROM worker_jobs
+        ON CONFLICT (id) DO NOTHING;
+
+        IF EXISTS (SELECT 1 FROM job_queue) THEN
+            PERFORM setval(
+                pg_get_serial_sequence('job_queue', 'id'),
+                (SELECT MAX(id) FROM job_queue),
+                true
+            );
+        END IF;
+
+        DROP TABLE worker_jobs;
+    END IF;
+END
+$$;

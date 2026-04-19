@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve() -> anyhow::Result<()> {
-    let settings = AppSettings::from_env();
+    let settings = AppSettings::from_env()?;
     let repository = Arc::new(PgRepository::new(settings.database_url.clone()));
     let cache = RecommendationCache::new(
         settings.redis_url.clone(),
@@ -66,7 +66,7 @@ async fn serve() -> anyhow::Result<()> {
 }
 
 async fn run_once(max_jobs: usize) -> anyhow::Result<()> {
-    let settings = AppSettings::from_env();
+    let settings = AppSettings::from_env()?;
     let repository = Arc::new(PgRepository::new(settings.database_url.clone()));
     let cache = RecommendationCache::new(
         settings.redis_url.clone(),

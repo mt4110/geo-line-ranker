@@ -397,7 +397,7 @@ struct ScaffoldDomainArgs {
 async fn main() -> anyhow::Result<()> {
     init_tracing("info");
 
-    let settings = AppSettings::from_env();
+    let settings = AppSettings::from_env()?;
     let cli = Cli::parse();
 
     match cli.command.unwrap_or(Command::Serve {
