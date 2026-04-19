@@ -1022,6 +1022,7 @@ pub async fn run_parse_command(
     let mut report_count = 0_usize;
     let mut parsed_rows = 0_i64;
     let mut imported_rows = 0_i64;
+    let mut parse_failed_targets = 0_usize;
     let fetch_logs = load_crawl_fetch_logs(&settings.database_url, crawl_run_id).await?;
 
     let result: Result<()> = async {
@@ -1056,7 +1057,7 @@ pub async fn run_parse_command(
                 .as_ref()
                 .with_context(|| format!("missing staged_path for {}", fetch.logical_name))?;
             let html = fs::read_to_string(staged_path)
-                .with_context(|| format!("failed to read staged HTML {}", staged_path))?;
+                .with_context(|| format!("failed to read staged content {}", staged_path))?;
 
             match parser.parse(&crawler_core::ParseInput {
                 source_id: &manifest.source_id,
@@ -1094,6 +1095,7 @@ pub async fn run_parse_command(
                     collected.extend(records);
                 }
                 Err(error) => {
+                    parse_failed_targets += 1;
                     record_parse_report(
                         &settings.database_url,
                         &mut report_count,
@@ -1130,6 +1132,7 @@ pub async fn run_parse_command(
             &settings.database_url,
             &manifest_path.display().to_string(),
             &deduped.iter().map(to_event_csv_record).collect::<Vec<_>>(),
+            can_deactivate_stale_rows(&fetch_logs, parse_failed_targets),
         )
         .await?;
         imported_rows = summary.core_rows;
@@ -1449,7 +1452,7 @@ pub async fn run_dry_run_command(
             .as_ref()
             .with_context(|| format!("missing staged_path for {}", fetch.logical_name))?;
         let html = fs::read_to_string(staged_path)
-            .with_context(|| format!("failed to read staged HTML {}", staged_path))?;
+            .with_context(|| format!("failed to read staged content {}", staged_path))?;
 
         match parser.parse(&crawler_core::ParseInput {
             source_id: &manifest.source_id,
@@ -1552,7 +1555,18 @@ pub async fn run_dry_run_command(
     )
     .await
     .unwrap_or_default();
-    let deactivated_rows = active_ids.difference(&imported_ids).count() as i64;
+    let deactivated_rows = if can_deactivate_stale_rows(&fetch_logs, parse_errors.len()) {
+        active_ids.difference(&imported_ids).count() as i64
+    } else {
+        warnings.push(DiagnosticIssue {
+            level: "warn".to_string(),
+            code: "partial_import_skips_stale_deactivation".to_string(),
+            message:
+                "dry-run would keep existing active rows because one or more crawl targets failed to fetch or parse"
+                    .to_string(),
+        });
+        0
+    };
 
     Ok(CrawlDryRunSummary {
         manifest_path: manifest_path.display().to_string(),
@@ -2291,6 +2305,17 @@ fn summarize_fetch_status(fetch_logs: &[StoredCrawlFetchLog]) -> Option<String> 
     fetch_logs.first().map(|log| log.fetch_status.clone())
 }
 
+fn can_deactivate_stale_rows(
+    fetch_logs: &[StoredCrawlFetchLog],
+    parse_failed_targets: usize,
+) -> bool {
+    !fetch_logs.is_empty()
+        && parse_failed_targets == 0
+        && fetch_logs
+            .iter()
+            .all(|entry| matches!(entry.fetch_status.as_str(), "fetched" | "not_modified"))
+}
+
 fn summarize_parse_error(
     parse_errors: &[StoredCrawlParseError],
 ) -> Option<CrawlParseErrorSnapshot> {
@@ -2494,7 +2519,13 @@ async fn load_recent_reason_trend(
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::{
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
 
     use axum::{
         extract::State,
@@ -2519,6 +2550,14 @@ mod tests {
         robots_txt: Arc<String>,
         page_html: Arc<String>,
         page_two_html: Option<Arc<String>>,
+    }
+
+    #[derive(Clone)]
+    struct PartialFetchAppState {
+        robots_txt: Arc<String>,
+        page_one_html: Arc<String>,
+        page_two_html: Arc<String>,
+        page_two_requests: Arc<AtomicUsize>,
     }
 
     fn default_database_url() -> String {
@@ -2663,6 +2702,123 @@ targets:
             .await?
             .get::<_, i64>("count");
         assert_eq!(event_count, 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn partial_crawl_import_keeps_existing_events_active() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler integration test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let state = PartialFetchAppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_one_html: Arc::new(
+                "<html><body><h1>Seaside Partial Import Page One</h1><time datetime=\"2026-08-01T10:00:00+09:00\"></time></body></html>"
+                    .to_string(),
+            ),
+            page_two_html: Arc::new(
+                "<html><body><h1>Seaside Partial Import Page Two</h1><time datetime=\"2026-09-01T10:00:00+09:00\"></time></body></html>"
+                    .to_string(),
+            ),
+            page_two_requests: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let app = Router::new()
+            .route("/robots.txt", get(partial_robots_handler))
+            .route("/events/page1", get(partial_page_one_handler))
+            .route("/events/page2", get(partial_page_two_handler))
+            .with_state(state);
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let manifest_path = temp.path().join("partial_import.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: partial-import-local
+source_name: Partial import local crawler
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+  is_open_day: true
+  placement_tags: [home, detail]
+targets:
+  - logical_name: partial_page_one
+    url: http://127.0.0.1:{port}/events/page1
+  - logical_name: partial_page_two
+    url: http://127.0.0.1:{port}/events/page2
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        run_fetch_command(&settings, &manifest_path).await?;
+        let initial_parse = run_parse_command(&settings, &manifest_path).await?;
+        assert_eq!(initial_parse.imported_rows, 2);
+
+        run_fetch_command(&settings, &manifest_path).await?;
+        let partial_parse = run_parse_command(&settings, &manifest_path).await?;
+        assert_eq!(partial_parse.imported_rows, 1);
+
+        let source_key = manifest_path.canonicalize()?.display().to_string();
+        let rows = client
+            .query(
+                "SELECT title
+                 FROM events
+                 WHERE source_type = 'crawl'
+                   AND source_key = $1
+                   AND is_active = TRUE
+                 ORDER BY title ASC",
+                &[&source_key],
+            )
+            .await?;
+        let titles = rows
+            .into_iter()
+            .map(|row| row.get::<_, String>("title"))
+            .collect::<Vec<_>>();
+        assert_eq!(titles.len(), 2);
+        assert!(titles.contains(&"Seaside Partial Import Page One".to_string()));
+        assert!(titles.contains(&"Seaside Partial Import Page Two".to_string()));
+
+        let warning_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM crawl_parse_reports
+                 WHERE crawl_run_id = $1
+                   AND code = 'crawl_skipped_stale_deactivation'",
+                &[&partial_parse.crawl_run_id],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(warning_count, 1);
 
         Ok(())
     }
@@ -3903,11 +4059,27 @@ targets:
         (StatusCode::OK, (*state.robots_txt).clone())
     }
 
+    async fn partial_robots_handler(
+        State(state): State<PartialFetchAppState>,
+    ) -> impl IntoResponse {
+        (StatusCode::OK, (*state.robots_txt).clone())
+    }
+
     async fn page_handler(State(state): State<AppState>) -> impl IntoResponse {
         (
             StatusCode::OK,
             [("content-type", "text/html; charset=utf-8")],
             (*state.page_html).clone(),
+        )
+    }
+
+    async fn partial_page_one_handler(
+        State(state): State<PartialFetchAppState>,
+    ) -> impl IntoResponse {
+        (
+            StatusCode::OK,
+            [("content-type", "text/html; charset=utf-8")],
+            (*state.page_one_html).clone(),
         )
     }
 
@@ -3921,5 +4093,25 @@ targets:
                 .map(ToString::to_string)
                 .unwrap_or_default(),
         )
+    }
+
+    async fn partial_page_two_handler(
+        State(state): State<PartialFetchAppState>,
+    ) -> impl IntoResponse {
+        let request_count = state.page_two_requests.fetch_add(1, Ordering::SeqCst);
+        if request_count == 0 {
+            (
+                StatusCode::OK,
+                [("content-type", "text/html; charset=utf-8")],
+                (*state.page_two_html).clone(),
+            )
+                .into_response()
+        } else {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "simulated partial fetch failure",
+            )
+                .into_response()
+        }
     }
 }

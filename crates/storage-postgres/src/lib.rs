@@ -2227,15 +2227,16 @@ pub async fn import_event_csv(
     source_key: &str,
     records: &[EventCsvRecord],
 ) -> Result<ImportSummary> {
-    import_event_records(database_url, "event_csv", source_key, records).await
+    import_event_records(database_url, "event_csv", source_key, records, true).await
 }
 
 pub async fn import_crawled_events(
     database_url: &str,
     source_key: &str,
     records: &[EventCsvRecord],
+    deactivate_stale: bool,
 ) -> Result<ImportSummary> {
-    import_event_records(database_url, "crawl", source_key, records).await
+    import_event_records(database_url, "crawl", source_key, records, deactivate_stale).await
 }
 
 pub async fn load_existing_school_ids(
@@ -2283,6 +2284,7 @@ async fn import_event_records(
     source_type: &str,
     source_key: &str,
     records: &[EventCsvRecord],
+    deactivate_stale: bool,
 ) -> Result<ImportSummary> {
     let repo = PgRepository::new(database_url);
     let mut client = repo.connect().await?;
@@ -2367,15 +2369,17 @@ async fn import_event_records(
         imported_ids.push(record.event_id.clone());
     }
 
-    let deactivated_rows = if imported_ids.is_empty() {
+    let deactivated_rows = if !deactivate_stale {
+        0
+    } else if imported_ids.is_empty() {
         transaction
             .execute(
                 "UPDATE events
-             SET is_active = FALSE,
-                 updated_at = NOW()
-             WHERE source_type = $2
-               AND source_key = $1
-               AND is_active = TRUE",
+                 SET is_active = FALSE,
+                     updated_at = NOW()
+                 WHERE source_type = $2
+                   AND source_key = $1
+                   AND is_active = TRUE",
                 &[&source_key, &source_type],
             )
             .await? as i64
@@ -2414,6 +2418,20 @@ async fn import_event_records(
                 "Skipped {source_type} rows because the referenced school_id was missing."
             ),
             row_count: Some(skipped_missing_school),
+            details: json!({
+                "source_key": source_key,
+                "source_type": source_type
+            }),
+        });
+    }
+    if !deactivate_stale {
+        report_entries.push(ImportReportEntry {
+            level: "warn".to_string(),
+            code: format!("{source_type}_skipped_stale_deactivation"),
+            message: format!(
+                "Skipped stale {source_type} deactivation because the import was partial."
+            ),
+            row_count: None,
             details: json!({
                 "source_key": source_key,
                 "source_type": source_type

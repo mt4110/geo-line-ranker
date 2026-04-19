@@ -381,34 +381,95 @@ impl OpenSearchStore {
     }
 
     async fn fetch_document_ids(&self) -> Result<Vec<String>> {
-        let response = self
-            .send_json(
+        const SCROLL_TIMEOUT: &str = "1m";
+        const BATCH_SIZE: usize = 1_000;
+
+        let mut document_ids = Vec::new();
+        let mut scroll_id = None;
+        let mut body = Self::ensure_success(
+            self.send_json(
                 Method::POST,
-                &format!("{}/_search", self.index_name),
+                &format!("{}/_search?scroll={SCROLL_TIMEOUT}", self.index_name),
                 Some(&json!({
-                    "size": 10_000,
+                    "size": BATCH_SIZE,
                     "_source": false,
+                    "sort": ["_doc"],
                     "query": { "match_all": {} }
                 })),
             )
-            .await?;
-        let body: Value = response
-            .json()
-            .await
-            .context("failed to decode OpenSearch id scan response")?;
-        Ok(body
-            .get("hits")
-            .and_then(|hits| hits.get("hits"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|hit| {
+            .await?,
+            "start OpenSearch id scan",
+        )
+        .await?
+        .json::<Value>()
+        .await
+        .context("failed to decode OpenSearch id scan response")?;
+
+        loop {
+            if let Some(next_scroll_id) = body
+                .get("_scroll_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+            {
+                scroll_id = Some(next_scroll_id);
+            }
+
+            let hits = body
+                .get("hits")
+                .and_then(|hits| hits.get("hits"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if hits.is_empty() {
+                break;
+            }
+
+            document_ids.extend(hits.into_iter().filter_map(|hit| {
                 hit.get("_id")
                     .and_then(Value::as_str)
                     .map(ToString::to_string)
-            })
-            .collect())
+            }));
+
+            let active_scroll_id = scroll_id
+                .as_deref()
+                .context("OpenSearch id scan did not return a scroll ID")?;
+            body = Self::ensure_success(
+                self.send_json(
+                    Method::POST,
+                    "_search/scroll",
+                    Some(&json!({
+                        "scroll": SCROLL_TIMEOUT,
+                        "scroll_id": active_scroll_id
+                    })),
+                )
+                .await?,
+                "continue OpenSearch id scan",
+            )
+            .await?
+            .json::<Value>()
+            .await
+            .context("failed to decode OpenSearch scroll response")?;
+        }
+
+        if let Some(scroll_id) = scroll_id.as_deref() {
+            self.clear_scroll(scroll_id).await?;
+        }
+
+        Ok(document_ids)
+    }
+
+    async fn clear_scroll(&self, scroll_id: &str) -> Result<()> {
+        let response = self
+            .send_json(
+                Method::DELETE,
+                "_search/scroll",
+                Some(&json!({
+                    "scroll_id": [scroll_id]
+                })),
+            )
+            .await?;
+        Self::ensure_success(response, "clear OpenSearch scroll").await?;
+        Ok(())
     }
 
     async fn bulk_index(&self, documents: &[ProjectionDocument]) -> Result<i64> {

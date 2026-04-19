@@ -163,7 +163,12 @@ pub async fn fetch_to_raw(
         .join(&checksum_sha256[..12]);
     fs::create_dir_all(&staged_dir)
         .with_context(|| format!("failed to create {}", staged_dir.display()))?;
-    let staged_path = staged_dir.join(format!("{}.html", sanitize_name(request.logical_name)));
+    let staged_extension = infer_staged_extension(content_type.as_deref(), &final_url, request.url);
+    let staged_path = staged_dir.join(format!(
+        "{}.{}",
+        sanitize_name(request.logical_name),
+        staged_extension
+    ));
     if !staged_path.exists() {
         fs::write(&staged_path, &bytes)
             .with_context(|| format!("failed to stage {}", staged_path.display()))?;
@@ -285,6 +290,54 @@ fn split_directive<'a>(line: &'a str, name: &str) -> Option<&'a str> {
         .then_some(right.trim())
 }
 
+fn infer_staged_extension(
+    content_type: Option<&str>,
+    final_url: &str,
+    request_url: &str,
+) -> String {
+    extension_from_content_type(content_type)
+        .map(str::to_string)
+        .or_else(|| extension_from_url(final_url))
+        .or_else(|| extension_from_url(request_url))
+        .unwrap_or_else(|| "bin".to_string())
+}
+
+fn extension_from_content_type(content_type: Option<&str>) -> Option<&'static str> {
+    let mime = content_type?
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_ascii_lowercase();
+    match mime.as_str() {
+        "text/html" => Some("html"),
+        "application/json" | "text/json" => Some("json"),
+        value if value.ends_with("+json") => Some("json"),
+        "application/xml" | "text/xml" => Some("xml"),
+        value if value.ends_with("+xml") => Some("xml"),
+        "text/plain" => Some("txt"),
+        "text/csv" | "application/csv" | "application/vnd.ms-excel" => Some("csv"),
+        "application/pdf" => Some("pdf"),
+        _ => None,
+    }
+}
+
+fn extension_from_url(raw_url: &str) -> Option<String> {
+    let url = Url::parse(raw_url).ok()?;
+    let extension = Path::new(url.path()).extension()?.to_str()?.trim();
+    if extension.is_empty() {
+        return None;
+    }
+
+    let normalized = extension
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .take(8)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    (!normalized.is_empty()).then_some(normalized)
+}
+
 fn sanitize_name(value: &str) -> String {
     value
         .chars()
@@ -297,7 +350,7 @@ fn sanitize_name(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_allowed_url, evaluate_robots};
+    use super::{ensure_allowed_url, evaluate_robots, infer_staged_extension};
 
     #[test]
     fn allowlist_accepts_matching_subdomain() {
@@ -349,5 +402,38 @@ Allow: /events/open-campus
             decision.matched_rule.as_deref(),
             Some("allow:/events/open-campus")
         );
+    }
+
+    #[test]
+    fn staged_extension_prefers_content_type_for_json_feeds() {
+        let extension = infer_staged_extension(
+            Some("application/json; charset=utf-8"),
+            "https://example.com/events",
+            "https://example.com/events",
+        );
+
+        assert_eq!(extension, "json");
+    }
+
+    #[test]
+    fn staged_extension_falls_back_to_url_path() {
+        let extension = infer_staged_extension(
+            None,
+            "https://example.com/archive/feed.XML?download=1",
+            "https://example.com/archive/feed.XML?download=1",
+        );
+
+        assert_eq!(extension, "xml");
+    }
+
+    #[test]
+    fn staged_extension_uses_bin_when_unknown() {
+        let extension = infer_staged_extension(
+            Some("application/octet-stream"),
+            "https://example.com/download",
+            "https://example.com/download",
+        );
+
+        assert_eq!(extension, "bin");
     }
 }
