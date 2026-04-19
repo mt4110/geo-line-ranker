@@ -296,7 +296,7 @@ async fn track(
         StatusCode::ACCEPTED,
         Json(TrackResponse {
             status: "accepted".to_string(),
-            event_id,
+            event_id: event_id.to_string(),
             queued_jobs,
         }),
     )

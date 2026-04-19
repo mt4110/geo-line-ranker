@@ -332,8 +332,7 @@
         ],
         "properties": {
           "event_id": {
-            "type": "integer",
-            "format": "int64"
+            "type": "string"
           },
           "queued_jobs": {
             "type": "array",

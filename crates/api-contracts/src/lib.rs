@@ -70,7 +70,7 @@ pub struct TrackRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TrackResponse {
     pub status: String,
-    pub event_id: i64,
+    pub event_id: String,
     pub queued_jobs: Vec<String>,
 }
 

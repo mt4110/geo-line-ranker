@@ -61,7 +61,7 @@ export type TrackRequest = {
 
 export type TrackResponse = {
   status: string;
-  event_id: number;
+  event_id: string;
   queued_jobs: string[];
 };
 

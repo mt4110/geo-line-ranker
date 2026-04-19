@@ -32,6 +32,8 @@ const REQUIRED_READY_TABLES: [&str; 7] = [
     "recommendation_traces",
     "job_queue",
 ];
+const SCHEMA_MIGRATION_LOCK_NAMESPACE: i32 = 6_042;
+const SCHEMA_MIGRATION_LOCK_KEY: i32 = 1;
 const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
 const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
 
@@ -411,6 +413,30 @@ async fn insert_job(client: &(impl GenericClient + Sync), job: &NewJob) -> Resul
         )
         .await?;
     Ok(row.get("id"))
+}
+
+async fn acquire_schema_migration_lock(client: &Client) -> Result<()> {
+    client
+        .query_one(
+            "SELECT pg_advisory_lock($1, $2)",
+            &[&SCHEMA_MIGRATION_LOCK_NAMESPACE, &SCHEMA_MIGRATION_LOCK_KEY],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn release_schema_migration_lock(client: &Client) -> Result<()> {
+    let row = client
+        .query_one(
+            "SELECT pg_advisory_unlock($1, $2) AS unlocked",
+            &[&SCHEMA_MIGRATION_LOCK_NAMESPACE, &SCHEMA_MIGRATION_LOCK_KEY],
+        )
+        .await?;
+    anyhow::ensure!(
+        row.get::<_, bool>("unlocked"),
+        "failed to release schema migration advisory lock"
+    );
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -1283,6 +1309,7 @@ impl RecommendationRepository for PgRepository {
 pub async fn run_migrations(database_url: &str, migrations_dir: impl AsRef<Path>) -> Result<()> {
     let repo = PgRepository::new(database_url);
     let mut client = repo.connect().await?;
+    acquire_schema_migration_lock(&client).await?;
     client
         .batch_execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -1306,29 +1333,27 @@ pub async fn run_migrations(database_url: &str, migrations_dir: impl AsRef<Path>
             .and_then(|name| name.to_str())
             .context("migration file name must be valid UTF-8")?
             .to_string();
-        let already_applied = client
-            .query_opt(
-                "SELECT version FROM schema_migrations WHERE version = $1",
-                &[&version],
-            )
-            .await?;
-        if already_applied.is_some() {
-            continue;
-        }
-
         let sql = fs::read_to_string(&path)
             .with_context(|| format!("failed to read migration {}", path.display()))?;
         let transaction = client.transaction().await?;
-        transaction.batch_execute(&sql).await?;
-        transaction
-            .execute(
-                "INSERT INTO schema_migrations (version) VALUES ($1)",
+        let claimed = transaction
+            .query_opt(
+                "INSERT INTO schema_migrations (version)
+                 VALUES ($1)
+                 ON CONFLICT (version) DO NOTHING
+                 RETURNING version",
                 &[&version],
             )
             .await?;
+        if claimed.is_none() {
+            transaction.rollback().await?;
+            continue;
+        }
+        transaction.batch_execute(&sql).await?;
         transaction.commit().await?;
     }
 
+    release_schema_migration_lock(&client).await?;
     Ok(())
 }
 

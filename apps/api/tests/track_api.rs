@@ -145,6 +145,7 @@ async fn track_endpoint_persists_events_and_enqueues_jobs() -> anyhow::Result<()
         let body = to_bytes(response.into_body(), usize::MAX).await?;
         let payload: serde_json::Value = serde_json::from_slice(&body)?;
         assert_eq!(payload["status"], "accepted");
+        assert!(payload["event_id"].as_str().is_some());
 
         let stored_count = client
             .query_one(
