@@ -17,7 +17,7 @@ use observability::{cache_hit, cache_miss, cache_write, candidate_retrieval_comp
 use ranking::{RankingEngine, RankingError};
 use storage::{JobType, NewJob, RecommendationRepository, RecommendationTrace};
 use storage_opensearch::OpenSearchStore;
-use storage_postgres::PgRepository;
+use storage_postgres::{is_foreign_key_violation, PgRepository};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -282,6 +282,13 @@ async fn track(
         .await
     {
         Ok(event_id) => event_id,
+        Err(error) if is_foreign_key_violation(&error) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "track payload references unknown school_id, event_id, or target_station_id"
+                    .to_string(),
+            );
+        }
         Err(error) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     };
 

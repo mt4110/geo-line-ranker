@@ -1560,9 +1560,7 @@ pub async fn run_dry_run_command(
     )
     .await
     .unwrap_or_default();
-    let deactivated_rows = if can_deactivate_stale_rows(&fetch_logs, parse_errors.len()) {
-        active_ids.difference(&imported_ids).count() as i64
-    } else {
+    let deactivated_rows = if !can_deactivate_stale_rows(&fetch_logs, parse_errors.len()) {
         warnings.push(DiagnosticIssue {
             level: "warn".to_string(),
             code: "partial_import_skips_stale_deactivation".to_string(),
@@ -1571,6 +1569,17 @@ pub async fn run_dry_run_command(
                     .to_string(),
         });
         0
+    } else if missing_school_rows > 0 {
+        warnings.push(DiagnosticIssue {
+            level: "warn".to_string(),
+            code: "missing_school_skips_stale_deactivation".to_string(),
+            message:
+                "dry-run would keep existing active rows because one or more rows reference a missing school_id"
+                    .to_string(),
+        });
+        0
+    } else {
+        active_ids.difference(&imported_ids).count() as i64
     };
 
     Ok(CrawlDryRunSummary {
@@ -2924,6 +2933,15 @@ targets:
         )?;
 
         run_fetch_command(&settings, &manifest_path).await?;
+        let dry_run = run_dry_run_command(&settings, &manifest_path).await?;
+        assert_eq!(dry_run.imported_rows, 0);
+        assert_eq!(dry_run.deactivated_rows, 0);
+        assert_eq!(dry_run.missing_school_rows, 1);
+        assert!(dry_run
+            .warnings
+            .iter()
+            .any(|issue| issue.code == "missing_school_skips_stale_deactivation"));
+
         let guarded_parse = run_parse_command(&settings, &manifest_path).await?;
         assert_eq!(guarded_parse.imported_rows, 0);
 

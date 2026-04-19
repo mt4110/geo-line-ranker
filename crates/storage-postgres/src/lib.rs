@@ -32,6 +32,8 @@ const REQUIRED_READY_TABLES: [&str; 7] = [
     "recommendation_traces",
     "job_queue",
 ];
+const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
+const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
 
 #[derive(Debug, Clone)]
 pub struct PgRepository {
@@ -360,6 +362,15 @@ impl PgRepository {
             area_affinity_snapshots,
         })
     }
+}
+
+pub fn is_foreign_key_violation(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<tokio_postgres::Error>()
+            .and_then(|pg_error| pg_error.code())
+            .is_some_and(|code| *code == tokio_postgres::error::SqlState::FOREIGN_KEY_VIOLATION)
+    })
 }
 
 async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEvent) -> Result<i64> {
@@ -829,13 +840,55 @@ impl RecommendationRepository for PgRepository {
     async fn claim_next_job(&self, worker_id: &str) -> Result<Option<ClaimedJob>> {
         let mut client = self.connect().await?;
         let transaction = client.transaction().await?;
+
+        // Recover jobs orphaned by crashed workers before selecting the next claimable row.
+        transaction
+            .execute(
+                "UPDATE job_attempts AS attempt
+                 SET status = 'failed',
+                     error_message = COALESCE(attempt.error_message, $2),
+                     finished_at = COALESCE(attempt.finished_at, NOW())
+                 FROM job_queue AS job
+                 WHERE attempt.job_id = job.id
+                   AND attempt.status = 'running'
+                   AND job.status = 'running'
+                   AND job.locked_at IS NOT NULL
+                   AND job.locked_at <= NOW() - ($1::bigint * INTERVAL '1 second')",
+                &[&STALE_JOB_LOCK_TIMEOUT_SECS, &STALE_JOB_LOCK_ERROR],
+            )
+            .await?;
+        transaction
+            .execute(
+                "UPDATE job_queue
+                 SET status = 'failed',
+                     locked_at = NULL,
+                     locked_by = NULL,
+                     last_error = $2,
+                     completed_at = NOW(),
+                     updated_at = NOW()
+                 WHERE status = 'running'
+                   AND locked_at IS NOT NULL
+                   AND locked_at <= NOW() - ($1::bigint * INTERVAL '1 second')
+                   AND attempts >= max_attempts",
+                &[&STALE_JOB_LOCK_TIMEOUT_SECS, &STALE_JOB_LOCK_ERROR],
+            )
+            .await?;
+
         let row = transaction
             .query_opt(
                 "WITH next_job AS (
                     SELECT id
                     FROM job_queue
-                    WHERE status = 'queued'
-                      AND run_after <= NOW()
+                    WHERE (
+                            status = 'queued'
+                            AND run_after <= NOW()
+                          )
+                       OR (
+                            status = 'running'
+                            AND locked_at IS NOT NULL
+                            AND locked_at <= NOW() - ($2::bigint * INTERVAL '1 second')
+                            AND attempts < max_attempts
+                          )
                     ORDER BY created_at ASC, id ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
@@ -845,10 +898,12 @@ impl RecommendationRepository for PgRepository {
                     attempts = attempts + 1,
                     locked_at = NOW(),
                     locked_by = $1,
+                    last_error = NULL,
+                    completed_at = NULL,
                     updated_at = NOW()
                 WHERE id = (SELECT id FROM next_job)
                 RETURNING id, job_type, payload, attempts, max_attempts",
-                &[&worker_id],
+                &[&worker_id, &STALE_JOB_LOCK_TIMEOUT_SECS],
             )
             .await?;
 

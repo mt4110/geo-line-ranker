@@ -66,9 +66,11 @@ export type TrackResponse = {
 };
 
 export function createClient(baseUrl: string) {
+  const apiBaseUrl = baseUrl.replace(/\/+$/, "");
+
   return {
     async recommend(input: RecommendationRequest): Promise<RecommendationResponse> {
-      const response = await fetch(`${baseUrl}/v1/recommendations`, {
+      const response = await fetch(`${apiBaseUrl}/v1/recommendations`, {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -84,7 +86,7 @@ export function createClient(baseUrl: string) {
     },
 
     async track(input: TrackRequest): Promise<TrackResponse> {
-      const response = await fetch(`${baseUrl}/v1/track`, {
+      const response = await fetch(`${apiBaseUrl}/v1/track`, {
         method: "POST",
         headers: {
           "content-type": "application/json"

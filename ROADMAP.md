@@ -2,8 +2,8 @@
 
 ## Current
 
-- Phase 5: placement profile and mixed ranking control
+- Phase 6: policy and explanation tuning on top of the full-mode path
 
 ## Next
 
-- Phase 6: policy and explanation tuning on top of the full-mode path
+- TBD: define the phase after the Phase 6 baseline

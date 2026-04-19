@@ -225,59 +225,39 @@ async fn search(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let size = body
-        .get("size")
-        .and_then(Value::as_u64)
-        .unwrap_or(state.documents.len() as u64) as usize;
-    let target_station_id = body["query"]["bool"]["should"][0]["term"]["station_id"]["value"]
-        .as_str()
-        .unwrap_or_default();
-    let line_name = body["query"]["bool"]["should"][1]["bool"]["filter"][0]["term"]["line_name"]
-        ["value"]
-        .as_str()
-        .unwrap_or_default();
-    let distance_cap_meters = body["query"]["bool"]["should"][1]["bool"]["filter"][1]
-        ["geo_distance"]["distance"]
-        .as_str()
-        .unwrap_or("0m")
-        .trim_end_matches('m')
-        .parse::<f64>()
-        .unwrap_or(0.0);
-    let target_lat = body["query"]["bool"]["should"][1]["bool"]["filter"][1]["geo_distance"]
-        ["station_location"]["lat"]
-        .as_f64()
-        .unwrap_or_default();
-    let target_lon = body["query"]["bool"]["should"][1]["bool"]["filter"][1]["geo_distance"]
-        ["station_location"]["lon"]
-        .as_f64()
-        .unwrap_or_default();
+    let query = match parse_mock_search_query(&body, state.documents.len()) {
+        Ok(query) => query,
+        Err(message) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response();
+        }
+    };
 
     let mut matches = state
         .documents
         .iter()
         .filter(|document| {
-            document.station_id == target_station_id
-                || (document.line_name == line_name
+            document.station_id == query.target_station_id
+                || (document.line_name == query.line_name
                     && haversine_meters(
-                        target_lat,
-                        target_lon,
+                        query.target_lat,
+                        query.target_lon,
                         document.station_location.lat,
                         document.station_location.lon,
-                    ) <= distance_cap_meters)
+                    ) <= query.distance_cap_meters)
         })
         .cloned()
         .collect::<Vec<_>>();
 
     matches.sort_by(|left, right| {
         let left_distance = haversine_meters(
-            target_lat,
-            target_lon,
+            query.target_lat,
+            query.target_lon,
             left.station_location.lat,
             left.station_location.lon,
         );
         let right_distance = haversine_meters(
-            target_lat,
-            target_lon,
+            query.target_lat,
+            query.target_lon,
             right.station_location.lat,
             right.station_location.lon,
         );
@@ -293,7 +273,7 @@ async fn search(
         "hits": {
             "hits": matches
                 .into_iter()
-                .take(size)
+                .take(query.size)
                 .map(|document| {
                     json!({
                         "_id": document.document_id,
@@ -304,4 +284,95 @@ async fn search(
         }
     }))
     .into_response()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedMockSearchQuery<'a> {
+    size: usize,
+    target_station_id: &'a str,
+    line_name: &'a str,
+    distance_cap_meters: f64,
+    target_lat: f64,
+    target_lon: f64,
+}
+
+fn parse_mock_search_query<'a>(
+    body: &'a Value,
+    default_size: usize,
+) -> std::result::Result<ParsedMockSearchQuery<'a>, String> {
+    let size = match body.pointer("/size") {
+        Some(value) => {
+            let raw = value
+                .as_u64()
+                .ok_or_else(|| "expected /size to be an unsigned integer".to_string())?;
+            usize::try_from(raw).map_err(|_| "search size exceeds usize".to_string())?
+        }
+        None => default_size,
+    };
+    let target_station_id = required_str_at(
+        body,
+        "/query/bool/should/0/term/station_id/value",
+        "target station id",
+    )?;
+    let line_name = required_str_at(
+        body,
+        "/query/bool/should/1/bool/filter/0/term/line_name/value",
+        "line name",
+    )?;
+    let distance_raw = required_str_at(
+        body,
+        "/query/bool/should/1/bool/filter/1/geo_distance/distance",
+        "distance cap",
+    )?;
+    let distance_cap_meters = distance_raw
+        .strip_suffix('m')
+        .ok_or_else(|| "expected distance cap to end with 'm'".to_string())?
+        .parse::<f64>()
+        .map_err(|_| "expected distance cap to be a numeric meter value".to_string())?;
+    let target_lat = required_f64_at(
+        body,
+        "/query/bool/should/1/bool/filter/1/geo_distance/station_location/lat",
+        "target latitude",
+    )?;
+    let target_lon = required_f64_at(
+        body,
+        "/query/bool/should/1/bool/filter/1/geo_distance/station_location/lon",
+        "target longitude",
+    )?;
+
+    Ok(ParsedMockSearchQuery {
+        size,
+        target_station_id,
+        line_name,
+        distance_cap_meters,
+        target_lat,
+        target_lon,
+    })
+}
+
+fn required_str_at<'a>(
+    body: &'a Value,
+    pointer: &'static str,
+    field_name: &'static str,
+) -> std::result::Result<&'a str, String> {
+    body.pointer(pointer)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("missing or invalid {field_name} at {pointer}"))
+}
+
+fn required_f64_at(
+    body: &Value,
+    pointer: &'static str,
+    field_name: &'static str,
+) -> std::result::Result<f64, String> {
+    body.pointer(pointer)
+        .and_then(Value::as_f64)
+        .ok_or_else(|| format!("missing or invalid {field_name} at {pointer}"))
+}
+
+#[test]
+fn mock_search_parser_rejects_missing_required_fields() {
+    let error = parse_mock_search_query(&json!({ "size": 3 }), 10).expect_err("missing query");
+    assert!(error.contains("target station id"));
 }

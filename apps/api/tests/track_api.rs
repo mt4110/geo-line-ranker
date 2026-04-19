@@ -171,6 +171,79 @@ async fn track_endpoint_persists_events_and_enqueues_jobs() -> anyhow::Result<()
 }
 
 #[tokio::test]
+async fn track_endpoint_rejects_unknown_foreign_keys() -> anyhow::Result<()> {
+    let database_url = default_database_url();
+    let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+        eprintln!("skipping api tracking integration test because PostgreSQL is not reachable");
+        return Ok(());
+    };
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client.simple_query("SELECT 1").await?;
+
+    let root = repo_root();
+    run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+    seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+    let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+    let state = AppState {
+        repository: Arc::new(PgRepository::new(database_url.clone())),
+        engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+        cache: RecommendationCache::new(None, 60),
+        profile_version: profiles.profile_version,
+        algorithm_version: "phase6-test".to_string(),
+        candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+        candidate_retrieval_limit: 256,
+        neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+        candidate_backend: api::CandidateBackend::SqlOnly,
+        worker_max_attempts: 3,
+    };
+    let app = build_app(state);
+    let user_id = format!("api-track-invalid-{}", std::process::id());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/track")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "user_id": user_id.clone(),
+                        "event_kind": "search_execute",
+                        "target_station_id": "station_missing"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("tracking response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(
+        payload["error"],
+        "track payload references unknown school_id, event_id, or target_station_id"
+    );
+
+    let stored_count = client
+        .query_one(
+            "SELECT COUNT(*) AS count
+             FROM user_events
+             WHERE user_id = $1",
+            &[&user_id],
+        )
+        .await?
+        .get::<_, i64>("count");
+    assert_eq!(stored_count, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn ready_endpoint_requires_application_schema() -> anyhow::Result<()> {
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_ready").await
