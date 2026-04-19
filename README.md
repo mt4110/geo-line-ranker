@@ -130,6 +130,7 @@ cargo run -p cli -- projection sync
     }
   ],
   "explanation": "ホームでは Tamachi 直結の候補群 を母集団にし、直結条件 と 注目イベント を効かせて決定論的に順位付けしました。",
+  "score_breakdown": [],
   "fallback_stage": "strict",
   "profile_version": "phase5-profile-version",
   "algorithm_version": "phase5-placement-mixed-ranking-v1"
