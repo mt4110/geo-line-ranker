@@ -934,7 +934,7 @@ impl RecommendationRepository for PgRepository {
             .await?;
 
         let Some(row) = row else {
-            transaction.rollback().await?;
+            transaction.commit().await?;
             return Ok(None);
         };
 
@@ -969,7 +969,23 @@ impl RecommendationRepository for PgRepository {
     async fn mark_job_succeeded(&self, job_id: i64, attempt_id: i64) -> Result<()> {
         let mut client = self.connect().await?;
         let transaction = client.transaction().await?;
-        transaction
+        let attempt = transaction
+            .query_opt(
+                "SELECT attempt_number
+                 FROM job_attempts
+                 WHERE id = $1
+                   AND job_id = $2
+                   AND status = 'running'
+                 FOR UPDATE",
+                &[&attempt_id, &job_id],
+            )
+            .await?;
+        let Some(attempt) = attempt else {
+            transaction.rollback().await?;
+            return Ok(());
+        };
+        let attempt_number: i32 = attempt.get("attempt_number");
+        let updated = transaction
             .execute(
                 "UPDATE job_queue
                  SET status = 'succeeded',
@@ -978,10 +994,16 @@ impl RecommendationRepository for PgRepository {
                      last_error = NULL,
                      completed_at = NOW(),
                      updated_at = NOW()
-                 WHERE id = $1",
-                &[&job_id],
+                 WHERE id = $1
+                   AND status = 'running'
+                   AND attempts = $2",
+                &[&job_id, &attempt_number],
             )
             .await?;
+        if updated == 0 {
+            transaction.rollback().await?;
+            return Ok(());
+        }
         transaction
             .execute(
                 "UPDATE job_attempts
@@ -1004,15 +1026,37 @@ impl RecommendationRepository for PgRepository {
     ) -> Result<()> {
         let mut client = self.connect().await?;
         let transaction = client.transaction().await?;
+        let attempt = transaction
+            .query_opt(
+                "SELECT attempt_number
+                 FROM job_attempts
+                 WHERE id = $1
+                   AND job_id = $2
+                   AND status = 'running'
+                 FOR UPDATE",
+                &[&attempt_id, &job_id],
+            )
+            .await?;
+        let Some(attempt) = attempt else {
+            transaction.rollback().await?;
+            return Ok(());
+        };
+        let attempt_number: i32 = attempt.get("attempt_number");
         let row = transaction
-            .query_one(
+            .query_opt(
                 "SELECT attempts, max_attempts
                  FROM job_queue
                  WHERE id = $1
+                   AND status = 'running'
+                   AND attempts = $2
                  FOR UPDATE",
-                &[&job_id],
+                &[&job_id, &attempt_number],
             )
             .await?;
+        let Some(row) = row else {
+            transaction.rollback().await?;
+            return Ok(());
+        };
         let attempts: i32 = row.get("attempts");
         let max_attempts: i32 = row.get("max_attempts");
         let next_status = if attempts >= max_attempts {

@@ -281,3 +281,199 @@ async fn worker_reclaims_stale_running_jobs() -> anyhow::Result<()> {
     drop_database(&admin_database_url, &database_name).await?;
     test_result
 }
+
+#[tokio::test]
+async fn exhausted_stale_jobs_are_failed_even_without_a_new_claim() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_worker").await
+    else {
+        eprintln!(
+            "skipping worker stale cleanup test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let repository = Arc::new(PgRepository::new(database_url.clone()));
+        let job_id = repository
+            .enqueue_job(&NewJob {
+                job_type: JobType::RefreshPopularitySnapshot,
+                payload: serde_json::json!({}),
+                max_attempts: 1,
+            })
+            .await?;
+
+        let first_claim = repository
+            .claim_next_job("worker-crashed")
+            .await?
+            .expect("initial claim");
+        assert_eq!(first_claim.job_id, job_id);
+
+        client
+            .execute(
+                "UPDATE job_queue
+                 SET locked_at = NOW() - INTERVAL '20 minutes'
+                 WHERE id = $1",
+                &[&job_id],
+            )
+            .await?;
+
+        let reclaimed = repository.claim_next_job("worker-recovery").await?;
+        assert!(reclaimed.is_none());
+
+        let queue_row = client
+            .query_one(
+                "SELECT
+                    status,
+                    locked_at IS NULL AS locked_cleared,
+                    locked_by,
+                    last_error,
+                    completed_at IS NOT NULL AS completed
+                 FROM job_queue
+                 WHERE id = $1",
+                &[&job_id],
+            )
+            .await?;
+        assert_eq!(queue_row.get::<_, String>("status"), "failed");
+        assert_eq!(queue_row.get::<_, Option<String>>("locked_by"), None);
+        assert!(queue_row.get::<_, bool>("locked_cleared"));
+        assert_eq!(
+            queue_row.get::<_, Option<String>>("last_error"),
+            Some("worker lock expired before completion".to_string())
+        );
+        assert!(queue_row.get::<_, bool>("completed"));
+
+        let attempt_row = client
+            .query_one(
+                "SELECT
+                    status,
+                    error_message,
+                    finished_at IS NOT NULL AS finished
+                 FROM job_attempts
+                 WHERE id = $1",
+                &[&first_claim.attempt_id],
+            )
+            .await?;
+        assert_eq!(attempt_row.get::<_, String>("status"), "failed");
+        assert_eq!(
+            attempt_row.get::<_, Option<String>>("error_message"),
+            Some("worker lock expired before completion".to_string())
+        );
+        assert!(attempt_row.get::<_, bool>("finished"));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn stale_attempt_completion_cannot_overwrite_reclaimed_job() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_worker").await
+    else {
+        eprintln!(
+            "skipping worker stale attempt guard test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let repository = Arc::new(PgRepository::new(database_url.clone()));
+        let job_id = repository
+            .enqueue_job(&NewJob {
+                job_type: JobType::RefreshPopularitySnapshot,
+                payload: serde_json::json!({}),
+                max_attempts: 3,
+            })
+            .await?;
+
+        let first_claim = repository
+            .claim_next_job("worker-crashed")
+            .await?
+            .expect("initial claim");
+        client
+            .execute(
+                "UPDATE job_queue
+                 SET locked_at = NOW() - INTERVAL '20 minutes'
+                 WHERE id = $1",
+                &[&job_id],
+            )
+            .await?;
+        let reclaimed = repository
+            .claim_next_job("worker-recovery")
+            .await?
+            .expect("reclaimed claim");
+        assert_eq!(reclaimed.job_id, job_id);
+        assert_eq!(reclaimed.attempt_number, 2);
+
+        repository
+            .mark_job_succeeded(job_id, first_claim.attempt_id)
+            .await?;
+        repository
+            .mark_job_failed(job_id, first_claim.attempt_id, "late failure", 30)
+            .await?;
+
+        let queue_row = client
+            .query_one(
+                "SELECT status, locked_by, attempts
+                 FROM job_queue
+                 WHERE id = $1",
+                &[&job_id],
+            )
+            .await?;
+        assert_eq!(queue_row.get::<_, String>("status"), "running");
+        assert_eq!(
+            queue_row.get::<_, Option<String>>("locked_by"),
+            Some("worker-recovery".to_string())
+        );
+        assert_eq!(queue_row.get::<_, i32>("attempts"), 2);
+
+        let attempts = client
+            .query(
+                "SELECT attempt_number, status, error_message
+                 FROM job_attempts
+                 WHERE job_id = $1
+                 ORDER BY attempt_number ASC",
+                &[&job_id],
+            )
+            .await?;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].get::<_, i32>("attempt_number"), 1);
+        assert_eq!(attempts[0].get::<_, String>("status"), "failed");
+        assert_eq!(
+            attempts[0].get::<_, Option<String>>("error_message"),
+            Some("worker lock expired before completion".to_string())
+        );
+        assert_eq!(attempts[1].get::<_, i32>("attempt_number"), 2);
+        assert_eq!(attempts[1].get::<_, String>("status"), "running");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
