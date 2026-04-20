@@ -20,9 +20,9 @@ pub fn load_fixture_dataset(path: impl AsRef<Path>) -> Result<RankingDataset> {
             .collect(),
         events: read_csv(path.join("events.csv"))?
             .into_iter()
-            .map(|row: EventRow| {
-                let placement_tags = row.normalized_placement_tags();
-                Event {
+            .map(|row: EventRow| -> Result<Event> {
+                let placement_tags = row.normalized_placement_tags()?;
+                Ok(Event {
                     id: row.event_id,
                     school_id: row.school_id,
                     title: row.title,
@@ -33,9 +33,9 @@ pub fn load_fixture_dataset(path: impl AsRef<Path>) -> Result<RankingDataset> {
                     starts_at: row.starts_at,
                     placement_tags,
                     is_active: true,
-                }
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
         stations: read_csv(path.join("stations.csv"))?
             .into_iter()
             .map(|row: StationRow| Station {
@@ -113,17 +113,20 @@ struct EventRow {
 }
 
 impl EventRow {
-    fn normalized_placement_tags(&self) -> Vec<PlacementKind> {
+    fn normalized_placement_tags(&self) -> Result<Vec<PlacementKind>> {
         self.placement_tags
             .split('|')
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .filter_map(|value| match value {
-                "home" => Some(PlacementKind::Home),
-                "search" => Some(PlacementKind::Search),
-                "detail" => Some(PlacementKind::Detail),
-                "mypage" => Some(PlacementKind::Mypage),
-                _ => None,
+            .map(|value| match value {
+                "home" => Ok(PlacementKind::Home),
+                "search" => Ok(PlacementKind::Search),
+                "detail" => Ok(PlacementKind::Detail),
+                "mypage" => Ok(PlacementKind::Mypage),
+                _ => Err(anyhow::anyhow!(
+                    "unsupported placement tag `{value}` in fixture event {}",
+                    self.event_id
+                )),
             })
             .collect()
     }
@@ -146,4 +149,43 @@ struct LinkRow {
     distance_meters: u32,
     hop_distance: u8,
     line_name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use anyhow::Result;
+    use tempfile::tempdir;
+
+    use super::load_fixture_dataset;
+
+    #[test]
+    fn load_fixture_dataset_rejects_unknown_placement_tags() -> Result<()> {
+        let temp = tempdir()?;
+        fs::write(
+            temp.path().join("schools.csv"),
+            "school_id,name,area,school_type,group_id\nschool_a,School A,Area,high_school,group_a\n",
+        )?;
+        fs::write(
+            temp.path().join("events.csv"),
+            "event_id,school_id,title,event_category,is_open_day,is_featured,priority_weight,starts_at,placement_tags\nevent_a,school_a,Event A,open_campus,true,false,0.5,2026-05-10T10:00:00+09:00,typo_tag\n",
+        )?;
+        fs::write(
+            temp.path().join("stations.csv"),
+            "station_id,name,line_name,latitude,longitude\n",
+        )?;
+        fs::write(
+            temp.path().join("school_station_links.csv"),
+            "school_id,station_id,walking_minutes,distance_meters,hop_distance,line_name\n",
+        )?;
+
+        let error =
+            load_fixture_dataset(temp.path()).expect_err("unknown placement tag should fail");
+        assert!(error
+            .to_string()
+            .contains("unsupported placement tag `typo_tag` in fixture event event_a"));
+
+        Ok(())
+    }
 }

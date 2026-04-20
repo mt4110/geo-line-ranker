@@ -28,6 +28,7 @@ impl RecommendationCache {
         profile_version: &str,
         algorithm_version: &str,
         candidate_mode: &str,
+        candidate_limit: usize,
         request: &T,
     ) -> Result<String> {
         let serialized =
@@ -36,7 +37,7 @@ impl RecommendationCache {
         digest.update(&serialized);
         let request_hash = format!("{:x}", digest.finalize());
         Ok(format!(
-            "{RECOMMENDATION_PREFIX}:{profile_version}:{algorithm_version}:{candidate_mode}:{request_hash}"
+            "{RECOMMENDATION_PREFIX}:{profile_version}:{algorithm_version}:{candidate_mode}:{candidate_limit}:{request_hash}"
         ))
     }
 
@@ -158,6 +159,7 @@ mod tests {
                 "profile-123",
                 "algo-456",
                 "sql_only",
+                256,
                 &Request {
                     target_station_id: "st_tamachi",
                     placement: "home",
@@ -179,6 +181,7 @@ mod tests {
                 "profile-123",
                 "algo-456",
                 "sql_only",
+                256,
                 &Request {
                     target_station_id: "st_tamachi",
                     placement: "home",
@@ -191,6 +194,7 @@ mod tests {
                 "profile-123",
                 "algo-456",
                 "sql_only",
+                256,
                 &Request {
                     target_station_id: "st_tamachi",
                     placement: "search",
@@ -200,5 +204,38 @@ mod tests {
             .expect("search cache key");
 
         assert_ne!(home_key, search_key);
+    }
+
+    #[test]
+    fn candidate_limit_changes_cache_key() {
+        let cache = RecommendationCache::new(Some("redis://127.0.0.1:6379".to_string()), 60);
+        let small_limit_key = cache
+            .build_key(
+                "profile-123",
+                "algo-456",
+                "sql_only",
+                128,
+                &Request {
+                    target_station_id: "st_tamachi",
+                    placement: "search",
+                    limit: 3,
+                },
+            )
+            .expect("small limit cache key");
+        let large_limit_key = cache
+            .build_key(
+                "profile-123",
+                "algo-456",
+                "sql_only",
+                256,
+                &Request {
+                    target_station_id: "st_tamachi",
+                    placement: "search",
+                    limit: 3,
+                },
+            )
+            .expect("large limit cache key");
+
+        assert_ne!(small_limit_key, large_limit_key);
     }
 }

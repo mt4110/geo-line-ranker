@@ -1338,9 +1338,6 @@ pub async fn run_doctor_command(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let known_school_ids = load_existing_school_ids(&settings.database_url, &school_ids)
-        .await
-        .ok();
     let client = build_http_client()?;
     let robots = probe_url(
         &client,
@@ -1358,6 +1355,18 @@ pub async fn run_doctor_command(
     let robots_body = robots.body_preview.as_deref().unwrap_or_default();
     let mut targets_summary = Vec::new();
     let mut issues = Vec::new();
+    let known_school_ids = match load_existing_school_ids(&settings.database_url, &school_ids).await
+    {
+        Ok(known_school_ids) => Some(known_school_ids),
+        Err(error) => {
+            issues.push(DiagnosticIssue {
+                level: "warn".to_string(),
+                code: "school_lookup_failed".to_string(),
+                message: format!("failed to verify target school_ids against database: {error}"),
+            });
+            None
+        }
+    };
 
     if !parser_registered {
         issues.push(DiagnosticIssue {
@@ -3918,6 +3927,78 @@ targets:
             .any(|issue| issue.code == "expected_shape_mismatch"));
         assert!(doctor_text.contains("shape=mismatch"));
         assert!(doctor_text.contains("expected_shape: html_heading_page"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn doctor_surfaces_school_lookup_failures() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut settings = test_settings(
+            &temp.path().join("raw"),
+            "postgres://127.0.0.1:9/geo_line_ranker",
+        );
+        settings.database_url = "postgres://127.0.0.1:9/geo_line_ranker".to_string();
+        let state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(
+                "<html><body><h1>Doctor School Lookup Warning</h1><time datetime=\"2026-08-01T10:00:00+09:00\"></time></body></html>"
+                    .to_string(),
+            ),
+            page_two_html: None,
+        };
+
+        let app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route(
+                "/terms",
+                get(|| async { Html("<html><body>terms</body></html>") }),
+            )
+            .route("/events", get(page_handler))
+            .with_state(state);
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let manifest_path = temp.path().join("doctor_school_lookup_failed.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: doctor-school-lookup-failed
+source_name: Doctor school lookup failed
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: http://127.0.0.1:{port}/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: school_lookup_warning
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        let summary = run_doctor_command(&settings, &manifest_path).await?;
+        let doctor_text = format_doctor_summary(&summary);
+
+        assert_eq!(summary.targets.len(), 1);
+        assert_eq!(summary.targets[0].school_exists, None);
+        assert!(summary
+            .issues
+            .iter()
+            .any(|issue| issue.code == "school_lookup_failed"));
+        assert!(doctor_text.contains("school_exists=unknown"));
+        assert!(doctor_text.contains("school_lookup_failed"));
 
         Ok(())
     }

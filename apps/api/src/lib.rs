@@ -113,6 +113,7 @@ async fn recommend(
             &state.profile_version,
             &state.algorithm_version,
             state.candidate_retrieval_mode.as_str(),
+            state.candidate_retrieval_limit,
             &request,
         ) {
             Ok(key) => Some(key),
