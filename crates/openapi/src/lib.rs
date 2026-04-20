@@ -19,7 +19,8 @@ fn healthz_doc() {}
     get,
     path = "/readyz",
     responses(
-        (status = 200, description = "readiness probe", body = ReadyResponse)
+        (status = 200, description = "readiness probe", body = ReadyResponse),
+        (status = 503, description = "readiness probe failed", body = ReadyResponse)
     ),
     tag = "system"
 )]

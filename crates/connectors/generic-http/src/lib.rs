@@ -22,6 +22,7 @@ pub struct PreparedHttpFetch {
     pub target_url: String,
     pub final_url: String,
     pub staged_path: PathBuf,
+    pub staged_was_created: bool,
     pub checksum_sha256: String,
     pub size_bytes: u64,
     pub status_code: u16,
@@ -169,16 +170,20 @@ pub async fn fetch_to_raw(
         sanitize_name(request.logical_name),
         staged_extension
     ));
-    if !staged_path.exists() {
+    let staged_was_created = if !staged_path.exists() {
         fs::write(&staged_path, &bytes)
             .with_context(|| format!("failed to stage {}", staged_path.display()))?;
-    }
+        true
+    } else {
+        false
+    };
 
     Ok(PreparedHttpFetch {
         logical_name: request.logical_name.to_string(),
         target_url: request.url.to_string(),
         final_url,
         staged_path,
+        staged_was_created,
         checksum_sha256,
         size_bytes,
         status_code,

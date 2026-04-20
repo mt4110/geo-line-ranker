@@ -154,6 +154,14 @@ impl OpenSearchStore {
         &self.index_name
     }
 
+    pub async fn ready_check(&self) -> Result<()> {
+        if self.index_exists().await? {
+            return Ok(());
+        }
+
+        bail!("OpenSearch candidate index {} is missing", self.index_name);
+    }
+
     pub async fn ensure_index(&self) -> Result<()> {
         if self.index_exists().await? {
             return Ok(());

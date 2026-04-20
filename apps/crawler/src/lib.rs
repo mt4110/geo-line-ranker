@@ -903,7 +903,9 @@ pub async fn run_fetch_command(
                         Ok(final_url) => final_url,
                         Err(error) => {
                             report_count += 1;
-                            discard_staged_fetch(&fetch.staged_path);
+                            if fetch.staged_was_created {
+                                discard_staged_fetch(&fetch.staged_path);
+                            }
                             record_crawl_fetch_log(
                                 &settings.database_url,
                                 &CrawlFetchLogEntry {
@@ -939,7 +941,9 @@ pub async fn run_fetch_command(
                     );
                     if !final_robots.allowed {
                         report_count += 1;
-                        discard_staged_fetch(&fetch.staged_path);
+                        if fetch.staged_was_created {
+                            discard_staged_fetch(&fetch.staged_path);
+                        }
                         record_crawl_fetch_log(
                             &settings.database_url,
                             &CrawlFetchLogEntry {
@@ -3117,6 +3121,153 @@ targets:
             Some(&1)
         );
         assert_eq!(health_summary.reason_totals.get("blocked_policy"), Some(&1));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn blocked_redirect_keeps_shared_staged_fetch_for_latest_successful_run(
+    ) -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler integration test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let shared_page_html =
+            "<html><body><h1>Shared Staged Redirect Guard</h1><time datetime=\"2026-08-01T10:00:00+09:00\"></time></body></html>";
+
+        let initial_state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(shared_page_html.to_string()),
+            page_two_html: None,
+        };
+        let initial_app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events", get(page_handler))
+            .with_state(initial_state);
+        let initial_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let initial_address = initial_listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(initial_listener, initial_app).await;
+        });
+
+        let manifest_path = temp.path().join("shared_staged_redirect_guard.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: shared-staged-redirect-guard
+source_name: Shared staged redirect guard
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: redirected_page
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = initial_address.port()
+            ),
+        )?;
+
+        run_fetch_command(&settings, &manifest_path).await?;
+
+        let redirected_state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(shared_page_html.to_string()),
+            page_two_html: None,
+        };
+        let redirected_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let redirected_address = redirected_listener.local_addr()?;
+        let redirected_url = format!("http://localhost:{}/redirected", redirected_address.port());
+        let redirect_handler = {
+            let redirected_url = redirected_url.clone();
+            move || {
+                let redirected_url = redirected_url.clone();
+                async move { Redirect::temporary(&redirected_url) }
+            }
+        };
+        let redirected_app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events", get(redirect_handler))
+            .route("/redirected", get(page_handler))
+            .with_state(redirected_state);
+        tokio::spawn(async move {
+            let _ = axum::serve(redirected_listener, redirected_app).await;
+        });
+
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: shared-staged-redirect-guard
+source_name: Shared staged redirect guard
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: redirected_page
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = redirected_address.port()
+            ),
+        )?;
+
+        let blocked_error = run_fetch_command(&settings, &manifest_path)
+            .await
+            .expect_err("redirect outside allowlist should be blocked");
+        assert!(blocked_error
+            .to_string()
+            .contains("no crawl targets were fetched successfully"));
+
+        let parse_summary = run_parse_command(&settings, &manifest_path).await?;
+        assert_eq!(parse_summary.imported_rows, 1);
+
+        let active_titles = client
+            .query(
+                "SELECT title
+                 FROM events
+                 WHERE source_type = 'crawl'
+                   AND source_key = 'shared-staged-redirect-guard'
+                   AND is_active = TRUE",
+                &[],
+            )
+            .await?
+            .into_iter()
+            .map(|row| row.get::<_, String>("title"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            active_titles,
+            vec!["Shared Staged Redirect Guard".to_string()]
+        );
 
         Ok(())
     }

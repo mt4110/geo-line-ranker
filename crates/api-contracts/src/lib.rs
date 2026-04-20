@@ -86,6 +86,7 @@ pub struct ReadyResponse {
     pub status: String,
     pub database: String,
     pub cache: String,
+    pub opensearch: String,
 }
 
 impl RecommendationRequest {

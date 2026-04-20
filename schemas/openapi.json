@@ -45,6 +45,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "readiness probe failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -128,13 +138,17 @@
         "required": [
           "status",
           "database",
-          "cache"
+          "cache",
+          "opensearch"
         ],
         "properties": {
           "cache": {
             "type": "string"
           },
           "database": {
+            "type": "string"
+          },
+          "opensearch": {
             "type": "string"
           },
           "status": {

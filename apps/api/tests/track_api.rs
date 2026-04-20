@@ -10,8 +10,9 @@ use axum::{
     http::{Request, StatusCode},
 };
 use cache::RecommendationCache;
-use config::{CandidateRetrievalMode, RankingProfiles};
+use config::{CandidateRetrievalMode, OpenSearchSettings, RankingProfiles};
 use ranking::RankingEngine;
+use storage_opensearch::OpenSearchStore;
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
 use tokio_postgres::NoTls;
 use tower::ServiceExt;
@@ -569,6 +570,127 @@ async fn ready_endpoint_requires_snapshot_tables() -> anyhow::Result<()> {
             .as_str()
             .unwrap_or_default()
             .contains("popularity_snapshots"));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn ready_endpoint_reports_disabled_opensearch_in_sql_only_mode() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_ready_ok").await
+    else {
+        eprintln!("skipping ready integration test because PostgreSQL admin access is unavailable");
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("ready response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["status"], "ready");
+        assert_eq!(payload["database"], "reachable");
+        assert_eq!(payload["opensearch"], "disabled");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn ready_endpoint_requires_opensearch_in_full_mode() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_ready_full").await
+    else {
+        eprintln!("skipping ready integration test because PostgreSQL admin access is unavailable");
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let candidate_backend =
+            api::CandidateBackend::Full(OpenSearchStore::new(&OpenSearchSettings {
+                url: "http://127.0.0.1:9".to_string(),
+                index_name: "geo_line_ranker_candidates".to_string(),
+                username: None,
+                password: None,
+                request_timeout_secs: 1,
+            })?);
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::Full,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("ready response");
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["status"], "not_ready");
+        assert_eq!(payload["database"], "reachable");
+        assert!(payload["opensearch"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("failed to check OpenSearch index"));
 
         Ok(())
     }

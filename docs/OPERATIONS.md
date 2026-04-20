@@ -19,7 +19,7 @@ The API exposes:
 - `GET /healthz`
 - `GET /readyz`
 
-`/readyz` reports database reachability plus cache status. Cache degradation only removes the fast path.
+`/readyz` reports database reachability, cache status, and OpenSearch readiness. In `sql_only` mode the OpenSearch field is `disabled`; in `full` mode readiness stays red until the configured candidate index is reachable. Cache degradation only removes the fast path.
 
 ## Placement profile rollout
 

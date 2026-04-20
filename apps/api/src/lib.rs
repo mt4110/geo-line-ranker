@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
+use anyhow::Result;
+
 use api_contracts::{
     HealthResponse, ReadyResponse, RecommendationRequest, RecommendationResponse, TrackRequest,
     TrackResponse,
@@ -34,6 +36,16 @@ impl CandidateBackend {
         match self {
             Self::SqlOnly => "postgresql",
             Self::Full(_) => "opensearch",
+        }
+    }
+
+    async fn ready_check(&self) -> Result<String> {
+        match self {
+            Self::SqlOnly => Ok("disabled".to_string()),
+            Self::Full(store) => {
+                store.ready_check().await?;
+                Ok("reachable".to_string())
+            }
         }
     }
 }
@@ -83,24 +95,40 @@ async fn healthz() -> Json<HealthResponse> {
 }
 
 async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
-    match state.repository.ready_check().await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(ReadyResponse {
-                status: "ready".to_string(),
-                database: "reachable".to_string(),
-                cache: state.cache.status().await,
-            }),
-        ),
-        Err(error) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ReadyResponse {
-                status: "not_ready".to_string(),
-                database: error.to_string(),
-                cache: state.cache.status().await,
-            }),
-        ),
-    }
+    let cache = state.cache.status().await;
+    let (database_result, opensearch_result) = tokio::join!(
+        state.repository.ready_check(),
+        state.candidate_backend.ready_check()
+    );
+    let database_ready = database_result.is_ok();
+    let opensearch_ready = opensearch_result.is_ok();
+
+    let database = match database_result {
+        Ok(_) => "reachable".to_string(),
+        Err(error) => error.to_string(),
+    };
+    let opensearch = match opensearch_result {
+        Ok(status) => status,
+        Err(error) => error.to_string(),
+    };
+    let is_ready = database_ready && opensearch_ready;
+
+    let status_code = if is_ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let status = if is_ready { "ready" } else { "not_ready" };
+
+    (
+        status_code,
+        Json(ReadyResponse {
+            status: status.to_string(),
+            database,
+            cache,
+            opensearch,
+        }),
+    )
 }
 
 async fn recommend(
