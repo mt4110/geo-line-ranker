@@ -2,6 +2,6 @@ FROM rust:1.82-bookworm
 
 WORKDIR /app
 COPY . .
-RUN cargo build -p api
+RUN cargo build -p api -p cli
 
-CMD ["bash", "-lc", "cargo run -p cli -- migrate && cargo run -p api -- serve"]
+CMD ["bash", "-lc", "/app/target/debug/cli migrate && /app/target/debug/api serve"]

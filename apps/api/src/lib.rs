@@ -378,7 +378,7 @@ async fn record_trace(
         request_payload: serde_json::to_value(request).unwrap_or_default(),
         response_payload: serde_json::to_value(response).unwrap_or_default(),
         trace_payload,
-        fallback_stage: response.fallback_stage.clone(),
+        fallback_stage: response.fallback_stage.as_str().to_string(),
         algorithm_version: response.algorithm_version.clone(),
     };
     repository.record_trace(&trace).await

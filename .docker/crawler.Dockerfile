@@ -4,4 +4,4 @@ WORKDIR /app
 COPY . .
 RUN cargo build -p crawler
 
-CMD ["cargo", "run", "-p", "crawler", "--", "serve"]
+CMD ["/app/target/debug/crawler", "serve"]

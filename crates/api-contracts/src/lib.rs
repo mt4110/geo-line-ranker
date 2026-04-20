@@ -53,6 +53,15 @@ pub enum FallbackStageDto {
     Neighbor,
 }
 
+impl FallbackStageDto {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Neighbor => "neighbor",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RecommendationResponse {
     pub items: Vec<RecommendationItemDto>,

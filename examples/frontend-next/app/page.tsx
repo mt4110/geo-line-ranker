@@ -149,7 +149,19 @@ export default function Page() {
                 max={5}
                 type="number"
                 value={limit}
-                onChange={(event) => setLimit(Number(event.target.value))}
+                onChange={(event) => {
+                  const rawValue = event.target.value.trim();
+                  if (rawValue === "") {
+                    return;
+                  }
+
+                  const nextLimit = Number(rawValue);
+                  if (Number.isNaN(nextLimit)) {
+                    return;
+                  }
+
+                  setLimit(Math.min(5, Math.max(1, nextLimit)));
+                }}
               />
             </label>
 
@@ -160,11 +172,7 @@ export default function Page() {
         </div>
 
         <div className="visualPanel">
-          <div
-            aria-label="Offline preview of the selected ranking request"
-            className="visualImage"
-            role="img"
-          >
+          <div className="visualImage">
             <div className="visualRoute" aria-hidden="true">
               {stationOptions.map((station) => (
                 <div
