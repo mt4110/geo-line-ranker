@@ -17,13 +17,14 @@ use generic_http::{
 };
 use serde_json::{json, Value};
 use storage_postgres::{
-    begin_crawl_run, claim_latest_fetched_crawl_run, finish_crawl_run, import_crawled_events,
-    latest_crawl_fetch_checksum, load_active_event_ids_for_source, load_crawl_fetch_logs,
-    load_crawl_parse_errors, load_crawl_run_health, load_existing_school_ids,
-    load_latest_fetched_crawl_run, mark_crawl_run_fetched, record_crawl_dedupe_report,
-    record_crawl_fetch_log, record_crawl_parse_report, CrawlDedupeReportEntry, CrawlFetchLogEntry,
-    CrawlParseErrorSnapshot, CrawlParseReportEntry, CrawlRunHealthSnapshot, EventCsvRecord,
-    SourceManifestAudit, StoredCrawlFetchLog, StoredCrawlParseError,
+    begin_crawl_run, claim_fetched_crawl_run, claim_latest_fetched_crawl_run, finish_crawl_run,
+    import_crawled_events, latest_crawl_fetch_checksum, load_active_event_ids_for_source,
+    load_crawl_fetch_logs, load_crawl_parse_errors, load_crawl_run_health,
+    load_existing_school_ids, load_latest_fetched_crawl_run, mark_crawl_run_fetched,
+    record_crawl_dedupe_report, record_crawl_fetch_log, record_crawl_parse_report,
+    CrawlDedupeReportEntry, CrawlFetchLogEntry, CrawlParseErrorSnapshot, CrawlParseReportEntry,
+    CrawlRunHealthSnapshot, EventCsvRecord, SourceManifestAudit, StoredCrawlFetchLog,
+    StoredCrawlParseError,
 };
 
 const CRAWLER_CONTACT_URL: &str = "https://github.com/mt4110/geo-line-ranker";
@@ -1084,18 +1085,6 @@ pub async fn run_parse_command(
     manifest_path: impl AsRef<Path>,
 ) -> Result<CrawlCommandSummary> {
     let manifest_path = canonical_manifest_path(manifest_path)?;
-    let manifest = load_manifest(&manifest_path)?;
-    let targets = resolve_and_validate_targets(&manifest)?;
-    let targets_by_name = targets
-        .into_iter()
-        .map(|target| (target.logical_name.clone(), target))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let registry = ParserRegistry::default();
-    let parser = registry
-        .get(&manifest.parser_key)
-        .with_context(|| format!("unknown parser_key {}", manifest.parser_key))?;
-    let _metadata = resolve_manifest_metadata(&manifest, Some(parser))?;
-    let parser_version = manifest.effective_parser_version(parser.default_version());
     let pending_run = claim_latest_fetched_crawl_run(
         &settings.database_url,
         &manifest_path.display().to_string(),
@@ -1107,7 +1096,26 @@ pub async fn run_parse_command(
             manifest_path.display()
         )
     })?;
-    let crawl_run_id = pending_run.crawl_run_id;
+    run_parse_command_with_claimed_run(settings, &manifest_path, pending_run.crawl_run_id).await
+}
+
+async fn run_parse_command_with_claimed_run(
+    settings: &AppSettings,
+    manifest_path: &Path,
+    crawl_run_id: i64,
+) -> Result<CrawlCommandSummary> {
+    let manifest = load_manifest(manifest_path)?;
+    let targets = resolve_and_validate_targets(&manifest)?;
+    let targets_by_name = targets
+        .into_iter()
+        .map(|target| (target.logical_name.clone(), target))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let registry = ParserRegistry::default();
+    let parser = registry
+        .get(&manifest.parser_key)
+        .with_context(|| format!("unknown parser_key {}", manifest.parser_key))?;
+    let _metadata = resolve_manifest_metadata(&manifest, Some(parser))?;
+    let parser_version = manifest.effective_parser_version(parser.default_version());
 
     let mut report_count = 0_usize;
     let mut parsed_rows = 0_i64;
@@ -1315,9 +1323,19 @@ pub async fn run_crawl_command(
     settings: &AppSettings,
     manifest_path: impl AsRef<Path>,
 ) -> Result<CrawlCommandSummary> {
-    let manifest_path = manifest_path.as_ref().to_path_buf();
+    let manifest_path = canonical_manifest_path(manifest_path)?;
     let fetch_summary = run_fetch_command(settings, &manifest_path).await?;
-    let parse_summary = run_parse_command(settings, &manifest_path).await?;
+    let pending_run = claim_fetched_crawl_run(&settings.database_url, fetch_summary.crawl_run_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "fetched crawl run {} is no longer ready for parsing",
+                fetch_summary.crawl_run_id
+            )
+        })?;
+    let parse_summary =
+        run_parse_command_with_claimed_run(settings, &manifest_path, pending_run.crawl_run_id)
+            .await?;
 
     Ok(CrawlCommandSummary {
         label: parse_summary.label,

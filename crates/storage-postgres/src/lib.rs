@@ -1793,6 +1793,28 @@ pub async fn claim_latest_fetched_crawl_run(
     }))
 }
 
+pub async fn claim_fetched_crawl_run(
+    database_url: &str,
+    crawl_run_id: i64,
+) -> Result<Option<CrawlRunState>> {
+    let repo = PgRepository::new(database_url);
+    let client = repo.connect().await?;
+    let row = client
+        .query_opt(
+            "UPDATE crawl_runs
+             SET status = 'parsing'
+             WHERE id = $1
+               AND status = 'fetched'
+             RETURNING id, status",
+            &[&crawl_run_id],
+        )
+        .await?;
+    Ok(row.map(|row| CrawlRunState {
+        crawl_run_id: row.get("id"),
+        status: row.get("status"),
+    }))
+}
+
 pub async fn set_crawl_run_status(
     database_url: &str,
     crawl_run_id: i64,
