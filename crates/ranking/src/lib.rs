@@ -199,7 +199,7 @@ impl RankingEngine {
             .enabled_content_kinds
             .contains(&ContentKind::Event);
 
-        let mut best_candidates = HashMap::<String, ScoredCandidate>::new();
+        let mut best_candidates = HashMap::<(ContentKind, String), ScoredCandidate>::new();
 
         for link in candidates {
             let Some(school) = schools_by_id.get(link.school_id.as_str()) else {
@@ -599,11 +599,11 @@ fn build_item(
 }
 
 fn upsert_best_candidate(
-    best_candidates: &mut HashMap<String, ScoredCandidate>,
+    best_candidates: &mut HashMap<(ContentKind, String), ScoredCandidate>,
     candidate: ScoredCandidate,
 ) {
     let entry = best_candidates
-        .entry(candidate.content_id.clone())
+        .entry((candidate.content_kind, candidate.content_id.clone()))
         .or_insert_with(|| candidate.clone());
     if compare_candidates(&candidate.item, &entry.item).is_lt() {
         *entry = candidate;
@@ -780,10 +780,13 @@ mod tests {
     use std::path::PathBuf;
 
     use config::RankingProfiles;
-    use domain::{PlacementKind, PopularitySnapshot, RankingQuery, UserAffinitySnapshot};
+    use domain::{
+        ContentKind, PlacementKind, PopularitySnapshot, RankingQuery, RecommendationItem,
+        UserAffinitySnapshot,
+    };
     use test_support::load_fixture_dataset;
 
-    use super::{FallbackStage, RankingEngine};
+    use super::{upsert_best_candidate, FallbackStage, RankingEngine, ScoredCandidate};
 
     fn fixture_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../storage/fixtures/minimal")
@@ -955,5 +958,51 @@ mod tests {
             .iter()
             .filter(|component| component.feature == "user_affinity_bonus")
             .all(|component| component.details.is_some()));
+    }
+
+    #[test]
+    fn best_candidate_map_keeps_school_and_event_namespaces_separate() {
+        let mut best_candidates = std::collections::HashMap::new();
+
+        upsert_best_candidate(
+            &mut best_candidates,
+            candidate(ContentKind::School, "shared-id", "school_seaside", 10.0),
+        );
+        upsert_best_candidate(
+            &mut best_candidates,
+            candidate(ContentKind::Event, "shared-id", "school_seaside", 11.0),
+        );
+
+        assert_eq!(best_candidates.len(), 2);
+        assert!(best_candidates.contains_key(&(ContentKind::School, "shared-id".to_string())));
+        assert!(best_candidates.contains_key(&(ContentKind::Event, "shared-id".to_string())));
+    }
+
+    fn candidate(
+        content_kind: ContentKind,
+        content_id: &str,
+        school_id: &str,
+        score: f64,
+    ) -> ScoredCandidate {
+        ScoredCandidate {
+            content_kind,
+            content_id: content_id.to_string(),
+            school_id: school_id.to_string(),
+            group_id: "group".to_string(),
+            item: RecommendationItem {
+                content_kind,
+                content_id: content_id.to_string(),
+                school_id: school_id.to_string(),
+                school_name: "Test School".to_string(),
+                event_id: None,
+                event_title: None,
+                primary_station_id: "station".to_string(),
+                primary_station_name: "Test Station".to_string(),
+                line_name: "Test Line".to_string(),
+                score,
+                explanation: "test".to_string(),
+                score_breakdown: Vec::new(),
+            },
+        }
     }
 }

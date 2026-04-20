@@ -204,10 +204,7 @@ impl RobotsGroup {
             .filter_map(|agent| {
                 if agent == "*" {
                     Some(0)
-                } else if requested_agent == agent
-                    || requested_agent.starts_with(agent)
-                    || requested_agent.contains(agent)
-                {
+                } else if requested_agent == agent || requested_agent.starts_with(agent) {
                     Some(agent.len())
                 } else {
                     None
@@ -407,6 +404,22 @@ Allow: /events/open-campus
             decision.matched_rule.as_deref(),
             Some("allow:/events/open-campus")
         );
+    }
+
+    #[test]
+    fn robots_does_not_treat_arbitrary_substrings_as_agent_matches() {
+        let robots = r#"
+User-agent: line
+Disallow: /
+
+User-agent: *
+Allow: /
+"#;
+
+        let decision = evaluate_robots(robots, "geo-line-ranker-bot/0.1", "/events/open-campus");
+
+        assert!(decision.allowed);
+        assert_eq!(decision.matched_rule.as_deref(), Some("allow:/"));
     }
 
     #[test]
