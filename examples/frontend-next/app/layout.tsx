@@ -1,15 +1,16 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 
 export const metadata: Metadata = {
   title: "geo-line-ranker example",
-  description: "Phase 6 example frontend for deterministic geo/line ranking."
+  description: "Example frontend for deterministic placement-aware geo/line ranking."
 };
 
 export default function RootLayout({
   children
 }: Readonly<{
-  children: React.ReactNode;
+  children: ReactNode;
 }>) {
   return (
     <html lang="en">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 
 type ScoreComponent = {
   feature: string;
@@ -59,8 +59,13 @@ export default function Page() {
     () => process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:4000",
     []
   );
+  const selectedStation =
+    stationOptions.find((station) => station.value === targetStationId) ?? stationOptions[0];
+  const selectedPlacement =
+    placementOptions.find((option) => option.value === placement) ?? placementOptions[0];
+  const previewItems = response?.items.slice(0, 3) ?? [];
 
-  async function submitForm(event: React.FormEvent<HTMLFormElement>) {
+  async function submitForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsLoading(true);
     setError(null);
@@ -99,7 +104,7 @@ export default function Page() {
       <section className="workspace">
         <div className="toolPanel">
           <div className="toolHeader">
-            <p className="eyebrow">Phase 6 Example</p>
+            <p className="eyebrow">Example frontend</p>
             <h1>Placement-aware ranking</h1>
             <p className="lede">
               Mixed school and event ranking with placement profiles and diversity control.
@@ -155,14 +160,77 @@ export default function Page() {
         </div>
 
         <div className="visualPanel">
-          <img
-            alt="Rail platform for the example frontend"
+          <div
+            aria-label="Offline preview of the selected ranking request"
             className="visualImage"
-            src="https://images.unsplash.com/photo-1474487548417-781cb71495f3?auto=format&fit=crop&w=1200&q=80"
-          />
+            role="img"
+          >
+            <div className="visualRoute" aria-hidden="true">
+              {stationOptions.map((station) => (
+                <div
+                  className={`visualStop${station.value === selectedStation.value ? " isActive" : ""}`}
+                  key={station.value}
+                >
+                  <span className="visualStopDot" />
+                  <span className="visualStopLabel">{station.label}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="visualStage">
+              <div className="visualStageHeader">
+                <div>
+                  <p className="visualEyebrow">Target station</p>
+                  <p className="visualStation">{selectedStation.label}</p>
+                </div>
+                <div className="visualStageMeta">
+                  <span className="visualPill">{selectedPlacement.label}</span>
+                  <span className="visualPill visualPillMuted">{limit} slots</span>
+                </div>
+              </div>
+
+              <div className="visualPlacementStrip">
+                {placementOptions.map((option) => (
+                  <span
+                    className={`visualPlacementChip${option.value === selectedPlacement.value ? " isSelected" : ""}`}
+                    key={option.value}
+                  >
+                    {option.label}
+                  </span>
+                ))}
+              </div>
+
+              {previewItems.length > 0 ? (
+                <ul className="visualPreviewList">
+                  {previewItems.map((item) => (
+                    <li className="visualPreviewRow" key={`preview-${item.content_id}`}>
+                      <div>
+                        <div className="visualPreviewHeading">
+                          <span className="visualPreviewTitle">
+                            {item.content_kind === "event"
+                              ? item.event_title ?? item.school_name
+                              : item.school_name}
+                          </span>
+                          <span className="visualPreviewKind">{item.content_kind}</span>
+                        </div>
+                        <p className="visualPreviewMeta">
+                          {item.primary_station_name} / {item.line_name}
+                        </p>
+                      </div>
+                      <span className="visualPreviewScore">{item.score.toFixed(2)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="visualEmpty">
+                  Offline-ready preview updates after you run one request.
+                </p>
+              )}
+            </div>
+          </div>
           <div className="visualMeta">
             <span>{apiBaseUrl}</span>
-            <span>{response?.profile_version.slice(0, 12) ?? "phase6-profile"}</span>
+            <span>{response?.profile_version ?? "profile-version"}</span>
           </div>
         </div>
       </section>

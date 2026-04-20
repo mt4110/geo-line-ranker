@@ -31,7 +31,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["school", "event", "article"]
+            "enum": ["school", "event"]
           },
           "minItems": 1,
           "uniqueItems": true
@@ -41,8 +41,7 @@
           "additionalProperties": false,
           "properties": {
             "school": { "type": "number" },
-            "event": { "type": "number" },
-            "article": { "type": "number" }
+            "event": { "type": "number" }
           }
         },
         "featured_event_bonus": {
@@ -81,11 +80,6 @@
               "maximum": 1
             },
             "event": {
-              "type": "number",
-              "exclusiveMinimum": 0,
-              "maximum": 1
-            },
-            "article": {
               "type": "number",
               "exclusiveMinimum": 0,
               "maximum": 1

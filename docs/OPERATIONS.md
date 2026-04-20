@@ -44,8 +44,8 @@ Operational notes:
 
 - raw input is checksum-staged under `.storage/raw/event-csv/...`
 - import audit is written to `import_runs`, `import_run_files`, and `import_reports`
-- repeated import of the same file path is idempotent
-- rows no longer present in the same source file are marked `is_active = false`
+- repeated import of the same logical `event-csv` source is idempotent, even when the CSV file path changes
+- rows no longer present in the same logical `event-csv` source are marked `is_active = false`
 
 Inspect recent event imports:
 

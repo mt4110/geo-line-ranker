@@ -30,7 +30,7 @@ services:
       REDIS_URL: redis://redis:6379
       RANKING_CONFIG_DIR: configs/ranking
       FIXTURE_DIR: storage/fixtures/minimal
-      ALGORITHM_VERSION: phase4-candidate-retrieval-v1
+      ALGORITHM_VERSION: phase5-placement-mixed-ranking-v1
       CANDIDATE_RETRIEVAL_MODE: sql_only
       CANDIDATE_RETRIEVAL_LIMIT: 256
       RECOMMENDATION_CACHE_TTL_SECS: 120

@@ -93,11 +93,11 @@ The ranker may return fewer than the requested limit when the hard caps would ot
 - JP importers still use source manifests plus normalized tables.
 - Operational event CSV uses direct file import through `cargo run -p cli -- import event-csv --file ...`.
 - Raw CSV is checksum-staged under `.storage/raw/event-csv/...`.
-- The importer upserts current rows and marks stale rows from the same source inactive.
+- The importer uses a stable logical source key (`event-csv`) so renamed operational exports still deactivate stale rows from the same feed.
 - Import success and failure are recorded in `import_runs`, `import_run_files`, and `import_reports`.
 - Allowlist crawl uses `cargo run -p crawler -- fetch|parse --manifest ...`.
 - Fetch writes raw HTML into `.storage/raw/<source_id>/<checksum>/...`.
-- Parse uses the registry-selected parser, records parse failures explicitly, dedupes deterministic event IDs, and imports rows into `events` as `source_type = 'crawl'`.
+- Parse uses the registry-selected parser, records parse failures explicitly, dedupes deterministic event IDs, and imports rows into `events` as `source_type = 'crawl'` with manifest `source_id` as the stable source key.
 - Crawl success and failure are recorded in `crawl_runs`, `crawl_fetch_logs`, `crawl_parse_reports`, and `crawl_dedupe_reports`.
 
 ## Phase 6 crate map

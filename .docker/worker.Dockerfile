@@ -4,5 +4,4 @@ WORKDIR /app
 COPY . .
 RUN cargo build -p worker
 
-CMD ["cargo", "run", "-p", "worker", "--", "serve"]
-
+CMD ["/app/target/debug/worker", "serve"]

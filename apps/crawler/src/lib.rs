@@ -1242,7 +1242,7 @@ pub async fn run_parse_command(
 
         let summary = import_crawled_events(
             &settings.database_url,
-            &manifest_path.display().to_string(),
+            &manifest.source_id,
             &deduped.iter().map(to_event_csv_record).collect::<Vec<_>>(),
             can_deactivate_stale_rows(&fetch_logs, parse_failed_targets, zero_row_targets),
         )
@@ -1685,13 +1685,10 @@ pub async fn run_dry_run_command(
             ),
         });
     }
-    let active_ids = load_active_event_ids_for_source(
-        &settings.database_url,
-        "crawl",
-        &manifest_path.display().to_string(),
-    )
-    .await
-    .with_context(|| "failed to load active event ids for dry-run")?;
+    let active_ids =
+        load_active_event_ids_for_source(&settings.database_url, "crawl", &manifest.source_id)
+            .await
+            .with_context(|| "failed to load active event ids for dry-run")?;
     let deactivated_rows = if !can_deactivate_stale_rows(
         &fetch_logs,
         parse_errors.len(),
@@ -2879,11 +2876,159 @@ targets:
                  WHERE source_type = 'crawl'
                    AND source_key = $1
                    AND is_active = TRUE",
-                &[&manifest_path.canonicalize()?.display().to_string()],
+                &[&"custom-example-success"],
             )
             .await?
             .get::<_, i64>("count");
         assert_eq!(event_count, 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_command_uses_manifest_source_id_as_stable_source_key() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler integration test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+
+        let first_state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(
+                "<html><body><h1>Seaside First Crawl Open Campus</h1><time datetime=\"2026-08-01T10:00:00+09:00\"></time></body></html>"
+                    .to_string(),
+            ),
+            page_two_html: None,
+        };
+        let first_app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events", get(page_handler))
+            .with_state(first_state);
+        let first_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let first_address = first_listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(first_listener, first_app).await;
+        });
+
+        let first_manifest_path = temp.path().join("first_source.yaml");
+        std::fs::write(
+            &first_manifest_path,
+            format!(
+                r#"
+source_id: stable-crawl-source
+source_name: Stable crawl source
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+  is_open_day: true
+  placement_tags: [home, detail]
+targets:
+  - logical_name: custom_example
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = first_address.port()
+            ),
+        )?;
+        run_fetch_command(&settings, &first_manifest_path).await?;
+        run_parse_command(&settings, &first_manifest_path).await?;
+
+        let second_state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(
+                "<html><body><h1>Seaside Second Crawl Open Campus</h1><time datetime=\"2026-09-01T10:00:00+09:00\"></time></body></html>"
+                    .to_string(),
+            ),
+            page_two_html: None,
+        };
+        let second_app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events", get(page_handler))
+            .with_state(second_state);
+        let second_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let second_address = second_listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(second_listener, second_app).await;
+        });
+
+        let second_manifest_path = temp.path().join("renamed_source.yaml");
+        std::fs::write(
+            &second_manifest_path,
+            format!(
+                r#"
+source_id: stable-crawl-source
+source_name: Stable crawl source renamed
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+  is_open_day: true
+  placement_tags: [home, detail]
+targets:
+  - logical_name: custom_example
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = second_address.port()
+            ),
+        )?;
+        run_fetch_command(&settings, &second_manifest_path).await?;
+        run_parse_command(&settings, &second_manifest_path).await?;
+
+        let active_titles = client
+            .query(
+                "SELECT title
+                 FROM events
+                 WHERE source_type = 'crawl'
+                   AND source_key = $1
+                   AND is_active = TRUE
+                 ORDER BY title ASC",
+                &[&"stable-crawl-source"],
+            )
+            .await?;
+        assert_eq!(active_titles.len(), 1);
+        assert_eq!(
+            active_titles[0].get::<_, String>("title"),
+            "Seaside Second Crawl Open Campus"
+        );
+
+        let stale_active = client
+            .query_one(
+                "SELECT is_active
+                 FROM events
+                 WHERE title = $1",
+                &[&"Seaside First Crawl Open Campus"],
+            )
+            .await?
+            .get::<_, bool>("is_active");
+        assert!(!stale_active);
 
         Ok(())
     }
@@ -3130,7 +3275,7 @@ targets:
 
         crawl_manifest_dir_once(&settings, &manifest_dir).await?;
 
-        let source_key = valid_manifest_path.canonicalize()?.display().to_string();
+        let source_key = "serve-loop-guard";
         let event_count = client
             .query_one(
                 "SELECT COUNT(*) AS count
@@ -3229,7 +3374,7 @@ targets:
         let partial_parse = run_parse_command(&settings, &manifest_path).await?;
         assert_eq!(partial_parse.imported_rows, 1);
 
-        let source_key = manifest_path.canonicalize()?.display().to_string();
+        let source_key = "partial-import-local";
         let rows = client
             .query(
                 "SELECT title
@@ -3372,7 +3517,7 @@ targets:
         let guarded_parse = run_parse_command(&settings, &manifest_path).await?;
         assert_eq!(guarded_parse.imported_rows, 0);
 
-        let source_key = manifest_path.canonicalize()?.display().to_string();
+        let source_key = "missing-school-guard";
         let active_titles = client
             .query(
                 "SELECT title
@@ -3515,7 +3660,7 @@ targets:
                    AND source_key = $1
                    AND is_active = TRUE
                  ORDER BY starts_at ASC, title ASC",
-                &[&manifest_path.canonicalize()?.display().to_string()],
+                &[&"shibaura-local"],
             )
             .await?;
         assert_eq!(rows.len(), 4);
@@ -3618,7 +3763,7 @@ targets:
                    AND source_key = $1
                    AND is_active = TRUE
                  ORDER BY starts_at ASC, title ASC",
-                &[&manifest_path.canonicalize()?.display().to_string()],
+                &[&"nihon-local"],
             )
             .await?;
         assert_eq!(rows.len(), 8);
@@ -3724,7 +3869,7 @@ targets:
                    AND source_key = $1
                    AND is_active = TRUE
                  ORDER BY starts_at ASC, title ASC",
-                &[&manifest_path.canonicalize()?.display().to_string()],
+                &[&"aoyama-local"],
             )
             .await?;
         assert_eq!(rows.len(), 10);
@@ -4345,7 +4490,7 @@ targets:
                    AND source_key = $1
                    AND is_active = TRUE
                  ORDER BY starts_at ASC, title ASC",
-                &[&manifest_path.canonicalize()?.display().to_string()],
+                &[&"keio-local"],
             )
             .await?;
         assert_eq!(rows.len(), 4);
@@ -4514,7 +4659,7 @@ targets:
                  WHERE source_type = 'crawl'
                    AND source_key = $1
                    AND is_active = TRUE",
-                &[&manifest_path.canonicalize()?.display().to_string()],
+                &[&"keio-zero-events"],
             )
             .await?
             .get::<_, i64>("count");
@@ -4616,7 +4761,7 @@ targets:
                    AND source_key = $1
                    AND is_active = TRUE
                  ORDER BY starts_at ASC, title ASC",
-                &[&manifest_path.canonicalize()?.display().to_string()],
+                &[&"hachioji-local"],
             )
             .await?;
         assert_eq!(rows.len(), 5);

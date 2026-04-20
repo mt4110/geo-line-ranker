@@ -24,6 +24,7 @@ use storage_postgres::{
 };
 
 const EVENT_CSV_PARSER_VERSION: &str = "event-csv-v1";
+const EVENT_CSV_SOURCE_ID: &str = "event-csv";
 
 #[derive(Debug, Clone, Copy)]
 pub enum ImportTarget {
@@ -208,7 +209,7 @@ pub async fn run_event_csv_import(
         )
     })?;
     let manifest = SourceManifest {
-        source_id: "event-csv".to_string(),
+        source_id: EVENT_CSV_SOURCE_ID.to_string(),
         source_name: "Operational event CSV".to_string(),
         manifest_version: 1,
         parser_version: Some(EVENT_CSV_PARSER_VERSION.to_string()),
@@ -228,8 +229,12 @@ pub async fn run_event_csv_import(
     .await?;
 
     let result: Result<CommandSummary> = async {
-        let prepared_file =
-            stage_single_csv_file("event-csv", "events", &file_path, &settings.raw_storage_dir)?;
+        let prepared_file = stage_single_csv_file(
+            EVENT_CSV_SOURCE_ID,
+            "events",
+            &file_path,
+            &settings.raw_storage_dir,
+        )?;
         register_staged_files(
             settings,
             import_run_id,
@@ -246,12 +251,8 @@ pub async fn run_event_csv_import(
         .await?;
         let records = read_csv_rows::<EventCsvRecord>(&prepared_file)?;
         validate_event_csv_records(&records)?;
-        let summary = import_event_csv(
-            &settings.database_url,
-            &file_path.display().to_string(),
-            &records,
-        )
-        .await?;
+        let summary =
+            import_event_csv(&settings.database_url, EVENT_CSV_SOURCE_ID, &records).await?;
 
         persist_success_reports(
             &settings.database_url,
@@ -269,7 +270,7 @@ pub async fn run_event_csv_import(
         .await?;
 
         Ok(CommandSummary {
-            label: "event-csv".to_string(),
+            label: EVENT_CSV_SOURCE_ID.to_string(),
             import_run_id: Some(import_run_id),
             row_count: summary.core_rows,
             report_count: summary.report_entries.len() + 1,
@@ -289,7 +290,7 @@ pub async fn run_event_csv_import(
                     message: error.to_string(),
                     row_count: None,
                     details: json!({
-                        "source_id": "event-csv",
+                        "source_id": EVENT_CSV_SOURCE_ID,
                         "file_path": file_path.display().to_string()
                     }),
                 },

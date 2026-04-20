@@ -45,7 +45,7 @@ services:
       REDIS_URL: redis://redis:6379
       RANKING_CONFIG_DIR: configs/ranking
       FIXTURE_DIR: storage/fixtures/minimal
-      ALGORITHM_VERSION: phase4-candidate-retrieval-v1
+      ALGORITHM_VERSION: phase5-placement-mixed-ranking-v1
       CANDIDATE_RETRIEVAL_MODE: full
       CANDIDATE_RETRIEVAL_LIMIT: 256
       OPENSEARCH_URL: http://opensearch:9200
