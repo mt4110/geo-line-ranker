@@ -2870,6 +2870,27 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
     for user_event in read_ndjson(fixture_dir.join("user_events.ndjson"))? {
         transaction
             .execute(
+                "DELETE FROM user_events
+                 WHERE user_id = $1
+                   AND school_id IS NOT DISTINCT FROM $2
+                   AND event_type = $3
+                   AND event_id IS NOT DISTINCT FROM $4
+                   AND target_station_id IS NOT DISTINCT FROM $5
+                   AND occurred_at = $6
+                   AND payload = $7",
+                &[
+                    &user_event.user_id,
+                    &user_event.school_id,
+                    &user_event.event_kind.as_str(),
+                    &user_event.event_id,
+                    &user_event.target_station_id,
+                    &user_event.occurred_at,
+                    &user_event.payload,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
                 "INSERT INTO user_events (
                     user_id,
                     school_id,
@@ -2877,10 +2898,9 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
                     event_id,
                     target_station_id,
                     occurred_at,
-                    payload
+                     payload
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                 ON CONFLICT DO NOTHING",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 &[
                     &user_event.user_id,
                     &user_event.school_id,
