@@ -65,6 +65,28 @@ export type TrackResponse = {
   queued_jobs: string[];
 };
 
+async function buildRequestError(response: Response): Promise<Error> {
+  const contentType = response.headers.get("content-type") ?? "";
+  let detail = "";
+
+  try {
+    if (contentType.includes("application/json")) {
+      const payload = (await response.json()) as unknown;
+      detail = JSON.stringify(payload);
+    } else {
+      detail = await response.text();
+    }
+  } catch {
+    detail = "";
+  }
+
+  const boundedDetail = detail.trim().slice(0, 512);
+  const suffix = boundedDetail ? ` - ${boundedDetail}` : "";
+  return new Error(
+    `request failed: ${response.status} ${response.statusText}${suffix}`.trim()
+  );
+}
+
 export function createClient(baseUrl: string) {
   const apiBaseUrl = baseUrl.replace(/\/+$/, "");
 
@@ -79,7 +101,7 @@ export function createClient(baseUrl: string) {
       });
 
       if (!response.ok) {
-        throw new Error(`request failed: ${response.status}`);
+        throw await buildRequestError(response);
       }
 
       return (await response.json()) as RecommendationResponse;
@@ -95,7 +117,7 @@ export function createClient(baseUrl: string) {
       });
 
       if (!response.ok) {
-        throw new Error(`request failed: ${response.status}`);
+        throw await buildRequestError(response);
       }
 
       return (await response.json()) as TrackResponse;

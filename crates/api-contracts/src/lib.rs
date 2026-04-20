@@ -47,11 +47,18 @@ pub struct RecommendationItemDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FallbackStageDto {
+    Strict,
+    Neighbor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RecommendationResponse {
     pub items: Vec<RecommendationItemDto>,
     pub explanation: String,
     pub score_breakdown: Vec<ScoreComponentDto>,
-    pub fallback_stage: String,
+    pub fallback_stage: FallbackStageDto,
     pub profile_version: String,
     pub algorithm_version: String,
 }
@@ -176,6 +183,15 @@ impl From<ScoreComponent> for ScoreComponentDto {
     }
 }
 
+impl From<domain::FallbackStage> for FallbackStageDto {
+    fn from(value: domain::FallbackStage) -> Self {
+        match value {
+            domain::FallbackStage::Strict => Self::Strict,
+            domain::FallbackStage::Neighbor => Self::Neighbor,
+        }
+    }
+}
+
 impl From<RecommendationResult> for RecommendationResponse {
     fn from(value: RecommendationResult) -> Self {
         Self {
@@ -207,10 +223,7 @@ impl From<RecommendationResult> for RecommendationResponse {
                 .into_iter()
                 .map(ScoreComponentDto::from)
                 .collect(),
-            fallback_stage: match value.fallback_stage {
-                domain::FallbackStage::Strict => "strict".to_string(),
-                domain::FallbackStage::Neighbor => "neighbor".to_string(),
-            },
+            fallback_stage: value.fallback_stage.into(),
             profile_version: value.profile_version,
             algorithm_version: value.algorithm_version,
         }

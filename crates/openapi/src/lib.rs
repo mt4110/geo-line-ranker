@@ -53,6 +53,11 @@ fn track_doc() {}
 
 #[derive(OpenApi)]
 #[openapi(
+    info(
+        title = "geo-line-ranker API",
+        description = "Deterministic geo-first and line-first recommendation API.",
+        version = "0.1.0"
+    ),
     paths(healthz_doc, readyz_doc, recommend_doc, track_doc),
     components(
         schemas(

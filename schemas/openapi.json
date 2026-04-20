@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "openapi",
-    "description": "",
+    "title": "geo-line-ranker API",
+    "description": "Deterministic geo-first and line-first recommendation API.",
     "license": {
       "name": "MIT"
     },
@@ -259,7 +259,7 @@
             "type": "string"
           },
           "fallback_stage": {
-            "type": "string"
+            "$ref": "#/components/schemas/FallbackStageDto"
           },
           "items": {
             "type": "array",

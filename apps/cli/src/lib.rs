@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use config::AppSettings;
 use generic_csv::{
     count_csv_rows, load_manifest, read_csv_rows, stage_raw_files, stage_single_csv_file,
@@ -443,14 +444,35 @@ fn validate_event_csv_records(records: &[EventCsvRecord]) -> Result<()> {
             "duplicate event_id {} in event CSV",
             record.event_id
         );
+        if let Some(starts_at) = record.starts_at.as_deref() {
+            validate_starts_at(starts_at)?;
+        }
         let _ = record.normalized_placement_tags()?;
     }
     Ok(())
 }
 
+fn validate_starts_at(raw: &str) -> Result<()> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(());
+    }
+
+    let is_valid = NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok()
+        || DateTime::<FixedOffset>::parse_from_rfc3339(value).is_ok();
+    ensure!(
+        is_valid,
+        "starts_at must be ISO-8601 date (YYYY-MM-DD) or RFC3339 timestamp, got {}",
+        raw
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::generate_demo_jp_fixture;
+    use storage_postgres::EventCsvRecord;
+
+    use super::{generate_demo_jp_fixture, validate_event_csv_records};
 
     #[test]
     fn writes_demo_fixture_files() {
@@ -458,5 +480,55 @@ mod tests {
         let written = generate_demo_jp_fixture(temp.path()).expect("fixture generation");
         assert_eq!(written.len(), 4);
         assert!(written.iter().all(|path| path.exists()));
+    }
+
+    #[test]
+    fn event_csv_accepts_date_or_rfc3339_starts_at() {
+        let records = vec![
+            EventCsvRecord {
+                event_id: "event-date".to_string(),
+                school_id: "school-a".to_string(),
+                title: "Date Event".to_string(),
+                event_category: "open_campus".to_string(),
+                is_open_day: true,
+                is_featured: false,
+                priority_weight: 0.0,
+                starts_at: Some("2026-05-10".to_string()),
+                placement_tags: "home".to_string(),
+            },
+            EventCsvRecord {
+                event_id: "event-rfc3339".to_string(),
+                school_id: "school-a".to_string(),
+                title: "Timestamp Event".to_string(),
+                event_category: "open_campus".to_string(),
+                is_open_day: true,
+                is_featured: false,
+                priority_weight: 0.0,
+                starts_at: Some("2026-05-10T10:00:00+09:00".to_string()),
+                placement_tags: "detail".to_string(),
+            },
+        ];
+
+        validate_event_csv_records(&records).expect("valid starts_at formats");
+    }
+
+    #[test]
+    fn event_csv_rejects_non_iso_starts_at() {
+        let records = vec![EventCsvRecord {
+            event_id: "event-invalid".to_string(),
+            school_id: "school-a".to_string(),
+            title: "Bad Event".to_string(),
+            event_category: "open_campus".to_string(),
+            is_open_day: true,
+            is_featured: false,
+            priority_weight: 0.0,
+            starts_at: Some("05/10/2026 10:00".to_string()),
+            placement_tags: "home".to_string(),
+        }];
+
+        let error = validate_event_csv_records(&records).expect_err("invalid starts_at");
+        assert!(error
+            .to_string()
+            .contains("starts_at must be ISO-8601 date"));
     }
 }

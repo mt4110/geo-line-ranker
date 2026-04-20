@@ -111,6 +111,7 @@ pub struct UrlProbeSummary {
     pub http_status: Option<u16>,
     pub content_type: Option<String>,
     pub error: Option<String>,
+    pub body: Option<String>,
     pub body_preview: Option<String>,
 }
 
@@ -1358,7 +1359,7 @@ pub async fn run_doctor_command(
     )
     .await;
 
-    let robots_body = robots.body_preview.as_deref().unwrap_or_default();
+    let robots_body = robots.body.as_deref().unwrap_or_default();
     let mut targets_summary = Vec::new();
     let mut issues = Vec::new();
     let known_school_ids = match load_existing_school_ids(&settings.database_url, &school_ids).await
@@ -1465,8 +1466,14 @@ pub async fn run_doctor_command(
                     Some("target is blocked by robots policy".to_string()),
                 )
             } else {
-                let target_probe =
-                    probe_target_body(&client, &target.url, &manifest.allowlist.user_agent).await;
+                let target_probe = probe_target_body(
+                    &client,
+                    &target.url,
+                    &manifest.allowlist.user_agent,
+                    &manifest.allowlist.allowed_domains,
+                    robots_body,
+                )
+                .await;
                 if let Some(error) = target_probe.error {
                     issues.push(DiagnosticIssue {
                         level: "warn".to_string(),
@@ -2296,6 +2303,8 @@ async fn probe_target_body(
     client: &reqwest::Client,
     url: &str,
     user_agent: &str,
+    allowed_domains: &[String],
+    robots_body: &str,
 ) -> TargetBodyProbe {
     match client
         .get(url)
@@ -2305,11 +2314,39 @@ async fn probe_target_body(
     {
         Ok(response) => {
             let status = response.status();
+            let final_url = response.url().to_string();
             let content_type = response
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_string);
+            let parsed_final_url = match ensure_allowed_url(&final_url, allowed_domains) {
+                Ok(url) => url,
+                Err(error) => {
+                    return TargetBodyProbe {
+                        body: String::new(),
+                        content_type,
+                        error: Some(format!(
+                            "resolved final_url violated crawler allowlist: {error}"
+                        )),
+                    };
+                }
+            };
+            let final_robots = evaluate_robots(robots_body, user_agent, parsed_final_url.path());
+            if !final_robots.allowed {
+                return TargetBodyProbe {
+                    body: String::new(),
+                    content_type,
+                    error: Some(format!(
+                        "resolved final_url is blocked by robots policy{}",
+                        final_robots
+                            .matched_rule
+                            .as_deref()
+                            .map(|rule| format!(" ({rule})"))
+                            .unwrap_or_default()
+                    )),
+                };
+            }
             match response.text().await {
                 Ok(body) if status.is_success() => TargetBodyProbe {
                     body,
@@ -2548,6 +2585,7 @@ async fn probe_url(client: &reqwest::Client, url: &str, user_agent: &str) -> Url
         http_status: None,
         content_type: None,
         error: None,
+        body: None,
         body_preview: None,
     };
 
@@ -2567,8 +2605,10 @@ async fn probe_url(client: &reqwest::Client, url: &str, user_agent: &str) -> Url
                 .map(str::to_string);
             match response.bytes().await {
                 Ok(body) => {
+                    let full_body = String::from_utf8_lossy(&body).to_string();
                     let preview =
                         String::from_utf8_lossy(&body[..body.len().min(2048)]).to_string();
+                    summary.body = Some(full_body);
                     summary.body_preview = Some(preview);
                 }
                 Err(error) => {
@@ -4408,6 +4448,217 @@ targets:
         assert_eq!(
             summary.targets[0].shape_detail.as_deref(),
             Some("robots policy could not be evaluated for this target")
+        );
+        assert_eq!(probe_requests.load(Ordering::SeqCst), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn doctor_revalidates_redirected_shape_probe_against_allowlist() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler doctor redirect test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(
+                "<html><body><h1>Doctor Redirect Guard</h1></body></html>".to_string(),
+            ),
+            page_two_html: None,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let redirected_url = format!("http://localhost:{}/redirected", address.port());
+        let redirect_handler = {
+            let redirected_url = redirected_url.clone();
+            move || {
+                let redirected_url = redirected_url.clone();
+                async move { Redirect::temporary(&redirected_url) }
+            }
+        };
+        let app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route(
+                "/terms",
+                get(|| async { Html("<html><body>terms</body></html>") }),
+            )
+            .route("/events", get(redirect_handler))
+            .route("/redirected", get(page_handler))
+            .with_state(state);
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let manifest_path = temp.path().join("doctor_redirect_allowlist_guard.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: doctor-redirect-allowlist-guard
+source_name: Doctor redirect allowlist guard
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: http://127.0.0.1:{port}/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: redirected_target
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        let summary = run_doctor_command(&settings, &manifest_path).await?;
+
+        assert_eq!(summary.targets.len(), 1);
+        assert_eq!(
+            summary.targets[0].shape_status.as_deref(),
+            Some("fetch_failed")
+        );
+        assert!(summary.targets[0]
+            .shape_detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("resolved final_url violated crawler allowlist"));
+        assert!(summary
+            .issues
+            .iter()
+            .any(|issue| issue.code == "target_shape_fetch_failed"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn doctor_evaluates_robots_from_full_response_body() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!(
+                "skipping crawler doctor robots-body test because PostgreSQL is not reachable"
+            );
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let probe_requests = Arc::new(AtomicUsize::new(0));
+        let long_robots = format!(
+            "User-agent: *\n{}Disallow: /blocked\n",
+            (0..400)
+                .map(|index| format!("Allow: /padding-{index:04}\n"))
+                .collect::<String>()
+        );
+
+        let app = Router::new()
+            .route(
+                "/robots.txt",
+                get({
+                    let long_robots = long_robots.clone();
+                    move || {
+                        let long_robots = long_robots.clone();
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "text/plain; charset=utf-8")],
+                                long_robots,
+                            )
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/terms",
+                get(|| async { Html("<html><body>terms</body></html>") }),
+            )
+            .route(
+                "/blocked/events",
+                get({
+                    let probe_requests = probe_requests.clone();
+                    move || {
+                        let probe_requests = probe_requests.clone();
+                        async move {
+                            probe_requests.fetch_add(1, Ordering::SeqCst);
+                            (
+                                StatusCode::OK,
+                                [("content-type", "text/html; charset=utf-8")],
+                                "<html><body><h1>Doctor Probe Should Stay Blocked</h1></body></html>",
+                            )
+                        }
+                    }
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let manifest_path = temp.path().join("doctor_full_robots_body.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: doctor-full-robots-body
+source_name: Doctor full robots body
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: http://127.0.0.1:{port}/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: blocked_target
+    url: http://127.0.0.1:{port}/blocked/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        let summary = run_doctor_command(&settings, &manifest_path).await?;
+
+        assert_eq!(summary.targets.len(), 1);
+        assert_eq!(summary.targets[0].robots_allowed, Some(false));
+        assert_eq!(summary.targets[0].shape_status.as_deref(), Some("skipped"));
+        assert_eq!(
+            summary.targets[0].shape_detail.as_deref(),
+            Some("target is blocked by robots policy")
         );
         assert_eq!(probe_requests.load(Ordering::SeqCst), 0);
 
