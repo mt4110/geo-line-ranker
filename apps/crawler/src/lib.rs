@@ -17,11 +17,11 @@ use generic_http::{
 };
 use serde_json::{json, Value};
 use storage_postgres::{
-    begin_crawl_run, finish_crawl_run, import_crawled_events, latest_crawl_fetch_checksum,
-    load_active_event_ids_for_source, load_crawl_fetch_logs, load_crawl_parse_errors,
-    load_crawl_run_health, load_existing_school_ids, load_latest_fetched_crawl_run,
-    mark_crawl_run_fetched, record_crawl_dedupe_report, record_crawl_fetch_log,
-    record_crawl_parse_report, set_crawl_run_status, CrawlDedupeReportEntry, CrawlFetchLogEntry,
+    begin_crawl_run, claim_latest_fetched_crawl_run, finish_crawl_run, import_crawled_events,
+    latest_crawl_fetch_checksum, load_active_event_ids_for_source, load_crawl_fetch_logs,
+    load_crawl_parse_errors, load_crawl_run_health, load_existing_school_ids,
+    load_latest_fetched_crawl_run, mark_crawl_run_fetched, record_crawl_dedupe_report,
+    record_crawl_fetch_log, record_crawl_parse_report, CrawlDedupeReportEntry, CrawlFetchLogEntry,
     CrawlParseErrorSnapshot, CrawlParseReportEntry, CrawlRunHealthSnapshot, EventCsvRecord,
     SourceManifestAudit, StoredCrawlFetchLog, StoredCrawlParseError,
 };
@@ -1096,17 +1096,18 @@ pub async fn run_parse_command(
         .with_context(|| format!("unknown parser_key {}", manifest.parser_key))?;
     let _metadata = resolve_manifest_metadata(&manifest, Some(parser))?;
     let parser_version = manifest.effective_parser_version(parser.default_version());
-    let pending_run =
-        load_latest_fetched_crawl_run(&settings.database_url, &manifest_path.display().to_string())
-            .await?
-            .with_context(|| {
-                format!(
-                    "no fetched crawl run is ready for manifest {}",
-                    manifest_path.display()
-                )
-            })?;
+    let pending_run = claim_latest_fetched_crawl_run(
+        &settings.database_url,
+        &manifest_path.display().to_string(),
+    )
+    .await?
+    .with_context(|| {
+        format!(
+            "no fetched crawl run is ready for manifest {}",
+            manifest_path.display()
+        )
+    })?;
     let crawl_run_id = pending_run.crawl_run_id;
-    set_crawl_run_status(&settings.database_url, crawl_run_id, "parsing").await?;
 
     let mut report_count = 0_usize;
     let mut parsed_rows = 0_i64;

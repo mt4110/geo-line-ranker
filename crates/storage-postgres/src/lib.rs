@@ -1763,6 +1763,36 @@ pub async fn load_latest_fetched_crawl_run(
     }))
 }
 
+pub async fn claim_latest_fetched_crawl_run(
+    database_url: &str,
+    manifest_path: &str,
+) -> Result<Option<CrawlRunState>> {
+    let repo = PgRepository::new(database_url);
+    let client = repo.connect().await?;
+    let row = client
+        .query_opt(
+            "UPDATE crawl_runs
+             SET status = 'parsing'
+             WHERE manifest_path = $1
+               AND status = 'fetched'
+               AND id = (
+                   SELECT id
+                   FROM crawl_runs
+                   WHERE manifest_path = $1
+                     AND status = 'fetched'
+                   ORDER BY id DESC
+                   LIMIT 1
+               )
+             RETURNING id, status",
+            &[&manifest_path],
+        )
+        .await?;
+    Ok(row.map(|row| CrawlRunState {
+        crawl_run_id: row.get("id"),
+        status: row.get("status"),
+    }))
+}
+
 pub async fn set_crawl_run_status(
     database_url: &str,
     crawl_run_id: i64,
