@@ -1,0 +1,7 @@
+station_id,name,line_name,latitude,longitude
+st_tamachi,Tamachi,JR Yamanote Line,35.6457,139.7476
+st_hamamatsucho,Hamamatsucho,JR Yamanote Line,35.6556,139.7571
+st_shinbashi,Shinbashi,JR Yamanote Line,35.6663,139.7587
+st_shibuya,Shibuya,JR Yamanote Line,35.6580,139.7016
+st_hongo_sanchome,Hongo-sanchome,Tokyo Metro Marunouchi Line,35.7087,139.7600
+st_toyosu,Toyosu,Tokyo Metro Yurakucho Line,35.6546,139.7967

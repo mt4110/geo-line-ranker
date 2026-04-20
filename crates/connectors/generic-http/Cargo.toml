@@ -1,0 +1,13 @@
+[package]
+name = "generic-http"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+url.workspace = true
+

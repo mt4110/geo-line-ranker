@@ -1,0 +1,26 @@
+source_id: hachioji-junior-events
+source_name: Hachioji Gakuen Hachioji Junior High admissions events
+source_maturity: live_ready
+parser_key: hachioji_junior_session_tables_v1
+expected_shape: html_session_tables
+description: Real-domain allowlist crawler manifest for the Hachioji Gakuen Hachioji Junior High admissions schedule page.
+allowlist:
+  allowed_domains:
+    - www.hachioji.ed.jp
+  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/mt4110/geo-line-ranker)
+  min_fetch_interval_ms: 1000
+  robots_txt_url: https://www.hachioji.ed.jp/robots.txt
+  terms_url: https://www.hachioji.ed.jp/policy/
+  terms_note: Manual review required before production use. This schedule page is public and currently paired with a public robots.txt.
+defaults:
+  school_id: school_hachioji_gakuen_junior
+  event_category: admission_event
+  is_open_day: false
+  is_featured: false
+  priority_weight: 0.15
+  placement_tags:
+    - search
+    - detail
+targets:
+  - logical_name: junior_session_page
+    url: https://www.hachioji.ed.jp/junr/exam/session/

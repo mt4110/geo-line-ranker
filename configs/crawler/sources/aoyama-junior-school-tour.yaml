@@ -1,0 +1,28 @@
+source_id: aoyama-junior-school-tour
+source_name: Aoyama Gakuin Junior High admissions school tours
+source_maturity: live_ready
+parser_key: aoyama_junior_school_tour_v1
+expected_shape: html_school_tour_blocks
+description: Real-domain allowlist crawler manifest for the Aoyama Gakuin Junior High school tour page.
+allowlist:
+  allowed_domains:
+    - www.jh.aoyama.ed.jp
+  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/mt4110/geo-line-ranker)
+  min_fetch_interval_ms: 1000
+  robots_txt_url: https://www.jh.aoyama.ed.jp/robots.txt
+  terms_url: https://www.aoyamagakuin.jp/practice/compliance/privacypolicy/
+  terms_note: Manual review completed on 2026-04-19. The target robots.txt returned HTTP 200 with text/plain content and does not explicitly block the school tour page. Privacy policy is published on the parent Aoyama Gakuin domain.
+defaults:
+  school_id: school_aoyama_gakuin_junior
+  event_category: admission_event
+  is_open_day: true
+  is_featured: false
+  priority_weight: 0.15
+  placement_tags:
+    - search
+    - detail
+targets:
+  - logical_name: school_tour_page
+    url: https://www.jh.aoyama.ed.jp/admission/explanation.html
+
+# Fixture seed: storage/fixtures/crawler/aoyama_junior_school_tour.html

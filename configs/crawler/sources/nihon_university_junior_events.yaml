@@ -1,0 +1,26 @@
+source_id: nihon-university-junior-events
+source_name: Nihon University Junior High admissions events
+source_maturity: live_ready
+parser_key: nihon_university_junior_info_session_v1
+expected_shape: html_monthly_dl_pairs
+description: Real-domain allowlist crawler manifest for the Nihon University Junior High school information session page.
+allowlist:
+  allowed_domains:
+    - www.yokohama.hs.nihon-u.ac.jp
+  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/mt4110/geo-line-ranker)
+  min_fetch_interval_ms: 1000
+  robots_txt_url: https://www.yokohama.hs.nihon-u.ac.jp/robots.txt
+  terms_url: https://www.yokohama.hs.nihon-u.ac.jp/site/
+  terms_note: Manual review required before production use. As of 2026-04-19 the robots URL resolves successfully but returns HTML rather than a plain-text robots file, so keep this source visible in health and future doctor checks.
+defaults:
+  school_id: school_nihon_university_junior
+  event_category: admission_event
+  is_open_day: false
+  is_featured: false
+  priority_weight: 0.15
+  placement_tags:
+    - search
+    - detail
+targets:
+  - logical_name: junior_info_session_page
+    url: https://www.yokohama.hs.nihon-u.ac.jp/junior/info-session/

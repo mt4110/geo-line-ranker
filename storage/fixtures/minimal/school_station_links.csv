@@ -1,0 +1,8 @@
+school_id,station_id,walking_minutes,distance_meters,hop_distance,line_name
+school_seaside,st_tamachi,8,620,0,JR Yamanote Line
+school_garden,st_tamachi,10,780,0,JR Yamanote Line
+school_hillside,st_shinbashi,7,540,0,JR Yamanote Line
+school_creative,st_shibuya,9,680,0,JR Yamanote Line
+school_utokyo,st_hongo_sanchome,8,650,0,Tokyo Metro Marunouchi Line
+school_shibaura_it_junior,st_toyosu,8,600,0,Tokyo Metro Yurakucho Line
+school_aoyama_gakuin_junior,st_shibuya,10,750,0,JR Yamanote Line

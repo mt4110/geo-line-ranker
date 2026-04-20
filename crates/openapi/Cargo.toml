@@ -1,0 +1,10 @@
+[package]
+name = "openapi"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+api-contracts = { path = "../api-contracts" }
+utoipa.workspace = true
+

@@ -1,0 +1,26 @@
+source_id: shibaura-junior-events
+source_name: Shibaura Institute of Technology Junior High admissions events
+source_maturity: live_ready
+parser_key: shibaura_junior_event_page_v1
+expected_shape: html_qua_sections
+description: Real-domain allowlist crawler manifest for the Shibaura Institute of Technology Junior High admissions event page.
+allowlist:
+  allowed_domains:
+    - www.fzk.shibaura-it.ac.jp
+  user_agent: geo-line-ranker-crawler/0.1 (+https://github.com/mt4110/geo-line-ranker)
+  min_fetch_interval_ms: 1000
+  robots_txt_url: https://www.fzk.shibaura-it.ac.jp/robots.txt
+  terms_url: https://www.fzk.shibaura-it.ac.jp/sitepolicy/
+  terms_note: Manual review required before production use. The site also links to a university-level privacy policy.
+defaults:
+  school_id: school_shibaura_it_junior
+  event_category: admission_event
+  is_open_day: false
+  is_featured: false
+  priority_weight: 0.15
+  placement_tags:
+    - search
+    - detail
+targets:
+  - logical_name: junior_event_page
+    url: https://www.fzk.shibaura-it.ac.jp/admission/junior/event/

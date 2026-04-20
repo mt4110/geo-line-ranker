@@ -1,0 +1,16 @@
+[package]
+name = "storage-opensearch"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+config = { path = "../config" }
+domain = { path = "../domain" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+storage = { path = "../storage" }
+storage-postgres = { path = "../storage-postgres" }

@@ -1,0 +1,23 @@
+[package]
+name = "crawler"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+config = { path = "../../crates/config" }
+crawler-core = { path = "../../crates/crawler-core" }
+generic-http = { path = "../../crates/connectors/generic-http" }
+observability = { path = "../../crates/observability" }
+reqwest.workspace = true
+serde_json.workspace = true
+storage-postgres = { path = "../../crates/storage-postgres" }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tempfile.workspace = true
+tokio-postgres.workspace = true

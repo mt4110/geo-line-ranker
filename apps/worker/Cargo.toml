@@ -1,0 +1,22 @@
+[package]
+name = "worker"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cache = { path = "../../crates/cache" }
+clap.workspace = true
+config = { path = "../../crates/config" }
+observability = { path = "../../crates/observability" }
+storage = { path = "../../crates/storage" }
+storage-opensearch = { path = "../../crates/storage-opensearch" }
+storage-postgres = { path = "../../crates/storage-postgres" }
+tokio.workspace = true
+tracing.workspace = true
+worker-core = { path = "../../crates/worker-core" }
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio-postgres.workspace = true

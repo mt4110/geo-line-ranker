@@ -1,0 +1,2 @@
+{"user_id":"demo-user-1","school_id":"school_seaside","event_kind":"school_view","occurred_at":"2026-04-01T09:00:00Z","payload":{}}
+{"user_id":"demo-user-1","school_id":"school_hillside","event_kind":"event_view","occurred_at":"2026-04-02T11:30:00Z","payload":{}}

@@ -1,0 +1,18 @@
+[package]
+name = "worker-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cache = { path = "../cache" }
+observability = { path = "../observability" }
+serde_json.workspace = true
+storage = { path = "../storage" }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+domain = { path = "../domain" }

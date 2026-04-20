@@ -1,0 +1,24 @@
+[package]
+name = "cli"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+config = { path = "../../crates/config" }
+generic-csv = { path = "../../crates/connectors/generic-csv" }
+jp-postal = { path = "../../crates/connectors/jp-postal" }
+jp-rail = { path = "../../crates/connectors/jp-rail" }
+jp-school = { path = "../../crates/connectors/jp-school" }
+openapi = { path = "../../crates/openapi" }
+serde_json.workspace = true
+storage-opensearch = { path = "../../crates/storage-opensearch" }
+storage-postgres = { path = "../../crates/storage-postgres" }
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-postgres.workspace = true

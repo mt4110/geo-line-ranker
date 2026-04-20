@@ -1,0 +1,11 @@
+[package]
+name = "jp-school"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+generic-csv = { path = "../generic-csv" }
+serde.workspace = true
+
