@@ -23,11 +23,14 @@ use storage::{
 };
 use tokio_postgres::{Client, GenericClient, NoTls};
 
-const REQUIRED_READY_TABLES: [&str; 7] = [
+const REQUIRED_READY_TABLES: [&str; 10] = [
     "schools",
     "events",
     "stations",
     "school_station_links",
+    "popularity_snapshots",
+    "user_affinity_snapshots",
+    "area_affinity_snapshots",
     "user_events",
     "recommendation_traces",
     "job_queue",

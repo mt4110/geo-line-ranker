@@ -3593,7 +3593,9 @@ name = "worker-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "cache",
+ "domain",
  "observability",
  "serde_json",
  "storage",
