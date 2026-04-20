@@ -1933,34 +1933,50 @@ pub async fn serve_manifest_dir(
 ) -> Result<()> {
     let manifest_dir = manifest_dir.as_ref().to_path_buf();
     loop {
-        for manifest in list_manifest_paths(&manifest_dir)? {
-            let loaded_manifest = load_manifest(&manifest)?;
-            let source_maturity = loaded_manifest.effective_source_maturity();
-            if source_maturity != SourceMaturity::LiveReady {
-                tracing::info!(
-                    manifest = %manifest.display(),
-                    source_id = %loaded_manifest.source_id,
-                    source_maturity = %source_maturity,
-                    "skipping crawler manifest because source_maturity is not live_ready"
-                );
-                continue;
-            }
-            match run_crawl_command(settings, &manifest).await {
-                Ok(summary) => tracing::info!(
-                    crawl_run_id = summary.crawl_run_id,
-                    fetched_targets = summary.fetched_targets,
-                    parsed_rows = summary.parsed_rows,
-                    imported_rows = summary.imported_rows,
-                    "crawler manifest completed"
-                ),
-                Err(error) => {
-                    tracing::warn!(manifest = %manifest.display(), %error, "crawler manifest failed")
-                }
-            }
-        }
+        crawl_manifest_dir_once(settings, &manifest_dir).await?;
 
         tokio::time::sleep(Duration::from_secs(poll_interval_secs.max(1))).await;
     }
+}
+
+async fn crawl_manifest_dir_once(settings: &AppSettings, manifest_dir: &Path) -> Result<()> {
+    for manifest in list_manifest_paths(manifest_dir)? {
+        let loaded_manifest = match load_manifest(&manifest) {
+            Ok(loaded_manifest) => loaded_manifest,
+            Err(error) => {
+                tracing::warn!(
+                    manifest = %manifest.display(),
+                    %error,
+                    "skipping crawler manifest because it failed to load"
+                );
+                continue;
+            }
+        };
+        let source_maturity = loaded_manifest.effective_source_maturity();
+        if source_maturity != SourceMaturity::LiveReady {
+            tracing::info!(
+                manifest = %manifest.display(),
+                source_id = %loaded_manifest.source_id,
+                source_maturity = %source_maturity,
+                "skipping crawler manifest because source_maturity is not live_ready"
+            );
+            continue;
+        }
+        match run_crawl_command(settings, &manifest).await {
+            Ok(summary) => tracing::info!(
+                crawl_run_id = summary.crawl_run_id,
+                fetched_targets = summary.fetched_targets,
+                parsed_rows = summary.parsed_rows,
+                imported_rows = summary.imported_rows,
+                "crawler manifest completed"
+            ),
+            Err(error) => {
+                tracing::warn!(manifest = %manifest.display(), %error, "crawler manifest failed")
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub fn format_summary(summary: &CrawlCommandSummary) -> String {
@@ -2681,9 +2697,10 @@ mod tests {
     use tokio_postgres::NoTls;
 
     use super::{
-        format_doctor_summary, format_dry_run_summary, format_health_summary,
-        format_scaffold_summary, run_doctor_command, run_dry_run_command, run_fetch_command,
-        run_health_command, run_parse_command, scaffold_domain, ScaffoldDomainRequest,
+        crawl_manifest_dir_once, format_doctor_summary, format_dry_run_summary,
+        format_health_summary, format_scaffold_summary, run_doctor_command, run_dry_run_command,
+        run_fetch_command, run_health_command, run_parse_command, scaffold_domain,
+        ScaffoldDomainRequest,
     };
 
     #[derive(Clone)]
@@ -3012,6 +3029,96 @@ targets:
             Some(&1)
         );
         assert_eq!(health_summary.reason_totals.get("blocked_robots"), Some(&1));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serve_manifest_dir_skips_invalid_manifest_and_crawls_valid_one() -> anyhow::Result<()>
+    {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler integration test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let manifest_dir = temp.path().join("configs/crawler/sources");
+        std::fs::create_dir_all(&manifest_dir)?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(
+                "<html><body><h1>Serve Loop Guard Event</h1><time datetime=\"2026-08-01T10:00:00+09:00\"></time></body></html>"
+                    .to_string(),
+            ),
+            page_two_html: None,
+        };
+
+        let app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events", get(page_handler))
+            .with_state(state);
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        std::fs::write(manifest_dir.join("000_invalid.yaml"), "source_id: [")?;
+        let valid_manifest_path = manifest_dir.join("100_valid.yaml");
+        std::fs::write(
+            &valid_manifest_path,
+            format!(
+                r#"
+source_id: serve-loop-guard
+source_name: Serve loop guard
+source_maturity: live_ready
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+  is_open_day: true
+targets:
+  - logical_name: served_page
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        crawl_manifest_dir_once(&settings, &manifest_dir).await?;
+
+        let source_key = valid_manifest_path.canonicalize()?.display().to_string();
+        let event_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM events
+                 WHERE source_type = 'crawl'
+                   AND source_key = $1
+                   AND is_active = TRUE",
+                &[&source_key],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(event_count, 1);
 
         Ok(())
     }
