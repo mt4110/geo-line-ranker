@@ -8,6 +8,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RecommendationRequest {
     pub target_station_id: String,
+    #[schema(minimum = 1, maximum = 20)]
     pub limit: Option<usize>,
     pub user_id: Option<String>,
     #[schema(value_type = String)]

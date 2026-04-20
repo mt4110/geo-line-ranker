@@ -122,6 +122,13 @@
   },
   "components": {
     "schemas": {
+      "FallbackStageDto": {
+        "type": "string",
+        "enum": [
+          "strict",
+          "neighbor"
+        ]
+      },
       "HealthResponse": {
         "type": "object",
         "required": [
@@ -227,7 +234,8 @@
           "limit": {
             "type": "integer",
             "nullable": true,
-            "minimum": 0
+            "maximum": 20,
+            "minimum": 1
           },
           "placement": {
             "type": "string"
