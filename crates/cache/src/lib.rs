@@ -1,13 +1,18 @@
-use anyhow::{Context, Result};
+use std::sync::{Arc, Mutex};
+
+use anyhow::{anyhow, Context, Result};
 use redis::{aio::MultiplexedConnection, Client};
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::sync::Mutex as AsyncMutex;
 
 const RECOMMENDATION_PREFIX: &str = "geo-line-ranker:recommendations";
 
 #[derive(Debug, Clone)]
 pub struct RecommendationCache {
     redis_url: Option<String>,
+    redis_client: Arc<Mutex<Option<Client>>>,
+    redis_connection: Arc<AsyncMutex<Option<MultiplexedConnection>>>,
     ttl_secs: u64,
 }
 
@@ -15,6 +20,8 @@ impl RecommendationCache {
     pub fn new(redis_url: Option<String>, ttl_secs: u64) -> Self {
         Self {
             redis_url,
+            redis_client: Arc::new(Mutex::new(None)),
+            redis_connection: Arc::new(AsyncMutex::new(None)),
             ttl_secs,
         }
     }
@@ -45,10 +52,17 @@ impl RecommendationCache {
         let Some(mut connection) = self.connection().await? else {
             return Ok(None);
         };
-        let cached: Option<String> = redis::cmd("GET")
+        let cached: Option<String> = match redis::cmd("GET")
             .arg(key)
             .query_async(&mut connection)
-            .await?;
+            .await
+        {
+            Ok(cached) => cached,
+            Err(error) => {
+                self.clear_connection().await;
+                return Err(error.into());
+            }
+        };
         cached
             .map(|raw| serde_json::from_str(&raw).context("failed to deserialize cached payload"))
             .transpose()
@@ -60,12 +74,19 @@ impl RecommendationCache {
         };
         let serialized =
             serde_json::to_string(value).context("failed to serialize cached payload")?;
-        let _: () = redis::cmd("SETEX")
+        let _: () = match redis::cmd("SETEX")
             .arg(key)
             .arg(self.ttl_secs)
             .arg(serialized)
             .query_async(&mut connection)
-            .await?;
+            .await
+        {
+            Ok(()) => (),
+            Err(error) => {
+                self.clear_connection().await;
+                return Err(error.into());
+            }
+        };
         Ok(())
     }
 
@@ -85,7 +106,13 @@ impl RecommendationCache {
         let Some(mut connection) = self.connection().await? else {
             return Ok("disabled".to_string());
         };
-        let response: String = redis::cmd("PING").query_async(&mut connection).await?;
+        let response: String = match redis::cmd("PING").query_async(&mut connection).await {
+            Ok(response) => response,
+            Err(error) => {
+                self.clear_connection().await;
+                return Err(error.into());
+            }
+        };
         Ok(if response == "PONG" {
             "reachable".to_string()
         } else {
@@ -101,19 +128,33 @@ impl RecommendationCache {
         let mut cursor = 0_u64;
 
         loop {
-            let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+            let (next_cursor, keys): (u64, Vec<String>) = match redis::cmd("SCAN")
                 .arg(cursor)
                 .arg("MATCH")
                 .arg(pattern)
                 .arg("COUNT")
                 .arg(100)
                 .query_async(&mut connection)
-                .await?;
+                .await
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    self.clear_connection().await;
+                    return Err(error.into());
+                }
+            };
             if !keys.is_empty() {
-                let removed: usize = redis::cmd("DEL")
+                let removed: usize = match redis::cmd("DEL")
                     .arg(&keys)
                     .query_async(&mut connection)
-                    .await?;
+                    .await
+                {
+                    Ok(removed) => removed,
+                    Err(error) => {
+                        self.clear_connection().await;
+                        return Err(error.into());
+                    }
+                };
                 deleted += removed;
             }
             if next_cursor == 0 {
@@ -129,12 +170,39 @@ impl RecommendationCache {
         let Some(redis_url) = self.redis_url.as_deref() else {
             return Ok(None);
         };
-        let client = Client::open(redis_url).context("failed to create redis client")?;
+
+        {
+            let shared_connection = self.redis_connection.lock().await;
+            if let Some(connection) = shared_connection.as_ref() {
+                return Ok(Some(connection.clone()));
+            }
+        }
+
+        let client = {
+            let mut shared_client = self
+                .redis_client
+                .lock()
+                .map_err(|_| anyhow!("redis client lock poisoned"))?;
+            if let Some(client) = shared_client.as_ref() {
+                client.clone()
+            } else {
+                let client = Client::open(redis_url).context("failed to create redis client")?;
+                *shared_client = Some(client.clone());
+                client
+            }
+        };
         let connection = client
             .get_multiplexed_async_connection()
             .await
             .context("failed to connect to redis")?;
+        let mut shared_connection = self.redis_connection.lock().await;
+        *shared_connection = Some(connection.clone());
         Ok(Some(connection))
+    }
+
+    async fn clear_connection(&self) {
+        let mut shared_connection = self.redis_connection.lock().await;
+        *shared_connection = None;
     }
 }
 
