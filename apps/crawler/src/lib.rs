@@ -28,6 +28,14 @@ use storage_postgres::{
 
 const CRAWLER_CONTACT_URL: &str = "https://github.com/mt4110/geo-line-ranker";
 
+fn discard_staged_fetch(path: &Path) {
+    if let Err(error) = fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(path = %path.display(), %error, "failed to discard blocked staged fetch");
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CrawlCommandSummary {
     pub label: String,
@@ -885,9 +893,81 @@ pub async fn run_fetch_command(
                 },
                 &settings.raw_storage_dir,
             )
-            .await
+                .await
             {
                 Ok(fetch) => {
+                    let final_url = match ensure_allowed_url(
+                        &fetch.final_url,
+                        &manifest.allowlist.allowed_domains,
+                    ) {
+                        Ok(final_url) => final_url,
+                        Err(error) => {
+                            report_count += 1;
+                            discard_staged_fetch(&fetch.staged_path);
+                            record_crawl_fetch_log(
+                                &settings.database_url,
+                                &CrawlFetchLogEntry {
+                                    crawl_run_id,
+                                    logical_name: fetch.logical_name.clone(),
+                                    target_url: fetch.target_url.clone(),
+                                    final_url: Some(fetch.final_url.clone()),
+                                    http_status: Some(fetch.status_code as i32),
+                                    checksum_sha256: Some(fetch.checksum_sha256.clone()),
+                                    size_bytes: Some(fetch.size_bytes as i64),
+                                    staged_path: None,
+                                    fetch_status: "blocked_policy".to_string(),
+                                    content_changed: None,
+                                    details: json!({
+                                        "reason": format!("resolved final_url violated crawler allowlist: {error}"),
+                                        "content_type": fetch.content_type.clone(),
+                                        "robots_txt_url": manifest.allowlist.robots_txt_url,
+                                        "terms_url": manifest.allowlist.terms_url,
+                                        "terms_note": manifest.allowlist.terms_note,
+                                        "user_agent": manifest.allowlist.user_agent,
+                                        "min_fetch_interval_ms": manifest.allowlist.min_fetch_interval_ms
+                                    }),
+                                },
+                            )
+                            .await?;
+                            continue;
+                        }
+                    };
+                    let final_robots = evaluate_robots(
+                        &robots_txt,
+                        &manifest.allowlist.user_agent,
+                        final_url.path(),
+                    );
+                    if !final_robots.allowed {
+                        report_count += 1;
+                        discard_staged_fetch(&fetch.staged_path);
+                        record_crawl_fetch_log(
+                            &settings.database_url,
+                            &CrawlFetchLogEntry {
+                                crawl_run_id,
+                                logical_name: fetch.logical_name.clone(),
+                                target_url: fetch.target_url.clone(),
+                                final_url: Some(fetch.final_url.clone()),
+                                http_status: Some(fetch.status_code as i32),
+                                checksum_sha256: Some(fetch.checksum_sha256.clone()),
+                                size_bytes: Some(fetch.size_bytes as i64),
+                                staged_path: None,
+                                fetch_status: "blocked_robots".to_string(),
+                                content_changed: None,
+                                details: json!({
+                                    "matched_rule": final_robots.matched_rule,
+                                    "content_type": fetch.content_type.clone(),
+                                    "robots_txt_url": manifest.allowlist.robots_txt_url,
+                                    "terms_url": manifest.allowlist.terms_url,
+                                    "terms_note": manifest.allowlist.terms_note,
+                                    "user_agent": manifest.allowlist.user_agent,
+                                    "min_fetch_interval_ms": manifest.allowlist.min_fetch_interval_ms
+                                }),
+                            },
+                        )
+                        .await?;
+                        continue;
+                    }
+
                     let previous_checksum = latest_crawl_fetch_checksum(
                         &settings.database_url,
                         &manifest_audit.manifest_path,
@@ -918,7 +998,7 @@ pub async fn run_fetch_command(
                             content_changed: Some(content_changed),
                             details: json!({
                                 "content_type": fetch.content_type,
-                                "matched_rule": robots.matched_rule,
+                                "matched_rule": final_robots.matched_rule,
                                 "robots_txt_url": manifest.allowlist.robots_txt_url,
                                 "terms_url": manifest.allowlist.terms_url,
                                 "terms_note": manifest.allowlist.terms_note,
@@ -2763,6 +2843,175 @@ targets:
             .await?
             .get::<_, i64>("count");
         assert_eq!(event_count, 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_blocks_redirected_final_url_outside_allowlist() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler integration test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let state = AppState {
+            robots_txt: Arc::new("User-agent: *\nAllow: /\n".to_string()),
+            page_html: Arc::new(
+                "<html><body><h1>Redirected Allowlist Guard</h1></body></html>".to_string(),
+            ),
+            page_two_html: None,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let redirected_url = format!("http://localhost:{}/redirected", address.port());
+        let redirect_handler = {
+            let redirected_url = redirected_url.clone();
+            move || {
+                let redirected_url = redirected_url.clone();
+                async move { Redirect::temporary(&redirected_url) }
+            }
+        };
+        let app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events", get(redirect_handler))
+            .route("/redirected", get(page_handler))
+            .with_state(state);
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let manifest_path = temp.path().join("redirect_allowlist_guard.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: redirect-allowlist-guard
+source_name: Redirect allowlist guard
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: redirected_page
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        let error = run_fetch_command(&settings, &manifest_path)
+            .await
+            .expect_err("redirect outside allowlist should be blocked");
+        assert!(error
+            .to_string()
+            .contains("no crawl targets were fetched successfully"));
+
+        let health_summary = run_health_command(&settings, &manifest_path, 10).await?;
+        assert_eq!(
+            health_summary.fetch_status_totals.get("blocked_policy"),
+            Some(&1)
+        );
+        assert_eq!(health_summary.reason_totals.get("blocked_policy"), Some(&1));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_blocks_redirected_final_url_disallowed_by_robots() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler integration test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let state = AppState {
+            robots_txt: Arc::new("User-agent: *\nDisallow: /private\n".to_string()),
+            page_html: Arc::new(
+                "<html><body><h1>Redirected Robots Guard</h1></body></html>".to_string(),
+            ),
+            page_two_html: None,
+        };
+
+        let redirect_handler = || async { Redirect::temporary("/private/hidden") };
+        let app = Router::new()
+            .route("/robots.txt", get(robots_handler))
+            .route("/events", get(redirect_handler))
+            .route("/private/hidden", get(page_handler))
+            .with_state(state);
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let manifest_path = temp.path().join("redirect_robots_guard.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: redirect-robots-guard
+source_name: Redirect robots guard
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: redirected_page
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        let error = run_fetch_command(&settings, &manifest_path)
+            .await
+            .expect_err("redirected disallowed path should be blocked");
+        assert!(error
+            .to_string()
+            .contains("no crawl targets were fetched successfully"));
+
+        let health_summary = run_health_command(&settings, &manifest_path, 10).await?;
+        assert_eq!(
+            health_summary.fetch_status_totals.get("blocked_robots"),
+            Some(&1)
+        );
+        assert_eq!(health_summary.reason_totals.get("blocked_robots"), Some(&1));
 
         Ok(())
     }

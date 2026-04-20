@@ -272,6 +272,196 @@ async fn track_endpoint_rejects_unknown_foreign_keys() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn track_endpoint_derives_school_id_from_event_id() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api").await
+    else {
+        eprintln!(
+            "skipping api tracking integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let job_baseline = client
+            .query_one("SELECT COALESCE(MAX(id), 0) AS max_id FROM job_queue", &[])
+            .await?
+            .get::<_, i64>("max_id");
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+        let user_id = format!("api-track-derived-{}", std::process::id());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/track")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "user_id": user_id.clone(),
+                            "event_kind": "event_view",
+                            "event_id": "event_seaside_open"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("tracking response");
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["status"], "accepted");
+
+        let stored_school_id = client
+            .query_one(
+                "SELECT school_id
+                 FROM user_events
+                 WHERE user_id = $1
+                   AND event_type = 'event_view'
+                   AND event_id = 'event_seaside_open'
+                 ORDER BY id DESC
+                 LIMIT 1",
+                &[&user_id],
+            )
+            .await?
+            .get::<_, Option<String>>("school_id");
+        assert_eq!(stored_school_id.as_deref(), Some("school_seaside"));
+
+        let queued_job_types = client
+            .query(
+                "SELECT job_type
+                 FROM job_queue
+                 WHERE id > $1
+                 ORDER BY id",
+                &[&job_baseline],
+            )
+            .await?
+            .into_iter()
+            .map(|row| row.get::<_, String>("job_type"))
+            .collect::<Vec<_>>();
+        assert!(queued_job_types.contains(&"refresh_popularity_snapshot".to_string()));
+        assert!(queued_job_types.contains(&"refresh_user_affinity_snapshot".to_string()));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn track_endpoint_rejects_mismatched_event_school_pair() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api").await
+    else {
+        eprintln!(
+            "skipping api tracking integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+        let user_id = format!("api-track-mismatch-{}", std::process::id());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/track")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "user_id": user_id.clone(),
+                            "event_kind": "event_view",
+                            "event_id": "event_seaside_open",
+                            "school_id": "school_hillside"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("tracking response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(
+            payload["error"],
+            "event_id event_seaside_open belongs to school_id school_seaside, not school_hillside"
+        );
+
+        let stored_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM user_events
+                 WHERE user_id = $1",
+                &[&user_id],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(stored_count, 0);
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
 async fn ready_endpoint_requires_application_schema() -> anyhow::Result<()> {
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_ready").await
@@ -315,6 +505,79 @@ async fn ready_endpoint_requires_application_schema() -> anyhow::Result<()> {
             .as_str()
             .unwrap_or_default()
             .contains("missing required PostgreSQL schema"));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn recommend_endpoint_rejects_unknown_target_station_with_clear_message() -> anyhow::Result<()>
+{
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api").await
+    else {
+        eprintln!(
+            "skipping api recommendation integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "target_station_id": "station_missing",
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(
+            payload["error"],
+            "unknown target_station_id: station_missing"
+        );
 
         Ok(())
     }

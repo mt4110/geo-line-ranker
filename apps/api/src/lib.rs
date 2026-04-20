@@ -17,7 +17,9 @@ use observability::{cache_hit, cache_miss, cache_write, candidate_retrieval_comp
 use ranking::{RankingEngine, RankingError};
 use storage::{JobType, NewJob, RecommendationRepository, RecommendationTrace};
 use storage_opensearch::OpenSearchStore;
-use storage_postgres::{is_foreign_key_violation, PgRepository};
+use storage_postgres::{
+    is_foreign_key_violation, user_event_reference_validation_message, PgRepository,
+};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -162,7 +164,10 @@ async fn recommend(
     {
         Ok(Some(station)) => station,
         Ok(None) => {
-            return error_response(StatusCode::BAD_REQUEST, query.target_station_id.clone());
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                format!("unknown target_station_id: {}", query.target_station_id),
+            );
         }
         Err(error) => {
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
@@ -262,11 +267,42 @@ async fn track(
     State(state): State<AppState>,
     Json(request): Json<TrackRequest>,
 ) -> impl IntoResponse {
+    const UNKNOWN_TRACK_REFERENCE_MESSAGE: &str =
+        "track payload references unknown school_id, event_id, or target_station_id";
+
     if let Err(message) = request.validate() {
         return error_response(StatusCode::BAD_REQUEST, message);
     }
 
-    let event = request.clone().into();
+    let mut event: domain::UserEvent = request.clone().into();
+    if let Some(event_id) = event.event_id.clone() {
+        let event_school_id = match state.repository.load_event_school_id(&event_id).await {
+            Ok(Some(event_school_id)) => event_school_id,
+            Ok(None) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    UNKNOWN_TRACK_REFERENCE_MESSAGE.to_string(),
+                );
+            }
+            Err(error) => {
+                return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+            }
+        };
+
+        match event.school_id.as_deref() {
+            Some(school_id) if school_id != event_school_id => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "event_id {event_id} belongs to school_id {event_school_id}, not {school_id}"
+                    ),
+                );
+            }
+            None => event.school_id = Some(event_school_id),
+            _ => {}
+        }
+    }
+
     let jobs = build_tracking_jobs(&state, &event);
     let queued_jobs = jobs
         .iter()
@@ -281,11 +317,15 @@ async fn track(
         Err(error) if is_foreign_key_violation(&error) => {
             return error_response(
                 StatusCode::BAD_REQUEST,
-                "track payload references unknown school_id, event_id, or target_station_id"
-                    .to_string(),
+                UNKNOWN_TRACK_REFERENCE_MESSAGE.to_string(),
             );
         }
-        Err(error) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+        Err(error) => {
+            if let Some(message) = user_event_reference_validation_message(&error) {
+                return error_response(StatusCode::BAD_REQUEST, message);
+            }
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+        }
     };
 
     (

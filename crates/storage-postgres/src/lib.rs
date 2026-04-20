@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use async_trait::async_trait;
 use csv::Reader;
 use domain::{
@@ -36,6 +36,7 @@ const SCHEMA_MIGRATION_LOCK_NAMESPACE: i32 = 6_042;
 const SCHEMA_MIGRATION_LOCK_KEY: i32 = 1;
 const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
 const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
+const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference validation: ";
 
 #[derive(Debug, Clone)]
 pub struct PgRepository {
@@ -364,6 +365,14 @@ impl PgRepository {
             area_affinity_snapshots,
         })
     }
+
+    pub async fn load_event_school_id(&self, event_id: &str) -> Result<Option<String>> {
+        let client = self.connect().await?;
+        Ok(client
+            .query_opt("SELECT school_id FROM events WHERE id = $1", &[&event_id])
+            .await
+            .map(|row| row.map(|row| row.get("school_id")))?)
+    }
 }
 
 pub fn is_foreign_key_violation(error: &anyhow::Error) -> bool {
@@ -375,7 +384,17 @@ pub fn is_foreign_key_violation(error: &anyhow::Error) -> bool {
     })
 }
 
+pub fn user_event_reference_validation_message(error: &anyhow::Error) -> Option<String> {
+    error.chain().find_map(|cause| {
+        let message = cause.to_string();
+        message
+            .strip_prefix(USER_EVENT_REFERENCE_VALIDATION_PREFIX)
+            .map(str::to_string)
+    })
+}
+
 async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEvent) -> Result<i64> {
+    let school_id = resolve_user_event_school_id(client, event).await?;
     let row = client
         .query_one(
             "INSERT INTO user_events (
@@ -391,7 +410,7 @@ async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEve
             RETURNING id",
             &[
                 &event.user_id,
-                &event.school_id,
+                &school_id,
                 &event.event_kind.as_str(),
                 &event.event_id,
                 &event.target_station_id,
@@ -401,6 +420,33 @@ async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEve
         )
         .await?;
     Ok(row.get("id"))
+}
+
+async fn resolve_user_event_school_id(
+    client: &(impl GenericClient + Sync),
+    event: &UserEvent,
+) -> Result<Option<String>> {
+    let Some(event_id) = event.event_id.as_deref() else {
+        return Ok(event.school_id.clone());
+    };
+
+    let event_school_id = client
+        .query_opt("SELECT school_id FROM events WHERE id = $1", &[&event_id])
+        .await?
+        .map(|row| row.get::<_, String>("school_id"));
+
+    let Some(event_school_id) = event_school_id else {
+        return Ok(event.school_id.clone());
+    };
+
+    if let Some(school_id) = event.school_id.as_deref() {
+        ensure!(
+            school_id == event_school_id,
+            "{USER_EVENT_REFERENCE_VALIDATION_PREFIX}event_id {event_id} belongs to school_id {event_school_id}, not {school_id}"
+        );
+    }
+
+    Ok(Some(event_school_id))
 }
 
 async fn insert_job(client: &(impl GenericClient + Sync), job: &NewJob) -> Result<i64> {
