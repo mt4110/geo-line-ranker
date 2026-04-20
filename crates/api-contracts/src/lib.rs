@@ -34,7 +34,9 @@ pub struct RecommendationItemDto {
     pub content_id: String,
     pub school_id: String,
     pub school_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event_title: Option<String>,
     pub primary_station_id: String,
     pub primary_station_name: String,
@@ -211,5 +213,42 @@ impl From<RecommendationResult> for RecommendationResponse {
             profile_version: value.profile_version,
             algorithm_version: value.algorithm_version,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use domain::{FallbackStage, RecommendationItem};
+
+    use super::RecommendationResponse;
+
+    #[test]
+    fn recommendation_response_omits_empty_event_fields() {
+        let response = RecommendationResponse::from(domain::RecommendationResult {
+            items: vec![RecommendationItem {
+                content_kind: domain::ContentKind::School,
+                content_id: "school_seaside".to_string(),
+                school_id: "school_seaside".to_string(),
+                school_name: "Seaside High".to_string(),
+                event_id: None,
+                event_title: None,
+                primary_station_id: "st_tamachi".to_string(),
+                primary_station_name: "Tamachi".to_string(),
+                line_name: "JR Yamanote Line".to_string(),
+                score: 1.0,
+                explanation: "school candidate".to_string(),
+                score_breakdown: Vec::new(),
+            }],
+            explanation: "result".to_string(),
+            score_breakdown: Vec::new(),
+            fallback_stage: FallbackStage::Strict,
+            profile_version: "phase6-profile".to_string(),
+            algorithm_version: "phase6-test".to_string(),
+        });
+
+        let payload = serde_json::to_value(response).expect("serialized response");
+        let item = &payload["items"][0];
+        assert!(item.get("event_id").is_none());
+        assert!(item.get("event_title").is_none());
     }
 }

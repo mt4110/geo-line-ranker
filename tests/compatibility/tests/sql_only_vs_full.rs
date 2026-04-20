@@ -164,10 +164,10 @@ async fn spawn_mock_opensearch(documents: Vec<ProjectionDocument>) -> Result<Str
 
 async fn wait_for_mock_opensearch(base_url: &str) -> Result<()> {
     let client = Client::builder()
-        .timeout(Duration::from_millis(200))
+        .timeout(Duration::from_millis(500))
         .build()
         .context("failed to build mock OpenSearch probe client")?;
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
 
     loop {
         match client
