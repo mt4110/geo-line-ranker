@@ -107,6 +107,7 @@ impl PgRepository {
         target_station: &Station,
         candidate_limit: usize,
         neighbor_distance_cap_meters: f64,
+        neighbor_max_hops: u8,
     ) -> Result<Vec<SchoolStationLink>> {
         let client = self.connect().await?;
         let rows = client
@@ -124,6 +125,7 @@ impl PgRepository {
                  WHERE link.station_id = $1
                     OR (
                         link.line_name = $2
+                        AND link.hop_distance <= $6
                         AND ST_DWithin(
                             candidate_station.geom,
                             ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography,
@@ -136,13 +138,14 @@ impl PgRepository {
                     link.walking_minutes ASC,
                     link.school_id ASC,
                     link.station_id ASC
-                 LIMIT $6",
+                 LIMIT $7",
                 &[
                     &target_station.id,
                     &target_station.line_name,
                     &target_station.longitude,
                     &target_station.latitude,
                     &neighbor_distance_cap_meters,
+                    &(neighbor_max_hops as i16),
                     &((candidate_limit.clamp(1, 10_000)) as i64),
                 ],
             )

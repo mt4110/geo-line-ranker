@@ -41,6 +41,10 @@ impl RankingEngine {
         }
     }
 
+    pub fn neighbor_max_hops(&self, placement: PlacementKind) -> u8 {
+        self.profiles.placement(placement).neighbor_max_hops
+    }
+
     pub fn recommend(
         &self,
         dataset: &RankingDataset,

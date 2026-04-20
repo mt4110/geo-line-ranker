@@ -218,6 +218,7 @@ impl OpenSearchStore {
         target_station: &Station,
         neighbor_distance_cap_meters: f64,
         candidate_limit: usize,
+        neighbor_max_hops: u8,
     ) -> Result<Vec<SchoolStationLink>> {
         self.ensure_index().await?;
 
@@ -256,6 +257,13 @@ impl OpenSearchStore {
                                         "term": {
                                             "line_name": {
                                                 "value": target_station.line_name.as_str()
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "range": {
+                                            "hop_distance": {
+                                                "lte": neighbor_max_hops
                                             }
                                         }
                                     },

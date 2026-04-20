@@ -89,6 +89,7 @@ async fn assert_sql_only_and_full_match(target_station_id: &str) -> Result<()> {
             &target_station,
             profiles.fallback.neighbor_distance_cap_meters,
             256,
+            profiles.placement(PlacementKind::Search).neighbor_max_hops,
         )
         .await?;
     let sql_only_result = engine.recommend(&dataset, &query(target_station_id))?;
@@ -238,6 +239,7 @@ async fn search(
         .filter(|document| {
             document.station_id == query.target_station_id
                 || (document.line_name == query.line_name
+                    && document.hop_distance <= query.neighbor_max_hops
                     && haversine_meters(
                         query.target_lat,
                         query.target_lon,
@@ -291,6 +293,7 @@ struct ParsedMockSearchQuery<'a> {
     size: usize,
     target_station_id: &'a str,
     line_name: &'a str,
+    neighbor_max_hops: u8,
     distance_cap_meters: f64,
     target_lat: f64,
     target_lon: f64,
@@ -319,9 +322,18 @@ fn parse_mock_search_query<'a>(
         "/query/bool/should/1/bool/filter/0/term/line_name/value",
         "line name",
     )?;
+    let neighbor_max_hops = body
+        .pointer("/query/bool/should/1/bool/filter/1/range/hop_distance/lte")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            "missing or invalid neighbor hop cap at /query/bool/should/1/bool/filter/1/range/hop_distance/lte".to_string()
+        })
+        .and_then(|raw| {
+            u8::try_from(raw).map_err(|_| "neighbor hop cap exceeds u8".to_string())
+        })?;
     let distance_raw = required_str_at(
         body,
-        "/query/bool/should/1/bool/filter/1/geo_distance/distance",
+        "/query/bool/should/1/bool/filter/2/geo_distance/distance",
         "distance cap",
     )?;
     let distance_cap_meters = distance_raw
@@ -331,12 +343,12 @@ fn parse_mock_search_query<'a>(
         .map_err(|_| "expected distance cap to be a numeric meter value".to_string())?;
     let target_lat = required_f64_at(
         body,
-        "/query/bool/should/1/bool/filter/1/geo_distance/station_location/lat",
+        "/query/bool/should/1/bool/filter/2/geo_distance/station_location/lat",
         "target latitude",
     )?;
     let target_lon = required_f64_at(
         body,
-        "/query/bool/should/1/bool/filter/1/geo_distance/station_location/lon",
+        "/query/bool/should/1/bool/filter/2/geo_distance/station_location/lon",
         "target longitude",
     )?;
 
@@ -344,6 +356,7 @@ fn parse_mock_search_query<'a>(
         size,
         target_station_id,
         line_name,
+        neighbor_max_hops,
         distance_cap_meters,
         target_lat,
         target_lon,
@@ -375,4 +388,67 @@ fn required_f64_at(
 fn mock_search_parser_rejects_missing_required_fields() {
     let error = parse_mock_search_query(&json!({ "size": 3 }), 10).expect_err("missing query");
     assert!(error.contains("target station id"));
+}
+
+#[tokio::test]
+async fn full_mode_candidate_retrieval_filters_out_of_hop_neighbors_before_limit() -> Result<()> {
+    let target_station = Station {
+        id: "st_target".to_string(),
+        name: "Target".to_string(),
+        line_name: "JR Yamanote Line".to_string(),
+        latitude: 35.0,
+        longitude: 139.0,
+    };
+    let documents = vec![
+        projection_document("school_far_a", "st_far_a", 35.0, 139.0004, 60, 60, 2),
+        projection_document("school_far_b", "st_far_b", 35.0, 139.0005, 70, 70, 3),
+        projection_document("school_in_hop", "st_in_hop", 35.0, 139.0012, 120, 120, 1),
+    ];
+    let base_url = spawn_mock_opensearch(documents).await?;
+    let store = OpenSearchStore::new(&OpenSearchSettings {
+        url: base_url,
+        index_name: TEST_INDEX_NAME.to_string(),
+        username: None,
+        password: None,
+        request_timeout_secs: 5,
+    })?;
+
+    let candidate_links = store
+        .search_candidate_links(&target_station, 500.0, 2, 1)
+        .await?;
+
+    assert_eq!(candidate_links.len(), 1);
+    assert_eq!(candidate_links[0].school_id, "school_in_hop");
+    assert_eq!(candidate_links[0].hop_distance, 1);
+    Ok(())
+}
+
+fn projection_document(
+    school_id: &str,
+    station_id: &str,
+    latitude: f64,
+    longitude: f64,
+    walking_minutes: u16,
+    distance_meters: u32,
+    hop_distance: u8,
+) -> ProjectionDocument {
+    ProjectionDocument {
+        document_id: format!("{school_id}:{station_id}"),
+        school_id: school_id.to_string(),
+        school_name: format!("{school_id} name"),
+        school_area: "Minato".to_string(),
+        school_type: "high_school".to_string(),
+        station_id: station_id.to_string(),
+        station_name: format!("{station_id} name"),
+        line_name: "JR Yamanote Line".to_string(),
+        station_location: storage_opensearch::ProjectionGeoPoint {
+            lat: latitude,
+            lon: longitude,
+        },
+        walking_minutes,
+        distance_meters,
+        hop_distance,
+        open_day_count: 0,
+        popularity_score: 0.0,
+    }
 }

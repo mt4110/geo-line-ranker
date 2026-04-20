@@ -204,6 +204,7 @@ async fn recommend(
     };
 
     let retrieval_started = Instant::now();
+    let neighbor_max_hops = state.engine.neighbor_max_hops(query.placement);
     let candidate_links = match &state.candidate_backend {
         CandidateBackend::SqlOnly => match state
             .repository
@@ -211,6 +212,7 @@ async fn recommend(
                 &target_station,
                 state.candidate_retrieval_limit,
                 state.neighbor_distance_cap_meters,
+                neighbor_max_hops,
             )
             .await
         {
@@ -224,6 +226,7 @@ async fn recommend(
                 &target_station,
                 state.neighbor_distance_cap_meters,
                 state.candidate_retrieval_limit,
+                neighbor_max_hops,
             )
             .await
         {
