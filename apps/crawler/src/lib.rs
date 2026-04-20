@@ -1108,6 +1108,7 @@ pub async fn run_parse_command(
     let mut imported_rows = 0_i64;
     let mut fetched_targets = 0_i64;
     let mut parse_failed_targets = 0_usize;
+    let mut zero_row_targets = 0_usize;
 
     let result: Result<()> = async {
         let fetch_logs = load_crawl_fetch_logs(&settings.database_url, crawl_run_id).await?;
@@ -1187,6 +1188,7 @@ pub async fn run_parse_command(
                 Err(error) => {
                     let message = error.to_string();
                     if is_zero_event_parse_message(&message) {
+                        zero_row_targets += 1;
                         record_parse_report(
                             &settings.database_url,
                             &mut report_count,
@@ -1242,7 +1244,7 @@ pub async fn run_parse_command(
             &settings.database_url,
             &manifest_path.display().to_string(),
             &deduped.iter().map(to_event_csv_record).collect::<Vec<_>>(),
-            can_deactivate_stale_rows(&fetch_logs, parse_failed_targets),
+            can_deactivate_stale_rows(&fetch_logs, parse_failed_targets, zero_row_targets),
         )
         .await?;
         imported_rows = summary.core_rows;
@@ -1445,6 +1447,11 @@ pub async fn run_doctor_command(
                     Some("skipped".to_string()),
                     Some("live fetch disabled by manifest policy".to_string()),
                 )
+            } else if robots_decision.is_none() {
+                (
+                    Some("skipped".to_string()),
+                    Some("robots policy could not be evaluated for this target".to_string()),
+                )
             } else if matches!(
                 robots_decision.as_ref().map(|decision| decision.allowed),
                 Some(false)
@@ -1553,6 +1560,7 @@ pub async fn run_dry_run_command(
     let mut warnings = Vec::new();
     let mut logical_name_summaries = Vec::new();
     let mut date_drift_warnings = 0_usize;
+    let mut zero_row_targets = 0_usize;
 
     for fetch in fetch_logs
         .iter()
@@ -1609,6 +1617,7 @@ pub async fn run_dry_run_command(
             Err(error) => {
                 let message = error.to_string();
                 if is_zero_event_parse_message(&message) {
+                    zero_row_targets += 1;
                     warnings.push(DiagnosticIssue {
                         level: "warn".to_string(),
                         code: "no_events_found".to_string(),
@@ -1683,12 +1692,16 @@ pub async fn run_dry_run_command(
     )
     .await
     .with_context(|| "failed to load active event ids for dry-run")?;
-    let deactivated_rows = if !can_deactivate_stale_rows(&fetch_logs, parse_errors.len()) {
+    let deactivated_rows = if !can_deactivate_stale_rows(
+        &fetch_logs,
+        parse_errors.len(),
+        zero_row_targets,
+    ) {
         warnings.push(DiagnosticIssue {
             level: "warn".to_string(),
             code: "partial_import_skips_stale_deactivation".to_string(),
             message:
-                "dry-run would keep existing active rows because one or more crawl targets failed to fetch or parse"
+                "dry-run would keep existing active rows because one or more crawl targets failed to fetch, failed to parse, or produced zero rows"
                     .to_string(),
         });
         0
@@ -2461,9 +2474,11 @@ fn summarize_fetch_status(fetch_logs: &[StoredCrawlFetchLog]) -> Option<String> 
 fn can_deactivate_stale_rows(
     fetch_logs: &[StoredCrawlFetchLog],
     parse_failed_targets: usize,
+    zero_row_targets: usize,
 ) -> bool {
     !fetch_logs.is_empty()
         && parse_failed_targets == 0
+        && zero_row_targets == 0
         && fetch_logs
             .iter()
             .all(|entry| matches!(entry.fetch_status.as_str(), "fetched" | "not_modified"))
@@ -4004,6 +4019,106 @@ targets:
     }
 
     #[tokio::test]
+    async fn doctor_skips_shape_probe_when_robots_policy_is_unknown() -> anyhow::Result<()> {
+        let database_url = default_database_url();
+        let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
+            eprintln!("skipping crawler doctor robots test because PostgreSQL is not reachable");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        storage_postgres::run_migrations(&database_url, root.join("storage/migrations/postgres"))
+            .await?;
+        storage_postgres::seed_fixture(&database_url, root.join("storage/fixtures/minimal"))
+            .await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let probe_requests = Arc::new(AtomicUsize::new(0));
+
+        let app = Router::new()
+            .route(
+                "/robots.txt",
+                get(|| async {
+                    (
+                        StatusCode::OK,
+                        [("content-type", "text/plain; charset=utf-8")],
+                        "",
+                    )
+                }),
+            )
+            .route(
+                "/terms",
+                get(|| async { Html("<html><body>terms</body></html>") }),
+            )
+            .route(
+                "/events",
+                get({
+                    let probe_requests = probe_requests.clone();
+                    move || {
+                        let probe_requests = probe_requests.clone();
+                        async move {
+                            probe_requests.fetch_add(1, Ordering::SeqCst);
+                            (
+                                StatusCode::OK,
+                                [("content-type", "text/html; charset=utf-8")],
+                                "<html><body><h1>Doctor Probe Should Not Run</h1></body></html>",
+                            )
+                        }
+                    }
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let manifest_path = temp.path().join("doctor_unknown_robots.yaml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+source_id: doctor-unknown-robots
+source_name: Doctor unknown robots
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["127.0.0.1"]
+  user_agent: geo-line-ranker-crawler/0.1
+  min_fetch_interval_ms: 1
+  robots_txt_url: http://127.0.0.1:{port}/robots.txt
+  terms_url: http://127.0.0.1:{port}/terms
+  terms_note: Test-only local source.
+defaults:
+  school_id: school_seaside
+  event_category: open_campus
+targets:
+  - logical_name: unknown_robots_target
+    url: http://127.0.0.1:{port}/events
+"#,
+                port = address.port()
+            ),
+        )?;
+
+        let summary = run_doctor_command(&settings, &manifest_path).await?;
+
+        assert_eq!(summary.targets.len(), 1);
+        assert_eq!(summary.targets[0].robots_allowed, None);
+        assert_eq!(summary.targets[0].shape_status.as_deref(), Some("skipped"));
+        assert_eq!(
+            summary.targets[0].shape_detail.as_deref(),
+            Some("robots policy could not be evaluated for this target")
+        );
+        assert_eq!(probe_requests.load(Ordering::SeqCst), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn dry_run_predicts_import_inactive_and_date_drift() -> anyhow::Result<()> {
         let database_url = default_database_url();
         let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
@@ -4255,7 +4370,7 @@ targets:
     }
 
     #[tokio::test]
-    async fn parse_allows_zero_events_and_deactivates_stale_rows() -> anyhow::Result<()> {
+    async fn parse_zero_event_targets_keep_existing_rows_active() -> anyhow::Result<()> {
         let database_url = default_database_url();
         let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
             eprintln!("skipping crawler zero-event parse test because PostgreSQL is not reachable");
@@ -4374,7 +4489,7 @@ targets:
         let empty_dry_run = run_dry_run_command(&settings, &manifest_path).await?;
         assert_eq!(empty_dry_run.parsed_rows, 0);
         assert_eq!(empty_dry_run.imported_rows, 0);
-        assert_eq!(empty_dry_run.deactivated_rows, 4);
+        assert_eq!(empty_dry_run.deactivated_rows, 0);
         assert!(empty_dry_run
             .warnings
             .iter()
@@ -4383,6 +4498,10 @@ targets:
             .warnings
             .iter()
             .any(|issue| issue.code == "no_events_found"));
+        assert!(empty_dry_run
+            .warnings
+            .iter()
+            .any(|issue| issue.code == "partial_import_skips_stale_deactivation"));
 
         let empty_parse = run_parse_command(&settings, &manifest_path).await?;
         assert_eq!(empty_parse.parsed_rows, 0);
@@ -4399,7 +4518,19 @@ targets:
             )
             .await?
             .get::<_, i64>("count");
-        assert_eq!(active_count, 0);
+        assert_eq!(active_count, 4);
+
+        let warning_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM crawl_parse_reports
+                 WHERE crawl_run_id = $1
+                   AND code = 'crawl_skipped_stale_deactivation'",
+                &[&empty_parse.crawl_run_id],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(warning_count, 1);
 
         Ok(())
     }
