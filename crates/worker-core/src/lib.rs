@@ -1,4 +1,9 @@
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{
+    future::{poll_fn, Future},
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
 
 use anyhow::{bail, Result};
 use cache::RecommendationCache;
@@ -74,10 +79,11 @@ where
     where
         S: Future<Output = ()>,
     {
-        tokio::select! {
-            _ = shutdown => true,
-            else => false,
-        }
+        poll_fn(|cx| match shutdown.as_mut().poll(cx) {
+            Poll::Ready(()) => Poll::Ready(true),
+            Poll::Pending => Poll::Ready(false),
+        })
+        .await
     }
 
     pub async fn run_until_empty(&self, max_jobs: usize) -> Result<usize> {
@@ -292,6 +298,50 @@ mod tests {
 
         assert_eq!(repository.claim_count.load(Ordering::SeqCst), 1);
         assert_eq!(repository.success_count.load(Ordering::SeqCst), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serve_keeps_processing_when_shutdown_is_pending() -> Result<()> {
+        let repository = Arc::new(FakeRepository::default());
+        let service = WorkerService::new(
+            repository.clone(),
+            RecommendationCache::new(None, 60),
+            "worker-test",
+            None,
+            5,
+        );
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+        let serve_task = tokio::spawn({
+            async move {
+                service
+                    .serve_until(Duration::from_secs(60), async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+            }
+        });
+
+        repository.job_started.notified().await;
+        repository.release_job.notify_one();
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while repository.claim_count.load(Ordering::SeqCst) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("worker should claim the next job before shutdown");
+
+        shutdown_tx.send(()).expect("shutdown signal");
+        repository.release_job.notify_one();
+
+        serve_task.await??;
+
+        assert_eq!(repository.claim_count.load(Ordering::SeqCst), 2);
+        assert_eq!(repository.success_count.load(Ordering::SeqCst), 2);
 
         Ok(())
     }
