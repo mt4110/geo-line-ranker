@@ -36,6 +36,7 @@ impl RecommendationCache {
         algorithm_version: &str,
         candidate_mode: &str,
         candidate_limit: usize,
+        neighbor_distance_cap_meters: f64,
         request: &T,
     ) -> Result<String> {
         let serialized =
@@ -44,7 +45,8 @@ impl RecommendationCache {
         digest.update(&serialized);
         let request_hash = format!("{:x}", digest.finalize());
         Ok(format!(
-            "{RECOMMENDATION_PREFIX}:{profile_version}:{algorithm_version}:{candidate_mode}:{candidate_limit}:{request_hash}"
+            "{RECOMMENDATION_PREFIX}:{profile_version}:{algorithm_version}:{candidate_mode}:{candidate_limit}:{}:{request_hash}",
+            neighbor_distance_cap_meters.to_bits()
         ))
     }
 
@@ -228,6 +230,7 @@ mod tests {
                 "algo-456",
                 "sql_only",
                 256,
+                2500.0,
                 &Request {
                     target_station_id: "st_tamachi",
                     placement: "home",
@@ -250,6 +253,7 @@ mod tests {
                 "algo-456",
                 "sql_only",
                 256,
+                2500.0,
                 &Request {
                     target_station_id: "st_tamachi",
                     placement: "home",
@@ -263,6 +267,7 @@ mod tests {
                 "algo-456",
                 "sql_only",
                 256,
+                2500.0,
                 &Request {
                     target_station_id: "st_tamachi",
                     placement: "search",
@@ -283,6 +288,7 @@ mod tests {
                 "algo-456",
                 "sql_only",
                 128,
+                2500.0,
                 &Request {
                     target_station_id: "st_tamachi",
                     placement: "search",
@@ -296,6 +302,7 @@ mod tests {
                 "algo-456",
                 "sql_only",
                 256,
+                2500.0,
                 &Request {
                     target_station_id: "st_tamachi",
                     placement: "search",
@@ -305,5 +312,40 @@ mod tests {
             .expect("large limit cache key");
 
         assert_ne!(small_limit_key, large_limit_key);
+    }
+
+    #[test]
+    fn neighbor_distance_cap_changes_cache_key() {
+        let cache = RecommendationCache::new(Some("redis://127.0.0.1:6379".to_string()), 60);
+        let short_cap_key = cache
+            .build_key(
+                "profile-123",
+                "algo-456",
+                "sql_only",
+                256,
+                1500.0,
+                &Request {
+                    target_station_id: "st_tamachi",
+                    placement: "search",
+                    limit: 3,
+                },
+            )
+            .expect("short cap cache key");
+        let long_cap_key = cache
+            .build_key(
+                "profile-123",
+                "algo-456",
+                "sql_only",
+                256,
+                2500.0,
+                &Request {
+                    target_station_id: "st_tamachi",
+                    placement: "search",
+                    limit: 3,
+                },
+            )
+            .expect("long cap cache key");
+
+        assert_ne!(short_cap_key, long_cap_key);
     }
 }

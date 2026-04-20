@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fmt, fs, path::Path, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt, fs,
+    path::Path,
+    str::FromStr,
+};
 
 use anyhow::{bail, ensure, Context, Result};
 use domain::PlacementKind;
@@ -1611,6 +1616,15 @@ fn validate_manifest(manifest: &CrawlSourceManifest, path: &Path) -> Result<()> 
             target.logical_name
         );
     }
+    let mut logical_names = BTreeSet::new();
+    for target in &manifest.targets {
+        ensure!(
+            logical_names.insert(target.logical_name.clone()),
+            "crawl manifest {} contains duplicate logical_name {}",
+            path.display(),
+            target.logical_name
+        );
+    }
 
     Ok(())
 }
@@ -2774,6 +2788,37 @@ targets:
 
         let error = load_manifest(&manifest_path).expect_err("invalid source_maturity");
         assert!(error.to_string().contains("source_maturity live_ready"));
+    }
+
+    #[test]
+    fn manifest_rejects_duplicate_logical_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("crawler.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/first
+  - logical_name: example_home
+    url: https://example.com/second
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("duplicate logical_name");
+        assert!(error.to_string().contains("duplicate logical_name"));
     }
 
     #[test]

@@ -101,6 +101,7 @@ async fn worker_processes_snapshot_and_cache_jobs() -> anyhow::Result<()> {
         "algo-worker-test",
         "sql_only",
         256,
+        2500.0,
         &serde_json::json!({ "worker_test": true }),
     )?;
     if let Err(error) = cache

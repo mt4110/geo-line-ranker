@@ -142,6 +142,7 @@ async fn recommend(
             &state.algorithm_version,
             state.candidate_retrieval_mode.as_str(),
             state.candidate_retrieval_limit,
+            state.neighbor_distance_cap_meters,
             &request,
         ) {
             Ok(key) => Some(key),

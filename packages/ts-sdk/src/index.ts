@@ -4,8 +4,8 @@ export type ContentKind = "school" | "event" | "article";
 
 export type RecommendationRequest = {
   target_station_id: string;
-  limit?: number;
-  user_id?: string;
+  limit?: number | null;
+  user_id?: string | null;
   placement?: Placement;
   debug?: boolean;
 };
@@ -14,7 +14,7 @@ export type ScoreComponent = {
   feature: string;
   value: number;
   reason: string;
-  details?: Record<string, unknown>;
+  details?: Record<string, unknown> | null;
 };
 
 export type RecommendationItem = {
@@ -22,8 +22,8 @@ export type RecommendationItem = {
   content_id: string;
   school_id: string;
   school_name: string;
-  event_id?: string;
-  event_title?: string;
+  event_id?: string | null;
+  event_title?: string | null;
   primary_station_id: string;
   primary_station_name: string;
   line_name: string;
@@ -52,11 +52,11 @@ export type TrackEventKind =
 export type TrackRequest = {
   user_id: string;
   event_kind: TrackEventKind;
-  school_id?: string;
-  event_id?: string;
-  target_station_id?: string;
-  occurred_at?: string;
-  payload?: Record<string, unknown>;
+  school_id?: string | null;
+  event_id?: string | null;
+  target_station_id?: string | null;
+  occurred_at?: string | null;
+  payload?: Record<string, unknown> | null;
 };
 
 export type TrackResponse = {
