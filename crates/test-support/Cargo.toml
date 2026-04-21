@@ -8,8 +8,10 @@ version.workspace = true
 anyhow.workspace = true
 csv.workspace = true
 domain = { path = "../domain" }
+fs2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

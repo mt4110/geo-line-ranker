@@ -26,5 +26,6 @@ utoipa.workspace = true
 utoipa-swagger-ui.workspace = true
 
 [dev-dependencies]
+test-support = { path = "../../crates/test-support" }
 tokio-postgres.workspace = true
 tower.workspace = true

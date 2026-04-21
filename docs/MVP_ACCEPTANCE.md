@@ -1,6 +1,12 @@
 # MVP Acceptance
 
-This document defines the fixed public-MVP acceptance gate for this repository.
+This document defines the fixed public-MVP launch gate for this repository.
+
+## Decision Rule
+
+The public MVP is ready for release only when this gate passes on the release candidate branch and in CI.
+
+The gate is intentionally stable for the April 30 launch window. Prefer tightening implementation and operations around these checks over adding broader product surface to the gate.
 
 ## Scope
 
@@ -19,6 +25,15 @@ Why the exclusion is deliberate:
 
 For the surrounding operator guidance, see [OPERATIONS.md](OPERATIONS.md) and [DATA_LICENSES.md](DATA_LICENSES.md).
 
+Non-negotiable constraints:
+
+- PostgreSQL/PostGIS is the reference write path.
+- SQLite remains a read-only artifact/export target only.
+- Redis remains cache only.
+- OpenSearch remains optional full-mode candidate retrieval.
+- Crawling remains optional and must not be required for the public-MVP path.
+- Data freshness wording must use "latest available MLIT N02 snapshot" where rail/station source freshness is discussed.
+
 ## Fixed Cases
 
 Public MVP acceptance is fixed to these six cases.
@@ -35,6 +50,25 @@ Public MVP acceptance is fixed to these six cases.
    `cargo run -p cli -- import event-csv --file ...` stages the raw file, records audit rows, and activates the imported event set.
 6. Event CSV replacement semantics
    Re-importing the same logical `event-csv` source updates surviving rows and marks missing rows `is_active = false`.
+
+## Failure Policy
+
+Any failed case is a release blocker. Fix the cause and rerun the full gate; do not waive individual cases for launch.
+
+The runner tears down its Docker Compose project at exit, uses temporary host ports, and prints API/worker log tails on failure so the next action is visible without digging through stale local state.
+
+## Launch Checklist
+
+Before marking the public MVP ready:
+
+- `cargo fmt --all --check` passes
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes
+- `cargo test --workspace` passes
+- `just mvp-acceptance` passes
+- CI is green for the release candidate branch
+- release notes describe `sql_only` as the public-MVP baseline
+- optional crawler and full-mode notes remain clearly outside the public-MVP gate
+- any public API change includes `schemas/openapi.json` and `API_SPEC.md` updates in the same change
 
 ## One-Shot Run
 
@@ -55,8 +89,10 @@ The runner:
 - uses `.env.example` as the public-MVP baseline
 - starts only the minimal PostgreSQL/Redis stack
 - waits until PostgreSQL is queryable and no longer in recovery
+- forces `CANDIDATE_RETRIEVAL_MODE=sql_only`
 - boots the local worker and API from the current workspace
 - executes the six fixed cases above
+- exits successfully only after printing `public MVP acceptance passed`
 
 ## Manual Bootstrap
 

@@ -104,5 +104,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Check MVP acceptance runner
+        run: |
+          test -x scripts/mvp_acceptance.sh
+          bash -n scripts/mvp_acceptance.sh
       - name: Public MVP acceptance
         run: ./scripts/mvp_acceptance.sh

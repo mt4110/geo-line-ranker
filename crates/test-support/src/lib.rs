@@ -1,9 +1,50 @@
-use std::{fs, path::Path};
+use std::{fs, fs::OpenOptions, path::Path, sync::OnceLock};
 
 use anyhow::{Context, Result};
 use csv::Reader;
 use domain::{Event, PlacementKind, RankingDataset, School, SchoolStationLink, Station, UserEvent};
+use fs2::FileExt;
 use serde::Deserialize;
+
+static POSTGRES_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+pub struct PostgresTestLockGuard {
+    _in_process: tokio::sync::MutexGuard<'static, ()>,
+    file: fs::File,
+}
+
+impl Drop for PostgresTestLockGuard {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+pub async fn acquire_postgres_test_lock() -> PostgresTestLockGuard {
+    let in_process = POSTGRES_TEST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let file = tokio::task::spawn_blocking(|| -> Result<fs::File> {
+        let lock_path = std::env::temp_dir().join("geo-line-ranker-postgres-tests.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .with_context(|| format!("failed to open {}", lock_path.display()))?;
+        file.lock_exclusive()
+            .with_context(|| format!("failed to lock {}", lock_path.display()))?;
+        Ok(file)
+    })
+    .await
+    .expect("postgres test lock task should complete")
+    .expect("postgres test lock should be acquired");
+    PostgresTestLockGuard {
+        _in_process: in_process,
+        file,
+    }
+}
 
 pub fn load_fixture_dataset(path: impl AsRef<Path>) -> Result<RankingDataset> {
     let path = path.as_ref();
