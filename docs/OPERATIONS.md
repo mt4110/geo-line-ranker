@@ -42,6 +42,8 @@ Placement configs live in `configs/ranking/placement.*.yaml`.
 
 Startup validation is strict. Unknown keys, missing placement files, invalid ratios, or impossible caps fail the process before the API starts serving.
 
+When diversity caps remove otherwise high-scoring candidates, the top-level recommendation explanation calls out the affected cap family, such as same-school, same-group, or content-kind caps. This is intentionally result-level rather than a score component: the candidates are still scored deterministically first, then the final display list is shaped by policy.
+
 ## Event CSV import
 
 Import operational events:
@@ -131,6 +133,7 @@ Operational notes:
 - `crawler health` summarizes recent run state without needing ad hoc SQL first
 - `crawler doctor` checks robots/terms redirects, content types, parser registration, school presence, and target `expected_shape` before you chase a live failure
 - `crawler dry-run` reuses the latest fetched raw content to show predicted `parsed / deduped / imported / inactive` counts without mutating core events
+- `crawler doctor`, `crawler dry-run`, and `crawler health` print a `promotion_gate` line so operators can separate `ready`, `review`, and `blocked` states before marking a source `live_ready`
 - `crawler -- serve` auto-polls only `source_maturity = live_ready`; `parser_only` and `policy_blocked` stay visible in doctor/health without repeated failed fetch attempts
 - `utokyo_events.yaml` reads the public `events.json` feed and keeps only the newest 60 dated items per parse for bounded deterministic imports
 - `keio_events.yaml` reads the public event listing pages and extracts card metadata including range end date, venue, and registration flag
@@ -147,6 +150,7 @@ Operational notes:
 Typical health output includes:
 
 - `source_maturity` plus parser `expected_shape`
+- `promotion_gate`, including blocker and review reasons for live promotion decisions
 - total and recent run counts
 - aggregated fetch statuses such as `fetched`, `not_modified`, `fetch_failed`, `blocked_robots`, and `blocked_policy`
 - aggregated parse levels such as `info` and `error`
@@ -192,12 +196,115 @@ Important job types:
 
 Inspect recent jobs:
 
+```bash
+cargo run -p cli -- jobs list --limit 20
+```
+
+The SQL equivalent is:
+
 ```sql
 SELECT id, job_type, status, attempts, max_attempts, last_error, run_after, completed_at
 FROM job_queue
 ORDER BY id DESC
 LIMIT 20;
 ```
+
+Inspect queue pressure by type:
+
+```sql
+SELECT
+    job_type,
+    status,
+    COUNT(*) AS job_count,
+    MIN(run_after) AS oldest_run_after,
+    MAX(updated_at) AS latest_update
+FROM job_queue
+GROUP BY job_type, status
+ORDER BY job_type ASC, status ASC;
+```
+
+Inspect a job and its attempts before changing anything:
+
+```bash
+cargo run -p cli -- jobs inspect --id 123
+```
+
+The SQL equivalent is:
+
+```sql
+SELECT id, job_type, payload, status, attempts, max_attempts, locked_by, locked_at,
+       last_error, run_after, completed_at, created_at, updated_at
+FROM job_queue
+WHERE id = 123;
+
+SELECT attempt_number, status, error_message, started_at, finished_at
+FROM job_attempts
+WHERE job_id = 123
+ORDER BY attempt_number ASC;
+```
+
+Inspect running jobs that may have been orphaned by a stopped worker:
+
+```sql
+SELECT id, job_type, attempts, max_attempts, locked_by, locked_at,
+       NOW() - locked_at AS locked_for, last_error
+FROM job_queue
+WHERE status = 'running'
+ORDER BY locked_at ASC, id ASC;
+```
+
+Running jobs are recovered by the next worker claim after the stale lock window.
+The current stale lock window is 15 minutes. Start a bounded worker drain to
+trigger recovery and process due work:
+
+```bash
+cargo run -p worker -- run-once --max-jobs 50
+```
+
+If a transient dependency failure is fixed and a job is already `failed`, queue
+one more attempt without losing the attempt history:
+
+```bash
+cargo run -p cli -- jobs retry --id 123
+```
+
+The SQL equivalent is:
+
+```sql
+UPDATE job_queue
+SET status = 'queued',
+    max_attempts = GREATEST(max_attempts, attempts + 1),
+    run_after = NOW(),
+    locked_at = NULL,
+    locked_by = NULL,
+    completed_at = NULL,
+    last_error = NULL,
+    updated_at = NOW()
+WHERE id = 123
+  AND status = 'failed';
+```
+
+If a retry is deliberately delayed but the dependency is now healthy, make only
+that queued job due:
+
+```bash
+cargo run -p cli -- jobs due --id 123
+```
+
+The SQL equivalent is:
+
+```sql
+UPDATE job_queue
+SET run_after = NOW(),
+    updated_at = NOW()
+WHERE id = 123
+  AND status = 'queued'
+  AND run_after > NOW();
+```
+
+Do not mark jobs `succeeded` manually. That hides missing side effects such as
+snapshot rows, cache deletion, or projection documents. Either fix the
+dependency and queue another attempt, or leave the failed row as the audit trail.
 
 ### Search-signal calibration
 
@@ -223,6 +330,7 @@ Operational notes:
 - the command recalculates `popularity_snapshots` and `area_affinity_snapshots` from PostgreSQL using the current tracking config
 - recommendation cache is invalidated when Redis is configured
 - full mode also runs projection sync, so OpenSearch sees the updated popularity ordering without a separate command
+- full-mode candidate retrieval sorts direct-station candidates before same-line neighbors, then by school-station distance, walking minutes, school id, and station id to match the SQL-only candidate slice before ranking
 - config-only tuning changes `profile_version`; keep `ALGORITHM_VERSION` for code-path changes rather than everyday weight nudges
 
 Useful inspection queries while tuning:
@@ -265,6 +373,65 @@ ORDER BY affinity_score DESC, area ASC
 LIMIT 20;
 ```
 
+Inspect snapshot coverage and freshness:
+
+```sql
+SELECT
+    (SELECT COUNT(*) FROM schools) AS school_count,
+    (SELECT COUNT(*) FROM popularity_snapshots) AS popularity_snapshot_count,
+    (SELECT COUNT(*) FROM area_affinity_snapshots) AS area_snapshot_count,
+    (SELECT MAX(refreshed_at) FROM popularity_snapshots) AS latest_popularity_refresh,
+    (SELECT MAX(refreshed_at) FROM area_affinity_snapshots) AS latest_area_refresh;
+
+SELECT COUNT(*) AS user_affinity_rows,
+       MAX(refreshed_at) AS latest_user_affinity_refresh
+FROM user_affinity_snapshots;
+```
+
+Snapshot recovery order:
+
+1. Confirm tracking input exists:
+
+   ```sql
+   SELECT event_type, COUNT(*) AS event_count
+   FROM user_events
+   GROUP BY event_type
+   ORDER BY event_type ASC;
+   ```
+
+2. Rebuild global popularity and area snapshots with the current ranking config:
+
+   ```bash
+   cargo run -p cli -- snapshot refresh
+   ```
+
+3. If user-affinity snapshots need a full rebuild, enqueue a worker job with an
+   empty payload and drain it:
+
+   ```bash
+   cargo run -p cli -- jobs enqueue \
+     --job-type refresh_user_affinity_snapshot \
+     --payload '{}'
+   ```
+
+   ```bash
+   cargo run -p worker -- run-once --max-jobs 10
+   ```
+
+4. If only one user's affinity snapshot is stale, keep the recovery scoped:
+
+   ```bash
+   cargo run -p cli -- jobs enqueue \
+     --job-type refresh_user_affinity_snapshot \
+     --payload '{"user_id":"manual-user-1"}'
+   ```
+
+After a manual user-affinity rebuild, invalidate recommendation cache if Redis is
+configured. User-affinity is read at recommendation time, so cached personalized
+responses can otherwise stay stale until TTL expiry. Projection sync is not
+needed for user-affinity-only recovery because OpenSearch projection documents
+do not include user-affinity fields.
+
 ## Cache invalidation
 
 Recommendation cache keys include:
@@ -277,3 +444,88 @@ Recommendation cache keys include:
 - serialized request hash
 
 Placement remains part of the serialized request payload, so cache entries stay separated per placement. Changing the retrieval window or fallback neighbor-distance cap also produces a different cache key, so rollout changes do not wait for TTL expiry before taking effect.
+
+Inspect Redis cache keys:
+
+```bash
+redis-cli -u "$REDIS_URL" --scan --pattern 'geo-line-ranker:recommendations:*' | head -20
+```
+
+Invalidate recommendation cache through the same worker path the API uses:
+
+```bash
+cargo run -p cli -- jobs enqueue \
+  --job-type invalidate_recommendation_cache \
+  --payload '{"scope":"recommendations"}'
+```
+
+```bash
+cargo run -p worker -- run-once --max-jobs 10
+```
+
+When you are already rebuilding global snapshots, prefer:
+
+```bash
+cargo run -p cli -- snapshot refresh
+```
+
+That command recalculates global snapshots, invalidates recommendation cache
+when Redis is configured, and runs projection sync in full mode.
+
+## Projection sync
+
+Projection sync is only required for `CANDIDATE_RETRIEVAL_MODE=full`. SQL-only
+mode does not need OpenSearch for correctness.
+
+Inspect the PostgreSQL source row count:
+
+```sql
+SELECT COUNT(*) AS projection_source_rows
+FROM school_station_links AS link
+INNER JOIN schools AS school
+  ON school.id = link.school_id
+INNER JOIN stations AS station
+  ON station.id = link.station_id;
+```
+
+Inspect the OpenSearch index:
+
+```bash
+curl -s "$OPENSEARCH_URL/$OPENSEARCH_INDEX_NAME/_count"
+```
+
+Sync the projection after import, fixture, or snapshot changes:
+
+```bash
+cargo run -p cli -- projection sync
+```
+
+If the index mapping is missing or the document count is clearly wrong, rebuild
+the index from PostgreSQL:
+
+```bash
+cargo run -p cli -- index rebuild
+```
+
+Worker recovery for projection jobs:
+
+- Only run `sync_candidate_projection` jobs with worker environment set to full
+  mode. In SQL-only mode the worker intentionally fails that job because no
+  projection sync client is configured.
+- After OpenSearch is reachable again, queue one more attempt for the failed job
+  using the job recovery SQL above, then drain due work:
+
+  ```bash
+  cargo run -p cli -- jobs retry --id 123
+  ```
+
+  ```bash
+  cargo run -p worker -- run-once --max-jobs 10
+  ```
+
+- If freshness matters more than preserving the exact queued job, run projection
+  sync directly and leave the failed worker row as the audit trail:
+
+  ```bash
+  cargo run -p cli -- projection sync
+  ```

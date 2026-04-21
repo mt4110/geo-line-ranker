@@ -226,17 +226,20 @@ impl OpenSearchStore {
             "size": candidate_limit.clamp(1, 10_000),
             "sort": [
                 {
-                    "_geo_distance": {
-                        "station_location": {
-                            "lat": target_station.latitude,
-                            "lon": target_station.longitude
+                    "_script": {
+                        "type": "number",
+                        "script": {
+                            "lang": "painless",
+                            "source": "doc['station_id'].size() != 0 && doc['station_id'].value == params.target_station_id ? 0 : 1",
+                            "params": {
+                                "target_station_id": target_station.id.as_str()
+                            }
                         },
                         "order": "asc",
-                        "unit": "m"
                     }
                 },
-                { "walking_minutes": { "order": "asc" } },
                 { "distance_meters": { "order": "asc" } },
+                { "walking_minutes": { "order": "asc" } },
                 { "school_id": { "order": "asc" } },
                 { "station_id": { "order": "asc" } }
             ],
@@ -342,6 +345,18 @@ impl OpenSearchStore {
                 line_name: line_name.to_string(),
             });
         }
+
+        links.sort_by(|left, right| {
+            let left_direct = left.station_id != target_station.id;
+            let right_direct = right.station_id != target_station.id;
+            left_direct
+                .cmp(&right_direct)
+                .then_with(|| left.distance_meters.cmp(&right.distance_meters))
+                .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
+                .then_with(|| left.school_id.cmp(&right.school_id))
+                .then_with(|| left.station_id.cmp(&right.station_id))
+        });
+        links.truncate(candidate_limit.clamp(1, 10_000));
 
         Ok(links)
     }

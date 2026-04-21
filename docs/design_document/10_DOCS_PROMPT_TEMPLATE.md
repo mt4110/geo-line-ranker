@@ -20,7 +20,7 @@ This task is documentation-only.
 Current repository already contains:
 
 - `README.md`
-- `README_JA.md`
+- `README_EN.md`
 - `docs/ARCHITECTURE.md`
 - `docs/QUICKSTART.md`
 - `docs/OPERATIONS.md`
@@ -74,7 +74,7 @@ docs/design_document/
 ### README link update
 
 Update `docs/README` only if such a file exists.  
-Otherwise, update the Docs section in root `README.md` and `README_JA.md` to include:
+Otherwise, update the Docs section in root `README.md` and `README_EN.md` to include:
 
 - `docs/design_document/README_JA.md` as "Non-engineer friendly design docs / 非エンジニア向け設計ドキュメント"
 

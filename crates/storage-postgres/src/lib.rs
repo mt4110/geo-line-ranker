@@ -21,7 +21,7 @@ use storage::{
     ClaimedJob, JobType, NewJob, RecommendationRepository, RecommendationTrace,
     SnapshotRefreshStats, SnapshotTuning,
 };
-use tokio_postgres::{Client, GenericClient, NoTls};
+use tokio_postgres::{Client, GenericClient, NoTls, Row};
 
 const REQUIRED_READY_TABLES: [&str; 10] = [
     "schools",
@@ -45,6 +45,59 @@ const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference valid
 #[derive(Debug, Clone)]
 pub struct PgRepository {
     database_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobQueueRow {
+    pub id: i64,
+    pub job_type: String,
+    pub payload: Value,
+    pub status: String,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub locked_by: Option<String>,
+    pub locked_at: Option<String>,
+    pub last_error: Option<String>,
+    pub run_after: String,
+    pub completed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobAttemptRow {
+    pub attempt_number: i32,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobQueuePressureRow {
+    pub job_type: String,
+    pub status: String,
+    pub job_count: i64,
+    pub oldest_run_after: Option<String>,
+    pub latest_update: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobQueueSnapshot {
+    pub jobs: Vec<JobQueueRow>,
+    pub pressure: Vec<JobQueuePressureRow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobInspection {
+    pub job: JobQueueRow,
+    pub attempts: Vec<JobAttemptRow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobMutationSummary {
+    pub job: JobQueueRow,
+    pub updated: bool,
 }
 
 impl PgRepository {
@@ -101,6 +154,178 @@ impl PgRepository {
                 })
             })
             .context("failed to load target station")
+    }
+
+    pub async fn list_jobs(&self, limit: i64) -> Result<JobQueueSnapshot> {
+        let client = self.connect().await?;
+        let limit = limit.clamp(1, 500);
+        let jobs = client
+            .query(
+                "SELECT id, job_type, payload, status, attempts, max_attempts,
+                        locked_by, locked_at::TEXT AS locked_at, last_error,
+                        run_after::TEXT AS run_after,
+                        completed_at::TEXT AS completed_at,
+                        created_at::TEXT AS created_at,
+                        updated_at::TEXT AS updated_at
+                 FROM job_queue
+                 ORDER BY id DESC
+                 LIMIT $1",
+                &[&limit],
+            )
+            .await?
+            .into_iter()
+            .map(job_queue_row)
+            .collect::<Result<Vec<_>>>()?;
+
+        let pressure = client
+            .query(
+                "SELECT job_type, status, COUNT(*)::BIGINT AS job_count,
+                        MIN(run_after)::TEXT AS oldest_run_after,
+                        MAX(updated_at)::TEXT AS latest_update
+                 FROM job_queue
+                 GROUP BY job_type, status
+                 ORDER BY job_type ASC, status ASC",
+                &[],
+            )
+            .await?
+            .into_iter()
+            .map(|row| JobQueuePressureRow {
+                job_type: row.get("job_type"),
+                status: row.get("status"),
+                job_count: row.get("job_count"),
+                oldest_run_after: row.get("oldest_run_after"),
+                latest_update: row.get("latest_update"),
+            })
+            .collect();
+
+        Ok(JobQueueSnapshot { jobs, pressure })
+    }
+
+    pub async fn inspect_job(&self, job_id: i64) -> Result<JobInspection> {
+        let client = self.connect().await?;
+        let job = client
+            .query_opt(
+                "SELECT id, job_type, payload, status, attempts, max_attempts,
+                        locked_by, locked_at::TEXT AS locked_at, last_error,
+                        run_after::TEXT AS run_after,
+                        completed_at::TEXT AS completed_at,
+                        created_at::TEXT AS created_at,
+                        updated_at::TEXT AS updated_at
+                 FROM job_queue
+                 WHERE id = $1",
+                &[&job_id],
+            )
+            .await?
+            .map(job_queue_row)
+            .transpose()?
+            .with_context(|| format!("job_queue id {job_id} not found"))?;
+
+        let attempts = client
+            .query(
+                "SELECT attempt_number, status, error_message,
+                        started_at::TEXT AS started_at,
+                        finished_at::TEXT AS finished_at
+                 FROM job_attempts
+                 WHERE job_id = $1
+                 ORDER BY attempt_number ASC",
+                &[&job_id],
+            )
+            .await?
+            .into_iter()
+            .map(job_attempt_row)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(JobInspection { job, attempts })
+    }
+
+    pub async fn retry_failed_job(&self, job_id: i64) -> Result<JobMutationSummary> {
+        let mut client = self.connect().await?;
+        let transaction = client.transaction().await?;
+        let before_status = transaction
+            .query_opt(
+                "SELECT status
+                 FROM job_queue
+                 WHERE id = $1
+                 FOR UPDATE",
+                &[&job_id],
+            )
+            .await?
+            .map(|row| row.get::<_, String>("status"))
+            .with_context(|| format!("job_queue id {job_id} not found"))?;
+
+        let updated = before_status == "failed";
+        if updated {
+            transaction
+                .execute(
+                    "UPDATE job_queue
+                     SET status = 'queued',
+                         max_attempts = GREATEST(max_attempts, attempts + 1),
+                         run_after = NOW(),
+                         locked_at = NULL,
+                         locked_by = NULL,
+                         completed_at = NULL,
+                         last_error = NULL,
+                         updated_at = NOW()
+                     WHERE id = $1",
+                    &[&job_id],
+                )
+                .await?;
+        }
+
+        let job = transaction
+            .query_one(
+                "SELECT id, job_type, payload, status, attempts, max_attempts,
+                        locked_by, locked_at::TEXT AS locked_at, last_error,
+                        run_after::TEXT AS run_after,
+                        completed_at::TEXT AS completed_at,
+                        created_at::TEXT AS created_at,
+                        updated_at::TEXT AS updated_at
+                 FROM job_queue
+                 WHERE id = $1",
+                &[&job_id],
+            )
+            .await?;
+        let job = job_queue_row(job)?;
+        transaction.commit().await?;
+
+        Ok(JobMutationSummary { job, updated })
+    }
+
+    pub async fn make_queued_job_due(&self, job_id: i64) -> Result<JobMutationSummary> {
+        let mut client = self.connect().await?;
+        let transaction = client.transaction().await?;
+        let updated = transaction
+            .execute(
+                "UPDATE job_queue
+                 SET run_after = NOW(),
+                     updated_at = NOW()
+                 WHERE id = $1
+                   AND status = 'queued'
+                   AND run_after > NOW()",
+                &[&job_id],
+            )
+            .await?
+            > 0;
+
+        let job = transaction
+            .query_opt(
+                "SELECT id, job_type, payload, status, attempts, max_attempts,
+                        locked_by, locked_at::TEXT AS locked_at, last_error,
+                        run_after::TEXT AS run_after,
+                        completed_at::TEXT AS completed_at,
+                        created_at::TEXT AS created_at,
+                        updated_at::TEXT AS updated_at
+                 FROM job_queue
+                 WHERE id = $1",
+                &[&job_id],
+            )
+            .await?
+            .map(job_queue_row)
+            .transpose()?
+            .with_context(|| format!("job_queue id {job_id} not found"))?;
+        transaction.commit().await?;
+
+        Ok(JobMutationSummary { job, updated })
     }
 
     pub async fn load_candidate_links(
@@ -528,6 +753,34 @@ async fn insert_job_row(client: &(impl GenericClient + Sync), job: &NewJob) -> R
         )
         .await?;
     Ok(row.get("id"))
+}
+
+fn job_queue_row(row: Row) -> Result<JobQueueRow> {
+    Ok(JobQueueRow {
+        id: row.get("id"),
+        job_type: row.get("job_type"),
+        payload: row.get("payload"),
+        status: row.get("status"),
+        attempts: row.get("attempts"),
+        max_attempts: row.get("max_attempts"),
+        locked_by: row.get("locked_by"),
+        locked_at: row.get("locked_at"),
+        last_error: row.get("last_error"),
+        run_after: row.get("run_after"),
+        completed_at: row.get("completed_at"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    })
+}
+
+fn job_attempt_row(row: Row) -> Result<JobAttemptRow> {
+    Ok(JobAttemptRow {
+        attempt_number: row.get("attempt_number"),
+        status: row.get("status"),
+        error_message: row.get("error_message"),
+        started_at: row.get("started_at"),
+        finished_at: row.get("finished_at"),
+    })
 }
 
 async fn acquire_schema_migration_lock(client: &Client) -> Result<()> {

@@ -96,7 +96,7 @@ impl AppSettings {
             raw_storage_dir: env::var("RAW_STORAGE_DIR")
                 .unwrap_or_else(|_| ".storage/raw".to_string()),
             algorithm_version: env::var("ALGORITHM_VERSION")
-                .unwrap_or_else(|_| "phase7-search-signal-v2".to_string()),
+                .unwrap_or_else(|_| "phase8-policy-diversity-v1".to_string()),
             candidate_retrieval_mode,
             candidate_retrieval_limit: parse_env("CANDIDATE_RETRIEVAL_LIMIT", 256),
             opensearch: OpenSearchSettings {

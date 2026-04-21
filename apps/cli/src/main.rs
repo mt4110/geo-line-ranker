@@ -2,8 +2,10 @@ use std::{fs, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use cli::{
-    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture,
-    run_derive_school_station_links, run_event_csv_import, run_import_command,
+    format_job_enqueue_summary, format_job_inspection, format_job_list,
+    format_job_mutation_summary, format_snapshot_refresh_summary, format_summary,
+    generate_demo_jp_fixture, run_derive_school_station_links, run_event_csv_import,
+    run_import_command, run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
     run_snapshot_refresh, ImportTarget,
 };
 use config::AppSettings;
@@ -47,6 +49,11 @@ enum Command {
     Snapshot {
         #[command(subcommand)]
         target: SnapshotCommand,
+    },
+    #[command(about = "Inspect and recover DB-backed worker jobs")]
+    Jobs {
+        #[command(subcommand)]
+        target: JobsCommand,
     },
     DumpOpenapi {
         #[arg(default_value = "schemas/openapi.json")]
@@ -114,6 +121,42 @@ enum ProjectionCommand {
 #[derive(Debug, Subcommand)]
 enum SnapshotCommand {
     Refresh,
+}
+
+#[derive(Debug, Subcommand)]
+enum JobsCommand {
+    #[command(about = "Show recent jobs and queue pressure by type and status")]
+    List {
+        #[arg(long, default_value_t = 20, help = "Maximum recent jobs to print")]
+        limit: i64,
+    },
+    #[command(about = "Show one job with payload, lock state, and attempt history")]
+    Inspect {
+        #[arg(long, help = "Job queue id to inspect")]
+        id: i64,
+    },
+    #[command(about = "Queue one more attempt for a failed job")]
+    Retry {
+        #[arg(long, help = "Failed job queue id to retry")]
+        id: i64,
+    },
+    #[command(about = "Make a delayed queued job due now")]
+    Due {
+        #[arg(long, help = "Queued job id to make due")]
+        id: i64,
+    },
+    #[command(about = "Create a manual worker job for scoped recovery")]
+    Enqueue {
+        #[arg(
+            long,
+            help = "Job type: refresh_popularity_snapshot, refresh_user_affinity_snapshot, invalidate_recommendation_cache, or sync_candidate_projection"
+        )]
+        job_type: String,
+        #[arg(long, default_value = "{}", help = "JSON object payload for the job")]
+        payload: String,
+        #[arg(long, default_value_t = 3, help = "Maximum attempts before failure")]
+        max_attempts: i32,
+    },
 }
 
 #[tokio::main]
@@ -190,6 +233,32 @@ async fn main() -> anyhow::Result<()> {
             SnapshotCommand::Refresh => {
                 let summary = run_snapshot_refresh(&settings).await?;
                 println!("{}", format_snapshot_refresh_summary(&summary));
+            }
+        },
+        Command::Jobs { target } => match target {
+            JobsCommand::List { limit } => {
+                let summary = run_job_list(&settings, limit).await?;
+                println!("{}", format_job_list(&summary));
+            }
+            JobsCommand::Inspect { id } => {
+                let inspection = run_job_inspect(&settings, id).await?;
+                println!("{}", format_job_inspection(&inspection));
+            }
+            JobsCommand::Retry { id } => {
+                let summary = run_job_retry(&settings, id).await?;
+                println!("{}", format_job_mutation_summary("retry", &summary));
+            }
+            JobsCommand::Due { id } => {
+                let summary = run_job_due(&settings, id).await?;
+                println!("{}", format_job_mutation_summary("due", &summary));
+            }
+            JobsCommand::Enqueue {
+                job_type,
+                payload,
+                max_attempts,
+            } => {
+                let summary = run_job_enqueue(&settings, &job_type, &payload, max_attempts).await?;
+                println!("{}", format_job_enqueue_summary(&summary));
             }
         },
         Command::DumpOpenapi { output } => {

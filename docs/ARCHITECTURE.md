@@ -53,7 +53,8 @@ flowchart LR
 4. PostgreSQL loads school rows, active event rows, station rows, and snapshot rows for the candidate slice.
 5. `crates/ranking` scores school candidates and event candidates from the same slice.
 6. Placement config applies mixed-ranking boosts and diversity hard caps.
-7. The response returns mixed items, explanation text, profile version, and algorithm version.
+7. When diversity caps remove candidates from the display list, the response explanation names the affected cap family without changing the score math.
+8. The response returns mixed items, explanation text, profile version, and algorithm version.
 
 ## Mixed ranking model
 

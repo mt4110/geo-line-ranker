@@ -18,6 +18,6 @@ jobs:
       - name: Check docs files
         run: |
           test -f README.md
-          test -f README_JA.md
+          test -f README_EN.md
           test -f docs/QUICKSTART.md
           test -f docs/ARCHITECTURE.md

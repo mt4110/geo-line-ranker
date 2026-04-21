@@ -251,22 +251,12 @@ async fn search(
         .collect::<Vec<_>>();
 
     matches.sort_by(|left, right| {
-        let left_distance = haversine_meters(
-            query.target_lat,
-            query.target_lon,
-            left.station_location.lat,
-            left.station_location.lon,
-        );
-        let right_distance = haversine_meters(
-            query.target_lat,
-            query.target_lon,
-            right.station_location.lat,
-            right.station_location.lon,
-        );
-        left_distance
-            .total_cmp(&right_distance)
-            .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
+        let left_direct = left.station_id != query.target_station_id;
+        let right_direct = right.station_id != query.target_station_id;
+        left_direct
+            .cmp(&right_direct)
             .then_with(|| left.distance_meters.cmp(&right.distance_meters))
+            .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
             .then_with(|| left.school_id.cmp(&right.school_id))
             .then_with(|| left.station_id.cmp(&right.station_id))
     });
@@ -420,6 +410,38 @@ async fn full_mode_candidate_retrieval_filters_out_of_hop_neighbors_before_limit
     assert_eq!(candidate_links.len(), 1);
     assert_eq!(candidate_links[0].school_id, "school_in_hop");
     assert_eq!(candidate_links[0].hop_distance, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_mode_candidate_retrieval_keeps_sql_only_ordering_for_limit() -> Result<()> {
+    let target_station = Station {
+        id: "st_target".to_string(),
+        name: "Target".to_string(),
+        line_name: "JR Yamanote Line".to_string(),
+        latitude: 35.0,
+        longitude: 139.0,
+    };
+    let documents = vec![
+        projection_document("school_neighbor", "st_neighbor", 35.0, 139.0001, 1, 10, 1),
+        projection_document("school_direct", "st_target", 35.0, 139.0, 30, 300, 0),
+    ];
+    let base_url = spawn_mock_opensearch(documents).await?;
+    let store = OpenSearchStore::new(&OpenSearchSettings {
+        url: base_url,
+        index_name: TEST_INDEX_NAME.to_string(),
+        username: None,
+        password: None,
+        request_timeout_secs: 5,
+    })?;
+
+    let candidate_links = store
+        .search_candidate_links(&target_station, 500.0, 1, 1)
+        .await?;
+
+    assert_eq!(candidate_links.len(), 1);
+    assert_eq!(candidate_links[0].school_id, "school_direct");
+    assert_eq!(candidate_links[0].station_id, "st_target");
     Ok(())
 }
 
