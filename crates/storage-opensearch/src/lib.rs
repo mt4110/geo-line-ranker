@@ -347,10 +347,10 @@ impl OpenSearchStore {
         }
 
         links.sort_by(|left, right| {
-            let left_direct = left.station_id != target_station.id;
-            let right_direct = right.station_id != target_station.id;
-            left_direct
-                .cmp(&right_direct)
+            let left_is_not_direct = left.station_id != target_station.id;
+            let right_is_not_direct = right.station_id != target_station.id;
+            left_is_not_direct
+                .cmp(&right_is_not_direct)
                 .then_with(|| left.distance_meters.cmp(&right.distance_meters))
                 .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
                 .then_with(|| left.school_id.cmp(&right.school_id))
