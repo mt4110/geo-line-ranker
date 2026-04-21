@@ -22,6 +22,19 @@ Live crawler flows and `full` mode stay supported as operator workflows, but the
 
 The binaries automatically read `.env` from the repository root when present.
 
+For post-launch incident triage, start with the shorter
+[POST_LAUNCH_RUNBOOK.md](POST_LAUNCH_RUNBOOK.md) and the read-only doctor:
+
+```bash
+just post-launch-doctor
+```
+
+Without `just`:
+
+```bash
+./scripts/post_launch_doctor.sh
+```
+
 ## Release readiness routine
 
 Use the fixed public-MVP gate before cutting a release candidate:

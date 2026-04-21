@@ -62,3 +62,6 @@ mvp-down:
 
 mvp-acceptance:
   ./scripts/mvp_acceptance.sh
+
+post-launch-doctor:
+  ./scripts/post_launch_doctor.sh
