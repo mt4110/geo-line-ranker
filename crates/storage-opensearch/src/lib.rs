@@ -225,19 +225,7 @@ impl OpenSearchStore {
         let query = json!({
             "size": candidate_limit.clamp(1, 10_000),
             "sort": [
-                {
-                    "_script": {
-                        "type": "number",
-                        "script": {
-                            "lang": "painless",
-                            "source": "doc['station_id'].size() != 0 && doc['station_id'].value == params.target_station_id ? 0 : 1",
-                            "params": {
-                                "target_station_id": target_station.id.as_str()
-                            }
-                        },
-                        "order": "asc",
-                    }
-                },
+                { "_score": { "order": "desc" } },
                 { "distance_meters": { "order": "asc" } },
                 { "walking_minutes": { "order": "asc" } },
                 { "school_id": { "order": "asc" } },
@@ -247,39 +235,58 @@ impl OpenSearchStore {
                 "bool": {
                     "should": [
                         {
-                            "term": {
-                                "station_id": {
-                                    "value": target_station.id.as_str()
-                                }
+                            "constant_score": {
+                                "filter": {
+                                    "term": {
+                                        "station_id": {
+                                            "value": target_station.id.as_str()
+                                        }
+                                    }
+                                },
+                                "boost": 2.0
                             }
                         },
                         {
-                            "bool": {
-                                "filter": [
-                                    {
-                                        "term": {
-                                            "line_name": {
-                                                "value": target_station.line_name.as_str()
+                            "constant_score": {
+                                "filter": {
+                                    "bool": {
+                                        "must_not": [
+                                            {
+                                                "term": {
+                                                    "station_id": {
+                                                        "value": target_station.id.as_str()
+                                                    }
+                                                }
                                             }
-                                        }
-                                    },
-                                    {
-                                        "range": {
-                                            "hop_distance": {
-                                                "lte": neighbor_max_hops
+                                        ],
+                                        "filter": [
+                                            {
+                                                "term": {
+                                                    "line_name": {
+                                                        "value": target_station.line_name.as_str()
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                "range": {
+                                                    "hop_distance": {
+                                                        "lte": neighbor_max_hops
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                "geo_distance": {
+                                                    "distance": format!("{}m", neighbor_distance_cap_meters.ceil() as i64),
+                                                    "station_location": {
+                                                        "lat": target_station.latitude,
+                                                        "lon": target_station.longitude
+                                                    }
+                                                }
                                             }
-                                        }
-                                    },
-                                    {
-                                        "geo_distance": {
-                                            "distance": format!("{}m", neighbor_distance_cap_meters.ceil() as i64),
-                                            "station_location": {
-                                                "lat": target_station.latitude,
-                                                "lon": target_station.longitude
-                                            }
-                                        }
+                                        ]
                                     }
-                                ]
+                                },
+                                "boost": 1.0
                             }
                         }
                     ],

@@ -106,8 +106,18 @@ async fn job_recovery_helpers_preserve_attempt_history() -> anyhow::Result<()> {
         let failed = repository.inspect_job(job_id).await?;
         assert_eq!(failed.job.status, "failed");
         assert_eq!(failed.job.attempts, 1);
+        assert_utc_timestamp(&failed.job.run_after);
+        assert_utc_timestamp(&failed.job.created_at);
+        assert_utc_timestamp(&failed.job.updated_at);
         assert_eq!(failed.attempts.len(), 1);
         assert_eq!(failed.attempts[0].status, "failed");
+        assert_utc_timestamp(&failed.attempts[0].started_at);
+        assert_utc_timestamp(
+            failed.attempts[0]
+                .finished_at
+                .as_deref()
+                .expect("failed attempt should have a finish timestamp"),
+        );
         assert_eq!(
             failed.attempts[0].error_message.as_deref(),
             Some("dependency unavailable")
@@ -144,6 +154,7 @@ async fn job_recovery_helpers_preserve_attempt_history() -> anyhow::Result<()> {
         let due = repository.make_queued_job_due(job_id).await?;
         assert!(due.updated);
         assert_eq!(due.job.status, "queued");
+        assert_utc_timestamp(&due.job.run_after);
 
         let already_due = repository.make_queued_job_due(job_id).await?;
         assert!(!already_due.updated);
@@ -155,6 +166,23 @@ async fn job_recovery_helpers_preserve_attempt_history() -> anyhow::Result<()> {
             .pressure
             .iter()
             .any(|row| row.job_type == "refresh_popularity_snapshot" && row.status == "queued"));
+        let pressure = snapshot
+            .pressure
+            .iter()
+            .find(|row| row.job_type == "refresh_popularity_snapshot" && row.status == "queued")
+            .expect("queued refresh pressure row");
+        assert_utc_timestamp(
+            pressure
+                .oldest_run_after
+                .as_deref()
+                .expect("pressure row should include oldest run_after"),
+        );
+        assert_utc_timestamp(
+            pressure
+                .latest_update
+                .as_deref()
+                .expect("pressure row should include latest update"),
+        );
 
         Ok(())
     }
@@ -162,4 +190,11 @@ async fn job_recovery_helpers_preserve_attempt_history() -> anyhow::Result<()> {
 
     drop_database(&admin_database_url, &database_name).await?;
     test_result
+}
+
+fn assert_utc_timestamp(value: &str) {
+    assert!(
+        value.ends_with('Z') && value.contains('T') && !value.contains(' '),
+        "expected stable UTC timestamp, got {value}"
+    );
 }

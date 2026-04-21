@@ -293,6 +293,8 @@ fn parse_mock_search_query<'a>(
     body: &'a Value,
     default_size: usize,
 ) -> std::result::Result<ParsedMockSearchQuery<'a>, String> {
+    validate_candidate_sort(body)?;
+
     let size = match body.pointer("/size") {
         Some(value) => {
             let raw = value
@@ -304,26 +306,26 @@ fn parse_mock_search_query<'a>(
     };
     let target_station_id = required_str_at(
         body,
-        "/query/bool/should/0/term/station_id/value",
+        "/query/bool/should/0/constant_score/filter/term/station_id/value",
         "target station id",
     )?;
     let line_name = required_str_at(
         body,
-        "/query/bool/should/1/bool/filter/0/term/line_name/value",
+        "/query/bool/should/1/constant_score/filter/bool/filter/0/term/line_name/value",
         "line name",
     )?;
     let neighbor_max_hops = body
-        .pointer("/query/bool/should/1/bool/filter/1/range/hop_distance/lte")
+        .pointer("/query/bool/should/1/constant_score/filter/bool/filter/1/range/hop_distance/lte")
         .and_then(Value::as_u64)
         .ok_or_else(|| {
-            "missing or invalid neighbor hop cap at /query/bool/should/1/bool/filter/1/range/hop_distance/lte".to_string()
+            "missing or invalid neighbor hop cap at /query/bool/should/1/constant_score/filter/bool/filter/1/range/hop_distance/lte".to_string()
         })
         .and_then(|raw| {
             u8::try_from(raw).map_err(|_| "neighbor hop cap exceeds u8".to_string())
         })?;
     let distance_raw = required_str_at(
         body,
-        "/query/bool/should/1/bool/filter/2/geo_distance/distance",
+        "/query/bool/should/1/constant_score/filter/bool/filter/2/geo_distance/distance",
         "distance cap",
     )?;
     let distance_cap_meters = distance_raw
@@ -333,12 +335,12 @@ fn parse_mock_search_query<'a>(
         .map_err(|_| "expected distance cap to be a numeric meter value".to_string())?;
     let target_lat = required_f64_at(
         body,
-        "/query/bool/should/1/bool/filter/2/geo_distance/station_location/lat",
+        "/query/bool/should/1/constant_score/filter/bool/filter/2/geo_distance/station_location/lat",
         "target latitude",
     )?;
     let target_lon = required_f64_at(
         body,
-        "/query/bool/should/1/bool/filter/2/geo_distance/station_location/lon",
+        "/query/bool/should/1/constant_score/filter/bool/filter/2/geo_distance/station_location/lon",
         "target longitude",
     )?;
 
@@ -351,6 +353,44 @@ fn parse_mock_search_query<'a>(
         target_lat,
         target_lon,
     })
+}
+
+fn validate_candidate_sort(body: &Value) -> std::result::Result<(), String> {
+    let sort = body
+        .get("sort")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing or invalid sort array".to_string())?;
+    let expected = [
+        ("_score", "desc"),
+        ("distance_meters", "asc"),
+        ("walking_minutes", "asc"),
+        ("school_id", "asc"),
+        ("station_id", "asc"),
+    ];
+
+    if sort.len() != expected.len() {
+        return Err(format!(
+            "expected {} sort entries, got {}",
+            expected.len(),
+            sort.len()
+        ));
+    }
+
+    for (index, (field, order)) in expected.iter().enumerate() {
+        let pointer = format!("/{field}/order");
+        let actual = sort
+            .get(index)
+            .and_then(|entry| entry.pointer(&pointer))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("missing sort order at /sort/{index}{pointer}"))?;
+        if actual != *order {
+            return Err(format!(
+                "expected /sort/{index}{pointer} to be {order}, got {actual}"
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn required_str_at<'a>(
@@ -376,7 +416,23 @@ fn required_f64_at(
 
 #[test]
 fn mock_search_parser_rejects_missing_required_fields() {
-    let error = parse_mock_search_query(&json!({ "size": 3 }), 10).expect_err("missing query");
+    let error = parse_mock_search_query(&json!({ "size": 3 }), 10).expect_err("missing sort");
+    assert!(error.contains("sort"));
+
+    let error = parse_mock_search_query(
+        &json!({
+            "size": 3,
+            "sort": [
+                { "_score": { "order": "desc" } },
+                { "distance_meters": { "order": "asc" } },
+                { "walking_minutes": { "order": "asc" } },
+                { "school_id": { "order": "asc" } },
+                { "station_id": { "order": "asc" } }
+            ]
+        }),
+        10,
+    )
+    .expect_err("missing query");
     assert!(error.contains("target station id"));
 }
 

@@ -161,15 +161,17 @@ impl PgRepository {
         let limit = limit.clamp(1, 500);
         let jobs = client
             .query(
-                "SELECT id, job_type, payload, status, attempts, max_attempts,
-                        locked_by, locked_at::TEXT AS locked_at, last_error,
-                        run_after::TEXT AS run_after,
-                        completed_at::TEXT AS completed_at,
-                        created_at::TEXT AS created_at,
-                        updated_at::TEXT AS updated_at
+                r#"SELECT id, job_type, payload, status, attempts, max_attempts,
+                        locked_by,
+                        to_char(locked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS locked_at,
+                        last_error,
+                        to_char(run_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS run_after,
+                        to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at,
+                        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+                        to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
                  FROM job_queue
                  ORDER BY id DESC
-                 LIMIT $1",
+                 LIMIT $1"#,
                 &[&limit],
             )
             .await?
@@ -179,12 +181,12 @@ impl PgRepository {
 
         let pressure = client
             .query(
-                "SELECT job_type, status, COUNT(*)::BIGINT AS job_count,
-                        MIN(run_after)::TEXT AS oldest_run_after,
-                        MAX(updated_at)::TEXT AS latest_update
+                r#"SELECT job_type, status, COUNT(*)::BIGINT AS job_count,
+                        to_char(MIN(run_after) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS oldest_run_after,
+                        to_char(MAX(updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS latest_update
                  FROM job_queue
                  GROUP BY job_type, status
-                 ORDER BY job_type ASC, status ASC",
+                 ORDER BY job_type ASC, status ASC"#,
                 &[],
             )
             .await?
@@ -205,14 +207,16 @@ impl PgRepository {
         let client = self.connect().await?;
         let job = client
             .query_opt(
-                "SELECT id, job_type, payload, status, attempts, max_attempts,
-                        locked_by, locked_at::TEXT AS locked_at, last_error,
-                        run_after::TEXT AS run_after,
-                        completed_at::TEXT AS completed_at,
-                        created_at::TEXT AS created_at,
-                        updated_at::TEXT AS updated_at
+                r#"SELECT id, job_type, payload, status, attempts, max_attempts,
+                        locked_by,
+                        to_char(locked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS locked_at,
+                        last_error,
+                        to_char(run_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS run_after,
+                        to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at,
+                        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+                        to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
                  FROM job_queue
-                 WHERE id = $1",
+                 WHERE id = $1"#,
                 &[&job_id],
             )
             .await?
@@ -222,12 +226,12 @@ impl PgRepository {
 
         let attempts = client
             .query(
-                "SELECT attempt_number, status, error_message,
-                        started_at::TEXT AS started_at,
-                        finished_at::TEXT AS finished_at
+                r#"SELECT attempt_number, status, error_message,
+                        to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at,
+                        to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS finished_at
                  FROM job_attempts
                  WHERE job_id = $1
-                 ORDER BY attempt_number ASC",
+                 ORDER BY attempt_number ASC"#,
                 &[&job_id],
             )
             .await?
@@ -274,14 +278,16 @@ impl PgRepository {
 
         let job = transaction
             .query_one(
-                "SELECT id, job_type, payload, status, attempts, max_attempts,
-                        locked_by, locked_at::TEXT AS locked_at, last_error,
-                        run_after::TEXT AS run_after,
-                        completed_at::TEXT AS completed_at,
-                        created_at::TEXT AS created_at,
-                        updated_at::TEXT AS updated_at
+                r#"SELECT id, job_type, payload, status, attempts, max_attempts,
+                        locked_by,
+                        to_char(locked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS locked_at,
+                        last_error,
+                        to_char(run_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS run_after,
+                        to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at,
+                        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+                        to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
                  FROM job_queue
-                 WHERE id = $1",
+                 WHERE id = $1"#,
                 &[&job_id],
             )
             .await?;
@@ -309,14 +315,16 @@ impl PgRepository {
 
         let job = transaction
             .query_opt(
-                "SELECT id, job_type, payload, status, attempts, max_attempts,
-                        locked_by, locked_at::TEXT AS locked_at, last_error,
-                        run_after::TEXT AS run_after,
-                        completed_at::TEXT AS completed_at,
-                        created_at::TEXT AS created_at,
-                        updated_at::TEXT AS updated_at
+                r#"SELECT id, job_type, payload, status, attempts, max_attempts,
+                        locked_by,
+                        to_char(locked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS locked_at,
+                        last_error,
+                        to_char(run_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS run_after,
+                        to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at,
+                        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+                        to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
                  FROM job_queue
-                 WHERE id = $1",
+                 WHERE id = $1"#,
                 &[&job_id],
             )
             .await?
