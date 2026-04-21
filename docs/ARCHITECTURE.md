@@ -10,7 +10,7 @@
 - Final ranking, explanation, mixed content selection, and diversity control stay in Rust.
 - Operational event CSV is staged under `.storage/raw/` and imported idempotently into PostgreSQL.
 - Crawl fetches stage raw HTML under `.storage/raw/`, keep parser choice in a registry, and write fetch / parse / dedupe audit tables in PostgreSQL.
-- `search_execute` is still intentionally outside snapshot weights at this phase boundary.
+- `search_execute` now feeds popularity and area snapshot weights through `target_station_id` to station-link expansion, with calibration owned by `configs/ranking/tracking.default.yaml`.
 
 ## Runtime view
 
@@ -48,7 +48,7 @@ flowchart LR
 ## Recommendation flow
 
 1. `POST /v1/recommendations` receives a target station plus placement.
-2. The API builds a cache key from request payload, profile version, algorithm version, and retrieval mode.
+2. The API builds a cache key from the serialized request payload plus profile version, algorithm version, retrieval mode, candidate limit, and fallback `neighbor_distance_cap_meters`.
 3. Candidate links come from PostgreSQL (`sql_only`) or OpenSearch (`full`).
 4. PostgreSQL loads school rows, active event rows, station rows, and snapshot rows for the candidate slice.
 5. `crates/ranking` scores school candidates and event candidates from the same slice.

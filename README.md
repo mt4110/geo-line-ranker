@@ -33,43 +33,37 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 ## Phase 6 note
 
 - No major blockers remain in this phase.
-- `search_execute` already persists through `POST /v1/track`.
-- `search_execute` still does not feed snapshot weights.
+- `search_execute` persists through `POST /v1/track`, refreshes popularity / area snapshot weights through station-linked schools, and now uses config-driven calibration.
+- `cargo run -p cli -- snapshot refresh` reapplies the current tracking config, invalidates recommendation cache, and syncs the full-mode projection when enabled.
 - That remains a later handoff note, not a blocker for placement profiles, mixed ranking, or allowlist crawl.
 
 ## Quickstart
+
+The canonical local runbook lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
+Minimal SQL-only loop:
 
 ```bash
 cp .env.example .env
 docker compose -f .docker/docker-compose.yaml up -d postgres redis
 cargo run -p cli -- migrate
 cargo run -p cli -- seed example
-cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
-cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.yaml
-cargo run -p crawler -- parse --manifest configs/crawler/sources/custom_example.yaml
-cargo run -p crawler -- health --manifest configs/crawler/sources/custom_example.yaml
-cargo run -p crawler -- scaffold-domain --source-id sample-domain --source-name "Sample Domain Events" --school-id school_sample --parser-key sample_parser_v1 --expected-shape html_monthly_dl_pairs --target-url https://example.com/events
-cargo run -p crawler -- fetch --manifest configs/crawler/sources/utokyo_events.yaml
-cargo run -p crawler -- parse --manifest configs/crawler/sources/utokyo_events.yaml
-cargo run -p crawler -- fetch --manifest configs/crawler/sources/shibaura_junior_events.yaml
-cargo run -p crawler -- parse --manifest configs/crawler/sources/shibaura_junior_events.yaml
-cargo run -p crawler -- fetch --manifest configs/crawler/sources/hachioji_junior_events.yaml
-cargo run -p crawler -- parse --manifest configs/crawler/sources/hachioji_junior_events.yaml
-cargo run -p crawler -- fetch --manifest configs/crawler/sources/nihon_university_junior_events.yaml
-cargo run -p crawler -- parse --manifest configs/crawler/sources/nihon_university_junior_events.yaml
-cargo run -p crawler -- fetch --manifest configs/crawler/sources/aoyama-junior-school-tour.yaml
-cargo run -p crawler -- parse --manifest configs/crawler/sources/aoyama-junior-school-tour.yaml
 cargo run -p worker -- serve
 cargo run -p api -- serve
 ```
 
-`cargo run -p cli -- seed example` now seeds `school_utokyo`, `school_keio`, `school_shibaura_it_junior`, `school_hachioji_gakuen_junior`, `school_nihon_university_junior`, and `school_aoyama_gakuin_junior`, so all committed real-domain parser fixtures can import rows once fetched content is available in the local setup.
+Useful next steps:
 
-`configs/crawler/sources/keio_events.yaml` is parser-ready but explicitly blocked for live fetch. On April 19, 2026, `https://www.keio.ac.jp/robots.txt` returned HTTP 404, so the manifest now records `blocked_policy` instead of attempting an unsafe live fetch until Keio publishes an official robots URL or crawler policy changes.
-`crawler -- serve` now auto-runs only manifests whose `source_maturity` is `live_ready`; `parser_only` and `policy_blocked` sources stay visible in doctor/health without generating poll-loop noise.
-If you skip the seed or use a custom fixture, the matching `schools.id` rows still need to exist before crawl imports land in `events`.
+```bash
+cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
+cargo run -p crawler -- doctor --manifest configs/crawler/sources/custom_example.yaml
+cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.yaml
+cargo run -p crawler -- parse --manifest configs/crawler/sources/custom_example.yaml
+```
 
-Send a sample recommendation request:
+The demo fixture now includes the committed real-domain crawl schools, and `crawler -- serve` auto-runs only manifests marked `source_maturity = live_ready`. For full mode, projection sync, and the real-domain crawler manifests, use [docs/QUICKSTART.md](docs/QUICKSTART.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+Sample recommendation request:
 
 ```bash
 curl -X POST http://127.0.0.1:4000/v1/recommendations \
@@ -77,30 +71,12 @@ curl -X POST http://127.0.0.1:4000/v1/recommendations \
   -d '{"target_station_id":"st_tamachi","placement":"home","limit":3}'
 ```
 
-Send a sample tracking event:
+Sample tracking event:
 
 ```bash
 curl -X POST http://127.0.0.1:4000/v1/track \
   -H "content-type: application/json" \
   -d '{"user_id":"demo-user-1","event_kind":"school_view","school_id":"school_seaside"}'
-```
-
-## Full mode quickstart
-
-```bash
-perl -0pi -e 's/^CANDIDATE_RETRIEVAL_MODE=.*/CANDIDATE_RETRIEVAL_MODE=full/' .env
-docker compose -f .docker/docker-compose.full.yaml up -d postgres redis opensearch
-cargo run -p cli -- migrate
-cargo run -p cli -- seed example
-cargo run -p cli -- index rebuild
-cargo run -p worker -- serve
-cargo run -p api -- serve
-```
-
-Refresh the projection without rebuilding the index:
-
-```bash
-cargo run -p cli -- projection sync
 ```
 
 ## Example response shape
@@ -133,13 +109,16 @@ cargo run -p cli -- projection sync
   "score_breakdown": [],
   "fallback_stage": "strict",
   "profile_version": "phase5-profile-version",
-  "algorithm_version": "phase5-placement-mixed-ranking-v1"
+  "algorithm_version": "phase7-search-signal-v2"
 }
 ```
 
 ## Docs
 
 - [Japanese README](README_JA.md)
+- [Non-engineer Friendly Design Docs](docs/design_document/README_JA.md)
+- [Contributor Rules](AGENTS.md)
+- [Local Contributing Guide](docs/CONTRIBUTING_LOCAL.md)
 - [Quickstart](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Operations](docs/OPERATIONS.md)
