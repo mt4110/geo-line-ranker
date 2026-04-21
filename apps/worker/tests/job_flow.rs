@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -34,6 +34,15 @@ fn unique_database_name(prefix: &str) -> String {
         .expect("clock should be after unix epoch")
         .as_nanos();
     format!("{prefix}_{}_{}", std::process::id(), suffix)
+}
+
+static POSTGRES_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+async fn acquire_postgres_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    POSTGRES_TEST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
 }
 
 async fn create_empty_database(prefix: &str) -> anyhow::Result<(String, String, String)> {
@@ -80,6 +89,7 @@ fn repo_root() -> PathBuf {
 
 #[tokio::test]
 async fn worker_processes_snapshot_and_cache_jobs() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let database_url = default_database_url();
     let redis_url = default_redis_url();
     let Ok((client, connection)) = tokio_postgres::connect(&database_url, NoTls).await else {
@@ -194,6 +204,7 @@ async fn worker_processes_snapshot_and_cache_jobs() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn worker_reclaims_stale_running_jobs() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_worker").await
     else {
@@ -290,6 +301,7 @@ async fn worker_reclaims_stale_running_jobs() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn exhausted_stale_jobs_are_failed_even_without_a_new_claim() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_worker").await
     else {
@@ -387,6 +399,7 @@ async fn exhausted_stale_jobs_are_failed_even_without_a_new_claim() -> anyhow::R
 
 #[tokio::test]
 async fn stale_attempt_completion_cannot_overwrite_reclaimed_job() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_worker").await
     else {

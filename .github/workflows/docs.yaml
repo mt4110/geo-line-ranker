@@ -21,3 +21,5 @@ jobs:
           test -f README_EN.md
           test -f docs/QUICKSTART.md
           test -f docs/ARCHITECTURE.md
+          test -f docs/MVP_ACCEPTANCE.md
+          test -f docs/OPERATIONS.md

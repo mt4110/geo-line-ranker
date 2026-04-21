@@ -22,6 +22,22 @@ Live crawler flows and `full` mode stay supported as operator workflows, but the
 
 The binaries automatically read `.env` from the repository root when present.
 
+## Release readiness routine
+
+Use the fixed public-MVP gate before cutting a release candidate:
+
+```bash
+just mvp-acceptance
+```
+
+Without `just`:
+
+```bash
+./scripts/mvp_acceptance.sh
+```
+
+This gate deliberately starts only PostgreSQL/PostGIS and Redis, forces `CANDIDATE_RETRIEVAL_MODE=sql_only`, and exercises the CLI, worker, API, snapshots, tracking jobs, and `event-csv` import semantics. Do not add live crawler or OpenSearch requirements to this gate unless the public-MVP operating profile changes through explicit review.
+
 ## Readiness checks
 
 The API exposes:
@@ -257,9 +273,29 @@ Running jobs are recovered by the next worker claim after the stale lock window.
 The current stale lock window is 15 minutes. Start a bounded worker drain to
 trigger recovery and process due work:
 
+Inspect running or retryable jobs across the public-MVP queue:
+
+```sql
+SELECT id, job_type, status, attempts, max_attempts, locked_by, locked_at, run_after, last_error
+FROM job_queue
+WHERE status IN ('queued', 'running', 'failed')
+ORDER BY
+  CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+  run_after ASC,
+  id ASC
+LIMIT 50;
+```
+
 ```bash
 cargo run -p worker -- run-once --max-jobs 50
 ```
+
+Recovery behavior:
+
+- queued jobs whose `run_after` has passed are claimable by the worker
+- jobs whose latest attempt failed are requeued automatically until `attempts >= max_attempts`
+- running jobs with locks older than the stale-lock timeout are reclaimed by the next worker claim when attempts remain
+- exhausted stale jobs are marked `failed` with the last error preserved
 
 If a transient dependency failure is fixed and a job is already `failed`, queue
 one more attempt without losing the attempt history:
@@ -305,6 +341,10 @@ WHERE id = 123
 Do not mark jobs `succeeded` manually. That hides missing side effects such as
 snapshot rows, cache deletion, or projection documents. Either fix the
 dependency and queue another attempt, or leave the failed row as the audit trail.
+
+In `sql_only` mode, `sync_candidate_projection` should not be required. If that
+job appears after a mode switch, either run recovery under the intended
+full-mode environment or leave OpenSearch recovery outside the public-MVP gate.
 
 ### Search-signal calibration
 
@@ -471,11 +511,23 @@ cargo run -p cli -- snapshot refresh
 
 That command recalculates global snapshots, invalidates recommendation cache
 when Redis is configured, and runs projection sync in full mode.
+In SQL-only mode, projection counts in the command summary should stay `0`.
+
+Because Redis is cache only, cache loss must not affect correctness; it should
+only remove the fast path until responses are warmed again.
 
 ## Projection sync
 
-Projection sync is only required for `CANDIDATE_RETRIEVAL_MODE=full`. SQL-only
-mode does not need OpenSearch for correctness.
+OpenSearch remains optional candidate retrieval for `full` mode. Projection sync
+is only required for `CANDIDATE_RETRIEVAL_MODE=full`, and SQL-only mode does not
+need OpenSearch for correctness. Keep these commands outside the public-MVP gate
+unless the operating profile changes.
+
+Start the optional full-mode services before rebuilding or syncing projection:
+
+```bash
+docker compose -f .docker/docker-compose.full.yaml up -d postgres redis opensearch
+```
 
 Inspect the PostgreSQL source row count:
 
@@ -529,3 +581,6 @@ Worker recovery for projection jobs:
   ```bash
   cargo run -p cli -- projection sync
   ```
+
+When `CANDIDATE_RETRIEVAL_MODE=sql_only`, `/readyz` should report OpenSearch as
+`disabled` and projection sync is not part of launch readiness.

@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -40,6 +40,15 @@ fn unique_database_name(prefix: &str) -> String {
         .expect("clock should be after unix epoch")
         .as_nanos();
     format!("{prefix}_{}_{}", std::process::id(), suffix)
+}
+
+static POSTGRES_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+async fn acquire_postgres_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    POSTGRES_TEST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
 }
 
 async fn create_empty_database(prefix: &str) -> anyhow::Result<(String, String, String)> {
@@ -86,6 +95,7 @@ fn repo_root() -> PathBuf {
 
 #[tokio::test]
 async fn track_endpoint_persists_events_and_enqueues_jobs() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -190,6 +200,7 @@ async fn track_endpoint_persists_events_and_enqueues_jobs() -> anyhow::Result<()
 
 #[tokio::test]
 async fn track_endpoint_search_execute_reuses_queued_popularity_refresh() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -346,6 +357,7 @@ async fn track_endpoint_search_execute_reuses_queued_popularity_refresh() -> any
 #[tokio::test]
 async fn track_endpoint_search_execute_enqueues_follow_up_when_popularity_refresh_is_running(
 ) -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -459,6 +471,7 @@ async fn track_endpoint_search_execute_enqueues_follow_up_when_popularity_refres
 #[tokio::test]
 async fn track_endpoint_search_execute_does_not_reuse_retrying_popularity_refresh(
 ) -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -574,6 +587,7 @@ async fn track_endpoint_search_execute_does_not_reuse_retrying_popularity_refres
 
 #[tokio::test]
 async fn track_endpoint_rejects_unknown_foreign_keys() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -658,6 +672,7 @@ async fn track_endpoint_rejects_unknown_foreign_keys() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn track_endpoint_derives_school_id_from_event_id() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -763,6 +778,7 @@ async fn track_endpoint_derives_school_id_from_event_id() -> anyhow::Result<()> 
 
 #[tokio::test]
 async fn track_endpoint_rejects_mismatched_event_school_pair() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -848,6 +864,7 @@ async fn track_endpoint_rejects_mismatched_event_school_pair() -> anyhow::Result
 
 #[tokio::test]
 async fn ready_endpoint_requires_application_schema() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_ready").await
     else {
@@ -901,6 +918,7 @@ async fn ready_endpoint_requires_application_schema() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn ready_endpoint_requires_snapshot_tables() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_ready_snapshots").await
     else {
@@ -965,6 +983,7 @@ async fn ready_endpoint_requires_snapshot_tables() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn ready_endpoint_reports_disabled_opensearch_in_sql_only_mode() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_ready_ok").await
     else {
@@ -1020,6 +1039,7 @@ async fn ready_endpoint_reports_disabled_opensearch_in_sql_only_mode() -> anyhow
 
 #[tokio::test]
 async fn ready_endpoint_requires_opensearch_in_full_mode() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_ready_full").await
     else {
@@ -1087,6 +1107,7 @@ async fn ready_endpoint_requires_opensearch_in_full_mode() -> anyhow::Result<()>
 #[tokio::test]
 async fn recommend_endpoint_rejects_unknown_target_station_with_clear_message() -> anyhow::Result<()>
 {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -1159,6 +1180,7 @@ async fn recommend_endpoint_rejects_unknown_target_station_with_clear_message() 
 
 #[tokio::test]
 async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {

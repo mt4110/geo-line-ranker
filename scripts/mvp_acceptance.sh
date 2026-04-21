@@ -25,6 +25,23 @@ note() {
   printf '[mvp] %s\n' "$*"
 }
 
+fail() {
+  printf '[mvp] %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  local command_name="$1"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    fail "missing required command: ${command_name}"
+  fi
+}
+
+require_docker_compose() {
+  require_command docker
+  docker compose version >/dev/null 2>&1 || fail "docker compose is required"
+}
+
 pick_free_port() {
   python3 - <<'PY'
 import socket
@@ -33,6 +50,16 @@ with socket.socket() as sock:
     sock.bind(("127.0.0.1", 0))
     print(sock.getsockname()[1])
 PY
+}
+
+print_failure_context() {
+  if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+    note "docker compose unavailable for failure context"
+    return 0
+  fi
+
+  note "compose service status"
+  docker compose -f "$COMPOSE_FILE" ps || true
 }
 
 cleanup() {
@@ -49,6 +76,7 @@ cleanup() {
   fi
 
   if (( status != 0 )); then
+    print_failure_context
     if [[ -f "$API_LOG" ]]; then
       note "api log tail"
       tail -n 80 "$API_LOG" || true
@@ -59,7 +87,9 @@ cleanup() {
     fi
   fi
 
-  docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+  fi
   rm -rf "$TMP_DIR"
   exit "$status"
 }
@@ -132,6 +162,12 @@ retry_command() {
 
 cd "$ROOT_DIR"
 
+note "preflight"
+require_command cargo
+require_command curl
+require_command python3
+require_docker_compose
+
 set -a
 # shellcheck disable=SC1091
 source "$ROOT_DIR/.env.example"
@@ -157,6 +193,11 @@ export RANKING_CONFIG_DIR="$ROOT_DIR/configs/ranking"
 export FIXTURE_DIR="$ROOT_DIR/storage/fixtures/minimal"
 export RAW_STORAGE_DIR="$RAW_DIR"
 export CANDIDATE_RETRIEVAL_MODE="sql_only"
+
+note "verifying public MVP profile"
+[[ "$CANDIDATE_RETRIEVAL_MODE" == "sql_only" ]] || fail "public MVP gate must run in sql_only mode"
+[[ -n "$DATABASE_URL" ]] || fail "DATABASE_URL is required"
+[[ -n "$REDIS_URL" ]] || fail "REDIS_URL is required"
 
 note "starting minimal postgres and redis"
 docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
