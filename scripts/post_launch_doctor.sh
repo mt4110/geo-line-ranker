@@ -62,7 +62,7 @@ derive_app_url() {
 
   case "$bind_addr" in
     0.0.0.0:*) bind_addr="127.0.0.1:${bind_addr#*:}" ;;
-    "[::]":*) bind_addr="127.0.0.1:${bind_addr##*:}" ;;
+    \[\:\:\]:*|:::*) bind_addr="127.0.0.1:${bind_addr##*:}" ;;
   esac
 
   printf 'http://%s' "$bind_addr"
@@ -122,18 +122,17 @@ run_redis() {
 }
 
 sample_recommendation_cache_keys() {
-  local sample_count
+  local sample_count=0
+  local _
 
-  if ! sample_count="$(
-    set +e
-    set +o pipefail
-    run_redis --scan --pattern 'geo-line-ranker:recommendations:*' 2>/dev/null \
-      | awk '{ count++; if (count == 1000) exit } END { print count + 0 }'
-  )"; then
-    sample_count=0
-  fi
+  while IFS= read -r _; do
+    sample_count=$((sample_count + 1))
+    if (( sample_count >= 1000 )); then
+      break
+    fi
+  done < <(run_redis --scan --pattern 'geo-line-ranker:recommendations:*' 2>/dev/null || true)
 
-  printf '%s' "${sample_count:-0}"
+  printf '%s' "$sample_count"
 }
 
 table_exists() {
