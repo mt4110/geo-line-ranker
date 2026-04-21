@@ -30,7 +30,7 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 - Japanese source adapters for rail, postal, school codes, and school geodata
 - Swagger UI and a small Next.js example frontend
 
-## Phase 7 note
+## Current behavior notes
 
 - `search_execute` persists through `POST /v1/track`, refreshes popularity / area snapshot weights through station-linked schools, and now uses config-driven calibration.
 - `cargo run -p cli -- snapshot refresh` reapplies the current tracking config, invalidates recommendation cache, and syncs the full-mode projection when enabled.

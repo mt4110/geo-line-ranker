@@ -189,7 +189,7 @@ async fn track_endpoint_persists_events_and_enqueues_jobs() -> anyhow::Result<()
 }
 
 #[tokio::test]
-async fn track_endpoint_search_execute_enqueues_popularity_refresh() -> anyhow::Result<()> {
+async fn track_endpoint_search_execute_reuses_active_popularity_refresh() -> anyhow::Result<()> {
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -232,6 +232,7 @@ async fn track_endpoint_search_execute_enqueues_popularity_refresh() -> anyhow::
         let user_id = format!("api-track-search-{}", std::process::id());
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -251,6 +252,12 @@ async fn track_endpoint_search_execute_enqueues_popularity_refresh() -> anyhow::
             .expect("tracking response");
 
         assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(
+            payload["queued_jobs"],
+            serde_json::json!(["refresh_popularity_snapshot"])
+        );
 
         let stored_station_id = client
             .query_one(
@@ -282,6 +289,51 @@ async fn track_endpoint_search_execute_enqueues_popularity_refresh() -> anyhow::
             queued_job_types,
             vec!["refresh_popularity_snapshot".to_string()]
         );
+
+        let second_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/track")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "user_id": user_id.clone(),
+                            "event_kind": "search_execute",
+                            "target_station_id": "st_shinbashi"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("tracking response");
+        assert_eq!(second_response.status(), StatusCode::ACCEPTED);
+
+        let search_event_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM user_events
+                 WHERE user_id = $1
+                   AND event_type = 'search_execute'",
+                &[&user_id],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(search_event_count, 2);
+
+        let active_refresh_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM job_queue
+                 WHERE id > $1
+                   AND job_type = 'refresh_popularity_snapshot'
+                   AND status IN ('queued', 'running')",
+                &[&job_baseline],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(active_refresh_count, 1);
 
         Ok(())
     }

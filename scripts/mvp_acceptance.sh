@@ -216,7 +216,7 @@ curl -fsS -X POST "$APP_URL/v1/track" \
 curl -fsS -X POST "$APP_URL/v1/track" \
   -H "content-type: application/json" \
   -d '{"user_id":"mvp-user-1","event_kind":"search_execute","target_station_id":"st_tamachi"}' >/dev/null
-wait_for_jobs 5 "$JOB_BASELINE"
+wait_for_jobs 4 "$JOB_BASELINE"
 [[ "$(sql "SELECT COUNT(*) FROM user_affinity_snapshots WHERE user_id = 'mvp-user-1'")" -ge 1 ]]
 [[ "$(sql "SELECT COUNT(*) FROM popularity_snapshots WHERE search_execute_count > 0")" -ge 1 ]]
 [[ "$(sql "SELECT COUNT(*) FROM job_queue WHERE id > ${JOB_BASELINE} AND status = 'failed'")" == "0" ]]

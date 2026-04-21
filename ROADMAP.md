@@ -8,6 +8,6 @@
 
 ## Next
 
-- Phase 8: policy, diversity, and operator hardening after Phase 7 search signal rollout
+- Phase 8: policy, diversity, and operator hardening after the current rollout
   - keep SQL-only and full-mode behavior aligned while tuning explanations, policy, and diversity caps
   - tighten projection, cache, and crawler runbooks around the now-merged `main` line

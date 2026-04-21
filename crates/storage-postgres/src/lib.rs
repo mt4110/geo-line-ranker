@@ -37,6 +37,8 @@ const REQUIRED_READY_TABLES: [&str; 10] = [
 ];
 const SCHEMA_MIGRATION_LOCK_NAMESPACE: i32 = 6_042;
 const SCHEMA_MIGRATION_LOCK_KEY: i32 = 1;
+const JOB_COALESCE_LOCK_NAMESPACE: i32 = 6_042;
+const POPULARITY_REFRESH_COALESCE_LOCK_KEY: i32 = 2;
 const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
 const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
 const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference validation: ";
@@ -458,6 +460,55 @@ async fn resolve_user_event_school_id(
 }
 
 async fn insert_job(client: &(impl GenericClient + Sync), job: &NewJob) -> Result<i64> {
+    if is_reusable_global_refresh(job) {
+        return insert_or_reuse_active_global_refresh(client, job).await;
+    }
+
+    insert_job_row(client, job).await
+}
+
+fn is_reusable_global_refresh(job: &NewJob) -> bool {
+    job.job_type == JobType::RefreshPopularitySnapshot
+        && job
+            .payload
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty)
+}
+
+async fn insert_or_reuse_active_global_refresh(
+    client: &(impl GenericClient + Sync),
+    job: &NewJob,
+) -> Result<i64> {
+    client
+        .query_one(
+            "SELECT pg_advisory_xact_lock($1, $2)",
+            &[
+                &JOB_COALESCE_LOCK_NAMESPACE,
+                &POPULARITY_REFRESH_COALESCE_LOCK_KEY,
+            ],
+        )
+        .await?;
+
+    if let Some(row) = client
+        .query_opt(
+            "SELECT id
+             FROM job_queue
+             WHERE job_type = $1
+               AND payload = $2
+               AND status IN ('queued', 'running')
+             ORDER BY id
+             LIMIT 1",
+            &[&job.job_type.as_str(), &job.payload],
+        )
+        .await?
+    {
+        return Ok(row.get("id"));
+    }
+
+    insert_job_row(client, job).await
+}
+
+async fn insert_job_row(client: &(impl GenericClient + Sync), job: &NewJob) -> Result<i64> {
     let row = client
         .query_one(
             "INSERT INTO job_queue (job_type, payload, max_attempts)
