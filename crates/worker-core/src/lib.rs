@@ -8,7 +8,9 @@ use std::{
 use anyhow::{bail, Result};
 use cache::RecommendationCache;
 use observability::{job_failed, job_started, job_succeeded};
-use storage::{CandidateProjectionSync, ClaimedJob, JobType, RecommendationRepository};
+use storage::{
+    CandidateProjectionSync, ClaimedJob, JobType, RecommendationRepository, SnapshotTuning,
+};
 
 #[derive(Clone)]
 pub struct WorkerService<R> {
@@ -16,6 +18,7 @@ pub struct WorkerService<R> {
     cache: RecommendationCache,
     worker_id: String,
     projection_sync: Option<Arc<dyn CandidateProjectionSync>>,
+    snapshot_tuning: SnapshotTuning,
     retry_delay_secs: u64,
 }
 
@@ -28,6 +31,7 @@ where
         cache: RecommendationCache,
         worker_id: impl Into<String>,
         projection_sync: Option<Arc<dyn CandidateProjectionSync>>,
+        snapshot_tuning: SnapshotTuning,
         retry_delay_secs: u64,
     ) -> Self {
         Self {
@@ -35,6 +39,7 @@ where
             cache,
             worker_id: worker_id.into(),
             projection_sync,
+            snapshot_tuning,
             retry_delay_secs,
         }
     }
@@ -128,7 +133,10 @@ where
     async fn process_job(&self, job: &ClaimedJob) -> Result<()> {
         match job.job_type {
             JobType::RefreshPopularitySnapshot => {
-                let stats = self.repository.refresh_popularity_snapshots().await?;
+                let stats = self
+                    .repository
+                    .refresh_popularity_snapshots(self.snapshot_tuning)
+                    .await?;
                 tracing::info!(
                     worker_id = %self.worker_id,
                     job_id = job.job_id,
@@ -254,7 +262,10 @@ mod tests {
             unreachable!("mark_job_failed is not used in worker-core tests")
         }
 
-        async fn refresh_popularity_snapshots(&self) -> Result<SnapshotRefreshStats> {
+        async fn refresh_popularity_snapshots(
+            &self,
+            _tuning: SnapshotTuning,
+        ) -> Result<SnapshotRefreshStats> {
             self.job_started.notify_one();
             self.release_job.notified().await;
             Ok(SnapshotRefreshStats::default())
@@ -276,6 +287,10 @@ mod tests {
             RecommendationCache::new(None, 60),
             "worker-test",
             None,
+            SnapshotTuning {
+                search_execute_school_signal_weight: 0.4,
+                search_execute_area_signal_weight: 0.2,
+            },
             5,
         );
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -310,6 +325,10 @@ mod tests {
             RecommendationCache::new(None, 60),
             "worker-test",
             None,
+            SnapshotTuning {
+                search_execute_school_signal_weight: 0.4,
+                search_execute_area_signal_weight: 0.2,
+            },
             5,
         );
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();

@@ -381,6 +381,7 @@ name = "cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cache",
  "chrono",
  "clap",
  "config",
@@ -390,6 +391,7 @@ dependencies = [
  "jp-school",
  "openapi",
  "serde_json",
+ "storage",
  "storage-opensearch",
  "storage-postgres",
  "tempfile",

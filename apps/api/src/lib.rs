@@ -401,22 +401,29 @@ async fn record_trace_best_effort(
 }
 
 fn build_tracking_jobs(state: &AppState, event: &domain::UserEvent) -> Vec<NewJob> {
-    if !event.event_kind.is_school_affecting() || event.school_id.is_none() {
-        return Vec::new();
+    let mut jobs = Vec::new();
+    match event.event_kind {
+        domain::EventKind::SearchExecute => {
+            jobs.push(NewJob {
+                job_type: JobType::RefreshPopularitySnapshot,
+                payload: serde_json::json!({}),
+                max_attempts: state.worker_max_attempts,
+            });
+        }
+        _ if event.event_kind.is_school_affecting() && event.school_id.is_some() => {
+            jobs.push(NewJob {
+                job_type: JobType::RefreshPopularitySnapshot,
+                payload: serde_json::json!({}),
+                max_attempts: state.worker_max_attempts,
+            });
+            jobs.push(NewJob {
+                job_type: JobType::RefreshUserAffinitySnapshot,
+                payload: serde_json::json!({ "user_id": event.user_id.clone() }),
+                max_attempts: state.worker_max_attempts,
+            });
+        }
+        _ => return Vec::new(),
     }
-
-    let mut jobs = vec![
-        NewJob {
-            job_type: JobType::RefreshPopularitySnapshot,
-            payload: serde_json::json!({}),
-            max_attempts: state.worker_max_attempts,
-        },
-        NewJob {
-            job_type: JobType::RefreshUserAffinitySnapshot,
-            payload: serde_json::json!({ "user_id": event.user_id.clone() }),
-            max_attempts: state.worker_max_attempts,
-        },
-    ];
 
     if state.cache.enabled() {
         jobs.push(NewJob {
@@ -460,4 +467,69 @@ fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
             "neighbor_distance_cap_meters": input.neighbor_distance_cap_meters
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use config::RankingProfiles;
+    use domain::{EventKind, UserEvent};
+
+    use super::*;
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn test_state(
+        cache_enabled: bool,
+        candidate_retrieval_mode: CandidateRetrievalMode,
+    ) -> AppState {
+        let profiles =
+            RankingProfiles::load_from_dir(repo_root().join("configs/ranking")).expect("profiles");
+        AppState {
+            repository: Arc::new(PgRepository::new("postgres://unused")),
+            engine: RankingEngine::new(profiles.clone(), "phase7-test"),
+            cache: RecommendationCache::new(
+                cache_enabled.then_some("redis://127.0.0.1:6379".to_string()),
+                60,
+            ),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase7-test".to_string(),
+            candidate_retrieval_mode,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        }
+    }
+
+    #[test]
+    fn search_execute_enqueues_global_refresh_without_user_affinity() {
+        let state = test_state(true, CandidateRetrievalMode::Full);
+        let event = UserEvent {
+            user_id: "demo-user".to_string(),
+            school_id: None,
+            event_kind: EventKind::SearchExecute,
+            event_id: None,
+            target_station_id: Some("st_tamachi".to_string()),
+            occurred_at: "2026-04-21T00:00:00Z".to_string(),
+            payload: serde_json::json!({}),
+        };
+
+        let jobs = build_tracking_jobs(&state, &event)
+            .into_iter()
+            .map(|job| job.job_type.as_str().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            jobs,
+            vec![
+                "refresh_popularity_snapshot".to_string(),
+                "invalidate_recommendation_cache".to_string(),
+                "sync_candidate_projection".to_string(),
+            ]
+        );
+    }
 }

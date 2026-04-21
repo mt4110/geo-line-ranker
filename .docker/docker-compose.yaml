@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_USER: postgres
     ports:
-      - "5433:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d geo_line_ranker"]
       interval: 5s
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7.4-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:-6379}:6379"
 
   api:
     build:
@@ -30,7 +30,7 @@ services:
       REDIS_URL: redis://redis:6379
       RANKING_CONFIG_DIR: configs/ranking
       FIXTURE_DIR: storage/fixtures/minimal
-      ALGORITHM_VERSION: phase5-placement-mixed-ranking-v1
+      ALGORITHM_VERSION: ${ALGORITHM_VERSION:-phase7-search-signal-v2}
       CANDIDATE_RETRIEVAL_MODE: sql_only
       CANDIDATE_RETRIEVAL_LIMIT: 256
       RECOMMENDATION_CACHE_TTL_SECS: 120
@@ -68,7 +68,7 @@ services:
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://api:4000
     ports:
-      - "3000:3000"
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
     depends_on:
       api:
         condition: service_started

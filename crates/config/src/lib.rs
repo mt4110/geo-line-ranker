@@ -96,7 +96,7 @@ impl AppSettings {
             raw_storage_dir: env::var("RAW_STORAGE_DIR")
                 .unwrap_or_else(|_| ".storage/raw".to_string()),
             algorithm_version: env::var("ALGORITHM_VERSION")
-                .unwrap_or_else(|_| "phase5-placement-mixed-ranking-v1".to_string()),
+                .unwrap_or_else(|_| "phase7-search-signal-v2".to_string()),
             candidate_retrieval_mode,
             candidate_retrieval_limit: parse_env("CANDIDATE_RETRIEVAL_LIMIT", 256),
             opensearch: OpenSearchSettings {
@@ -186,6 +186,18 @@ pub struct TrackingProfile {
     pub popularity_bonus_weight: f64,
     pub user_affinity_bonus_weight: f64,
     pub area_affinity_bonus_weight: f64,
+    #[serde(default = "default_search_execute_school_signal_weight")]
+    pub search_execute_school_signal_weight: f64,
+    #[serde(default = "default_search_execute_area_signal_weight")]
+    pub search_execute_area_signal_weight: f64,
+}
+
+fn default_search_execute_school_signal_weight() -> f64 {
+    0.0
+}
+
+fn default_search_execute_area_signal_weight() -> f64 {
+    0.0
 }
 
 #[derive(Debug, Clone)]
@@ -300,7 +312,9 @@ impl RankingProfiles {
         ensure!(
             self.tracking.popularity_bonus_weight >= 0.0
                 && self.tracking.user_affinity_bonus_weight >= 0.0
-                && self.tracking.area_affinity_bonus_weight >= 0.0,
+                && self.tracking.area_affinity_bonus_weight >= 0.0
+                && self.tracking.search_execute_school_signal_weight >= 0.0
+                && self.tracking.search_execute_area_signal_weight >= 0.0,
             "tracking weights must be zero or positive"
         );
 
@@ -509,5 +523,44 @@ diversity:
         let rendered = format!("{error:#}");
         assert!(rendered.contains("failed to parse CANDIDATE_RETRIEVAL_MODE=nearest"));
         assert!(rendered.contains("unsupported CANDIDATE_RETRIEVAL_MODE"));
+    }
+
+    #[test]
+    fn rejects_negative_search_signal_weights() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("tracking.default.yaml"),
+            r#"popularity_bonus_weight: 0.75
+user_affinity_bonus_weight: 0.9
+area_affinity_bonus_weight: 0.35
+search_execute_school_signal_weight: -0.1
+search_execute_area_signal_weight: 0.2
+"#,
+        )
+        .expect("write config");
+
+        let error = RankingProfiles::load_from_dir(temp.path()).expect_err("negative weight");
+        assert!(error
+            .to_string()
+            .contains("tracking weights must be zero or positive"));
+    }
+
+    #[test]
+    fn defaults_missing_search_signal_weights_for_legacy_tracking_config() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("tracking.default.yaml"),
+            r#"popularity_bonus_weight: 0.75
+user_affinity_bonus_weight: 0.9
+area_affinity_bonus_weight: 0.35
+"#,
+        )
+        .expect("write config");
+
+        let profiles = RankingProfiles::load_from_dir(temp.path()).expect("legacy config");
+        assert_eq!(profiles.tracking.search_execute_school_signal_weight, 0.0);
+        assert_eq!(profiles.tracking.search_execute_area_signal_weight, 0.0);
     }
 }

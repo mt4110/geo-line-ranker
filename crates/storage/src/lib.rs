@@ -66,6 +66,12 @@ pub struct SnapshotRefreshStats {
     pub related_rows: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SnapshotTuning {
+    pub search_execute_school_signal_weight: f64,
+    pub search_execute_area_signal_weight: f64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectionSyncStats {
     pub indexed_documents: i64,
@@ -94,7 +100,10 @@ pub trait RecommendationRepository: Send + Sync {
         error_message: &str,
         retry_delay_secs: u64,
     ) -> Result<()>;
-    async fn refresh_popularity_snapshots(&self) -> Result<SnapshotRefreshStats>;
+    async fn refresh_popularity_snapshots(
+        &self,
+        tuning: SnapshotTuning,
+    ) -> Result<SnapshotRefreshStats>;
     async fn refresh_user_affinity_snapshots(
         &self,
         user_id: Option<&str>,

@@ -1,3 +1,5 @@
 popularity_bonus_weight: 0.75
 user_affinity_bonus_weight: 0.9
 area_affinity_bonus_weight: 0.35
+search_execute_school_signal_weight: 0.4
+search_execute_area_signal_weight: 0.2

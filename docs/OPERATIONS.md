@@ -10,6 +10,16 @@
 - Redis: optional cache for recommendation responses
 - OpenSearch: optional full-mode candidate projection and retrieval
 
+## Public MVP profile
+
+The initial public-MVP operating profile is intentionally narrow:
+
+- candidate retrieval mode: `sql_only`
+- operational content path: `event-csv`
+- release gate: [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md)
+
+Live crawler flows and `full` mode stay supported as operator workflows, but they are not part of the public-MVP acceptance gate. Some crawl sources still carry manual-review expectations before production use, so the first public release should stay on the deterministic SQL-only path.
+
 The binaries automatically read `.env` from the repository root when present.
 
 ## Readiness checks
@@ -189,10 +199,57 @@ ORDER BY id DESC
 LIMIT 20;
 ```
 
+### Search-signal calibration
+
+`configs/ranking/tracking.default.yaml` now owns the `search_execute` calibration knobs:
+
+- `search_execute_school_signal_weight`
+- `search_execute_area_signal_weight`
+
+Keep them weaker than explicit school actions such as `school_view` and `school_save`. The default baseline is conservative:
+
+- school signal: `0.4`
+- area signal: `0.2`
+
+When you change either value, reapply snapshots with the current config:
+
+```bash
+cargo run -p cli -- snapshot refresh
+```
+
+Operational notes:
+
+- restart the API and worker after editing ranking config so the live processes pick up the new `profile_version` and tracking weights
+- the command recalculates `popularity_snapshots` and `area_affinity_snapshots` from PostgreSQL using the current tracking config
+- recommendation cache is invalidated when Redis is configured
+- full mode also runs projection sync, so OpenSearch sees the updated popularity ordering without a separate command
+- config-only tuning changes `profile_version`; keep `ALGORITHM_VERSION` for code-path changes rather than everyday weight nudges
+
+Useful inspection queries while tuning:
+
+```sql
+SELECT target_station_id, COUNT(*) AS search_execute_count
+FROM user_events
+WHERE event_type = 'search_execute'
+GROUP BY target_station_id
+ORDER BY search_execute_count DESC, target_station_id ASC
+LIMIT 20;
+
+SELECT school_id, popularity_score, total_events, search_execute_count, refreshed_at
+FROM popularity_snapshots
+ORDER BY popularity_score DESC, school_id ASC
+LIMIT 20;
+
+SELECT area, affinity_score, event_count, search_execute_count, refreshed_at
+FROM area_affinity_snapshots
+ORDER BY affinity_score DESC, area ASC
+LIMIT 20;
+```
+
 Inspect current snapshot rows:
 
 ```sql
-SELECT school_id, popularity_score, total_events, refreshed_at
+SELECT school_id, popularity_score, total_events, search_execute_count, refreshed_at
 FROM popularity_snapshots
 ORDER BY popularity_score DESC, school_id ASC
 LIMIT 20;
@@ -202,7 +259,7 @@ FROM user_affinity_snapshots
 ORDER BY refreshed_at DESC, user_id ASC, affinity_score DESC
 LIMIT 20;
 
-SELECT area, affinity_score, event_count, refreshed_at
+SELECT area, affinity_score, event_count, search_execute_count, refreshed_at
 FROM area_affinity_snapshots
 ORDER BY affinity_score DESC, area ASC
 LIMIT 20;
@@ -215,6 +272,8 @@ Recommendation cache keys include:
 - profile version
 - algorithm version
 - retrieval mode
+- candidate limit
+- fallback `neighbor_distance_cap_meters`
 - serialized request hash
 
-Placement is part of the serialized request payload, so cache entries stay separated per placement.
+Placement remains part of the serialized request payload, so cache entries stay separated per placement. Changing the retrieval window or fallback neighbor-distance cap also produces a different cache key, so rollout changes do not wait for TTL expiry before taking effect.
