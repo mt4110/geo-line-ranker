@@ -977,8 +977,11 @@ impl RecommendationRepository for PgRepository {
     }
 
     async fn enqueue_job(&self, job: &NewJob) -> Result<i64> {
-        let client = self.connect().await?;
-        insert_job(&client, job).await
+        let mut client = self.connect().await?;
+        let transaction = client.transaction().await?;
+        let job_id = insert_job(&transaction, job).await?;
+        transaction.commit().await?;
+        Ok(job_id)
     }
 
     async fn claim_next_job(&self, worker_id: &str) -> Result<Option<ClaimedJob>> {
