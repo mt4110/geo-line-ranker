@@ -1,9 +1,18 @@
-use std::{fs, path::Path};
+use std::{fs, path::Path, sync::OnceLock};
 
 use anyhow::{Context, Result};
 use csv::Reader;
 use domain::{Event, PlacementKind, RankingDataset, School, SchoolStationLink, Station, UserEvent};
 use serde::Deserialize;
+
+static POSTGRES_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+pub async fn acquire_postgres_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    POSTGRES_TEST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
 
 pub fn load_fixture_dataset(path: impl AsRef<Path>) -> Result<RankingDataset> {
     let path = path.as_ref();

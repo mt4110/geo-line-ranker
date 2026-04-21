@@ -113,6 +113,7 @@ dependencies = [
  "storage",
  "storage-opensearch",
  "storage-postgres",
+ "test-support",
  "tokio",
  "tokio-postgres",
  "tower",
@@ -2591,6 +2592,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -3585,6 +3587,7 @@ dependencies = [
  "storage",
  "storage-opensearch",
  "storage-postgres",
+ "test-support",
  "tokio",
  "tokio-postgres",
  "tracing",

@@ -19,4 +19,5 @@ worker-core = { path = "../../crates/worker-core" }
 
 [dev-dependencies]
 serde_json.workspace = true
+test-support = { path = "../../crates/test-support" }
 tokio-postgres.workspace = true

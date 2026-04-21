@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,6 +14,7 @@ use config::{CandidateRetrievalMode, OpenSearchSettings, RankingProfiles};
 use ranking::RankingEngine;
 use storage_opensearch::OpenSearchStore;
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
+use test_support::acquire_postgres_test_lock;
 use tokio_postgres::NoTls;
 use tower::ServiceExt;
 
@@ -40,15 +41,6 @@ fn unique_database_name(prefix: &str) -> String {
         .expect("clock should be after unix epoch")
         .as_nanos();
     format!("{prefix}_{}_{}", std::process::id(), suffix)
-}
-
-static POSTGRES_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-
-async fn acquire_postgres_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    POSTGRES_TEST_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
 }
 
 async fn create_empty_database(prefix: &str) -> anyhow::Result<(String, String, String)> {
