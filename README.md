@@ -3,7 +3,7 @@
 Deterministic geo-first and line-first recommendation engine for local discovery.  
 PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is optional cache only, OpenSearch is optional candidate retrieval for full mode, and allowlist crawl remains an optional side path.
 
-## What is in Phase 6
+## What is in Phase 7
 
 - Rust workspace with `api`, `cli`, `worker`, and `crawler`
 - SQL-only minimal mode backed by PostgreSQL/PostGIS
@@ -30,12 +30,11 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 - Japanese source adapters for rail, postal, school codes, and school geodata
 - Swagger UI and a small Next.js example frontend
 
-## Phase 6 note
+## Phase 7 note
 
-- No major blockers remain in this phase.
 - `search_execute` persists through `POST /v1/track`, refreshes popularity / area snapshot weights through station-linked schools, and now uses config-driven calibration.
 - `cargo run -p cli -- snapshot refresh` reapplies the current tracking config, invalidates recommendation cache, and syncs the full-mode projection when enabled.
-- That remains a later handoff note, not a blocker for placement profiles, mixed ranking, or allowlist crawl.
+- Public MVP acceptance remains SQL-only and deterministic; live crawling and full-mode retrieval stay optional side paths.
 
 ## Quickstart
 

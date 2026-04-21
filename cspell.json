@@ -3,6 +3,7 @@
   "language": "en",
   "words": [
     "aoyama",
+    "Atqc",
     "axum",
     "bayside",
     "Bunkyo",
@@ -20,6 +21,7 @@
     "geojson",
     "geodata",
     "GENKI",
+    "getsockname",
     "gakuen",
     "gakuin",
     "hamamatsucho",
@@ -36,6 +38,7 @@
     "linefirst",
     "Marunouchi",
     "MEXT",
+    "MLIT",
     "Minato",
     "ndjson",
     "nanos",
@@ -50,10 +53,14 @@
     "pagetitle",
     "pkgs",
     "PostGIS",
+    "psql",
     "readyz",
+    "rerunnable",
     "regclass",
     "reqwest",
     "retryable",
+    "runbook",
+    "runbooks",
     "rsplit",
     "rfind",
     "rustc",
@@ -84,6 +91,7 @@
   "ignorePaths": [
     "target",
     ".next",
+    "node_modules",
     "package-lock.json"
   ]
 }

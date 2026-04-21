@@ -143,6 +143,9 @@ APP_PORT="${APP_PORT:-$(pick_free_port)}"
 APP_URL="http://127.0.0.1:${APP_PORT}"
 
 export POSTGRES_HOST_PORT
+export POSTGRES_SERVICE="postgres"
+export POSTGRES_DB="geo_line_ranker"
+export POSTGRES_USER="postgres"
 export REDIS_HOST_PORT
 export APP_BIND_ADDR="127.0.0.1:${APP_PORT}"
 export DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${POSTGRES_HOST_PORT}/geo_line_ranker"
