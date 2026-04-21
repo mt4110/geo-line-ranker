@@ -121,6 +121,21 @@ run_redis() {
   return 127
 }
 
+sample_recommendation_cache_keys() {
+  local sample_count
+
+  if ! sample_count="$(
+    set +e
+    set +o pipefail
+    run_redis --scan --pattern 'geo-line-ranker:recommendations:*' 2>/dev/null \
+      | awk '{ count++; if (count == 1000) exit } END { print count + 0 }'
+  )"; then
+    sample_count=0
+  fi
+
+  printf '%s' "${sample_count:-0}"
+}
+
 table_exists() {
   local table_name="$1"
   local table_exists_output
@@ -358,10 +373,7 @@ if ! direct_redis_ready && ! docker_redis_ready; then
 else
   if run_redis PING >/dev/null 2>&1; then
     info "redis=reachable"
-    cache_sample_count="$(
-      run_redis --scan --pattern 'geo-line-ranker:recommendations:*' 2>/dev/null \
-        | awk '{ count++; if (count == 1000) exit } END { print count + 0 }'
-    )"
+    cache_sample_count="$(sample_recommendation_cache_keys)"
     info "recommendation_cache_keys_sampled=${cache_sample_count:-0}"
   else
     warn "redis ping failed"
