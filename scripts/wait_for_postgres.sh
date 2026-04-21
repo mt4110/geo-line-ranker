@@ -9,16 +9,21 @@ POSTGRES_USER="${POSTGRES_USER:-postgres}"
 TIMEOUT_SECS="${WAIT_FOR_POSTGRES_TIMEOUT_SECS:-90}"
 
 deadline=$((SECONDS + TIMEOUT_SECS))
+last_state="unreachable"
 
 while (( SECONDS < deadline )); do
   if docker compose -f "$COMPOSE_FILE" exec -T "$POSTGRES_SERVICE" \
     pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+    last_state="ready-check-passed"
     state="$(
       docker compose -f "$COMPOSE_FILE" exec -T "$POSTGRES_SERVICE" \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc \
         "SELECT CASE WHEN pg_is_in_recovery() THEN 'recovery' ELSE 'ready' END" \
         2>/dev/null || true
     )"
+    if [[ -n "$state" ]]; then
+      last_state="$state"
+    fi
     if [[ "$state" == "ready" ]]; then
       printf 'postgres is ready: service=%s db=%s\n' "$POSTGRES_SERVICE" "$POSTGRES_DB"
       exit 0
@@ -28,6 +33,11 @@ while (( SECONDS < deadline )); do
   sleep 1
 done
 
-printf 'timed out waiting for postgres to leave recovery mode: service=%s db=%s timeout=%ss\n' \
-  "$POSTGRES_SERVICE" "$POSTGRES_DB" "$TIMEOUT_SECS" >&2
+if [[ "$last_state" == "unreachable" ]]; then
+  printf 'timed out waiting for postgres to become reachable: service=%s db=%s timeout=%ss\n' \
+    "$POSTGRES_SERVICE" "$POSTGRES_DB" "$TIMEOUT_SECS" >&2
+else
+  printf 'timed out waiting for postgres readiness: service=%s db=%s last_state=%s timeout=%ss\n' \
+    "$POSTGRES_SERVICE" "$POSTGRES_DB" "$last_state" "$TIMEOUT_SECS" >&2
+fi
 exit 1

@@ -141,14 +141,17 @@ POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-$(pick_free_port)}"
 REDIS_HOST_PORT="${REDIS_HOST_PORT:-$(pick_free_port)}"
 APP_PORT="${APP_PORT:-$(pick_free_port)}"
 APP_URL="http://127.0.0.1:${APP_PORT}"
+POSTGRES_DB="${POSTGRES_DB:-geo_line_ranker}"
+POSTGRES_USER="${POSTGRES_USER:-postgres}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
 
 export POSTGRES_HOST_PORT
-export POSTGRES_SERVICE="postgres"
-export POSTGRES_DB="geo_line_ranker"
-export POSTGRES_USER="postgres"
+export POSTGRES_SERVICE
+export POSTGRES_DB
+export POSTGRES_USER
 export REDIS_HOST_PORT
 export APP_BIND_ADDR="127.0.0.1:${APP_PORT}"
-export DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${POSTGRES_HOST_PORT}/geo_line_ranker"
+export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_HOST_PORT}/${POSTGRES_DB}"
 export REDIS_URL="redis://127.0.0.1:${REDIS_HOST_PORT}"
 export RANKING_CONFIG_DIR="$ROOT_DIR/configs/ranking"
 export FIXTURE_DIR="$ROOT_DIR/storage/fixtures/minimal"
@@ -157,7 +160,7 @@ export CANDIDATE_RETRIEVAL_MODE="sql_only"
 
 note "starting minimal postgres and redis"
 docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
-docker compose -f "$COMPOSE_FILE" up -d postgres redis
+docker compose -f "$COMPOSE_FILE" up -d "$POSTGRES_SERVICE" redis
 "$ROOT_DIR/scripts/wait_for_postgres.sh"
 
 note "bootstrapping schema, seed, and snapshots"
