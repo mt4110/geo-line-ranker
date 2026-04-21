@@ -98,9 +98,28 @@ WHERE source_id = 'event-csv'
 ORDER BY id DESC
 LIMIT 10;
 
-SELECT import_run_id, logical_name, checksum_sha256, row_count, status
-FROM import_run_files
-ORDER BY id DESC
+SELECT
+    import_file.import_run_id,
+    import_file.logical_name,
+    import_file.checksum_sha256,
+    import_file.row_count,
+    import_file.status
+FROM import_run_files AS import_file
+JOIN import_runs AS import_run ON import_run.id = import_file.import_run_id
+WHERE import_run.source_id = 'event-csv'
+ORDER BY import_file.id DESC
+LIMIT 10;
+
+SELECT
+    import_report.import_run_id,
+    import_report.level,
+    import_report.code,
+    import_report.message,
+    import_report.row_count
+FROM import_reports AS import_report
+JOIN import_runs AS import_run ON import_run.id = import_report.import_run_id
+WHERE import_run.source_id = 'event-csv'
+ORDER BY import_report.id DESC
 LIMIT 10;
 
 SELECT id, school_id, title, event_category, is_active, source_key
