@@ -2,8 +2,9 @@ use std::{fs, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use cli::{
-    format_summary, generate_demo_jp_fixture, run_derive_school_station_links,
-    run_event_csv_import, run_import_command, ImportTarget,
+    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture,
+    run_derive_school_station_links, run_event_csv_import, run_import_command,
+    run_snapshot_refresh, ImportTarget,
 };
 use config::AppSettings;
 use storage_opensearch::ProjectionSyncService;
@@ -42,6 +43,10 @@ enum Command {
     Projection {
         #[command(subcommand)]
         target: ProjectionCommand,
+    },
+    Snapshot {
+        #[command(subcommand)]
+        target: SnapshotCommand,
     },
     DumpOpenapi {
         #[arg(default_value = "schemas/openapi.json")]
@@ -104,6 +109,11 @@ enum IndexCommand {
 #[derive(Debug, Subcommand)]
 enum ProjectionCommand {
     Sync,
+}
+
+#[derive(Debug, Subcommand)]
+enum SnapshotCommand {
+    Refresh,
 }
 
 #[tokio::main]
@@ -174,6 +184,12 @@ async fn main() -> anyhow::Result<()> {
                     "projection sync completed: indexed_documents={}, deleted_documents={}",
                     summary.indexed_documents, summary.deleted_documents
                 );
+            }
+        },
+        Command::Snapshot { target } => match target {
+            SnapshotCommand::Refresh => {
+                let summary = run_snapshot_refresh(&settings).await?;
+                println!("{}", format_snapshot_refresh_summary(&summary));
             }
         },
         Command::DumpOpenapi { output } => {

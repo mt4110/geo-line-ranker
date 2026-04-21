@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+cache = { path = "../../crates/cache" }
 chrono.workspace = true
 clap.workspace = true
 config = { path = "../../crates/config" }
@@ -15,6 +16,7 @@ jp-rail = { path = "../../crates/connectors/jp-rail" }
 jp-school = { path = "../../crates/connectors/jp-school" }
 openapi = { path = "../../crates/openapi" }
 serde_json.workspace = true
+storage = { path = "../../crates/storage" }
 storage-opensearch = { path = "../../crates/storage-opensearch" }
 storage-postgres = { path = "../../crates/storage-postgres" }
 tokio.workspace = true

@@ -4,8 +4,9 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use cache::RecommendationCache;
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use config::AppSettings;
+use config::{AppSettings, RankingProfiles};
 use generic_csv::{
     count_csv_rows, load_manifest, read_csv_rows, stage_raw_files, stage_single_csv_file,
     PreparedSourceFile, SourceFileSpec, SourceManifest,
@@ -17,6 +18,8 @@ use jp_school::{
     SCHOOL_GEODATA_PARSER_VERSION,
 };
 use serde_json::json;
+use storage::{RecommendationRepository, SnapshotTuning};
+use storage_opensearch::ProjectionSyncService;
 use storage_postgres::{
     begin_import_run, derive_school_station_links, finish_import_run, import_event_csv,
     import_jp_postal, import_jp_rail, import_jp_school_codes, import_jp_school_geodata,
@@ -61,6 +64,17 @@ pub struct CommandSummary {
     pub import_run_id: Option<i64>,
     pub row_count: i64,
     pub report_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnapshotRefreshSummary {
+    pub refreshed_school_rows: i64,
+    pub refreshed_area_rows: i64,
+    pub invalidated_cache_keys: usize,
+    pub projection_indexed_documents: i64,
+    pub projection_deleted_documents: i64,
+    pub search_execute_school_signal_weight: f64,
+    pub search_execute_area_signal_weight: f64,
 }
 
 pub async fn run_import_command(
@@ -196,6 +210,44 @@ pub async fn run_derive_school_station_links(settings: &AppSettings) -> Result<C
         import_run_id: None,
         row_count: summary.link_rows,
         report_count: summary.report_entries.len(),
+    })
+}
+
+pub async fn run_snapshot_refresh(settings: &AppSettings) -> Result<SnapshotRefreshSummary> {
+    let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
+    let tuning = SnapshotTuning {
+        search_execute_school_signal_weight: profiles.tracking.search_execute_school_signal_weight,
+        search_execute_area_signal_weight: profiles.tracking.search_execute_area_signal_weight,
+    };
+    let repository = storage_postgres::PgRepository::new(settings.database_url.clone());
+    let snapshot_stats = repository.refresh_popularity_snapshots(tuning).await?;
+
+    let invalidated_cache_keys = RecommendationCache::new(
+        settings.redis_url.clone(),
+        settings.recommendation_cache_ttl_secs,
+    )
+    .invalidate_recommendations()
+    .await?;
+
+    let (projection_indexed_documents, projection_deleted_documents) =
+        if settings.candidate_retrieval_mode.is_full() {
+            let summary =
+                ProjectionSyncService::new(settings.database_url.clone(), &settings.opensearch)?
+                    .sync_projection_once()
+                    .await?;
+            (summary.indexed_documents, summary.deleted_documents)
+        } else {
+            (0, 0)
+        };
+
+    Ok(SnapshotRefreshSummary {
+        refreshed_school_rows: snapshot_stats.refreshed_rows,
+        refreshed_area_rows: snapshot_stats.related_rows,
+        invalidated_cache_keys,
+        projection_indexed_documents,
+        projection_deleted_documents,
+        search_execute_school_signal_weight: tuning.search_execute_school_signal_weight,
+        search_execute_area_signal_weight: tuning.search_execute_area_signal_weight,
     })
 }
 
@@ -347,6 +399,19 @@ pub fn format_summary(summary: &CommandSummary) -> String {
             summary.label, summary.row_count, summary.report_count
         ),
     }
+}
+
+pub fn format_snapshot_refresh_summary(summary: &SnapshotRefreshSummary) -> String {
+    format!(
+        "snapshot refresh completed: school_rows={}, area_rows={}, cache_deleted={}, projection_indexed={}, projection_deleted={}, school_weight={}, area_weight={}",
+        summary.refreshed_school_rows,
+        summary.refreshed_area_rows,
+        summary.invalidated_cache_keys,
+        summary.projection_indexed_documents,
+        summary.projection_deleted_documents,
+        summary.search_execute_school_signal_weight,
+        summary.search_execute_area_signal_weight
+    )
 }
 
 async fn register_staged_files(

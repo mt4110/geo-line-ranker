@@ -2,9 +2,9 @@ use std::{sync::Arc, time::Duration};
 
 use cache::RecommendationCache;
 use clap::{Parser, Subcommand};
-use config::AppSettings;
+use config::{AppSettings, RankingProfiles};
 use observability::init_tracing;
-use storage::{CandidateProjectionSync, RecommendationRepository};
+use storage::{CandidateProjectionSync, RecommendationRepository, SnapshotTuning};
 use storage_opensearch::ProjectionSyncService;
 use storage_postgres::PgRepository;
 use worker_core::WorkerService;
@@ -38,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn serve() -> anyhow::Result<()> {
     let settings = AppSettings::from_env()?;
+    let snapshot_tuning = load_snapshot_tuning(&settings)?;
     let repository = Arc::new(PgRepository::new(settings.database_url.clone()));
     let cache = RecommendationCache::new(
         settings.redis_url.clone(),
@@ -50,6 +51,7 @@ async fn serve() -> anyhow::Result<()> {
         cache,
         worker_id.clone(),
         projection_sync,
+        snapshot_tuning,
         settings.worker_retry_delay_secs,
     );
 
@@ -67,6 +69,7 @@ async fn serve() -> anyhow::Result<()> {
 
 async fn run_once(max_jobs: usize) -> anyhow::Result<()> {
     let settings = AppSettings::from_env()?;
+    let snapshot_tuning = load_snapshot_tuning(&settings)?;
     let repository = Arc::new(PgRepository::new(settings.database_url.clone()));
     let cache = RecommendationCache::new(
         settings.redis_url.clone(),
@@ -79,6 +82,7 @@ async fn run_once(max_jobs: usize) -> anyhow::Result<()> {
         cache,
         worker_id,
         projection_sync,
+        snapshot_tuning,
         settings.worker_retry_delay_secs,
     );
     let processed = service.run_until_empty(max_jobs).await?;
@@ -97,4 +101,12 @@ fn build_projection_sync(
         settings.database_url.clone(),
         &settings.opensearch,
     )?) as Arc<dyn CandidateProjectionSync>))
+}
+
+fn load_snapshot_tuning(settings: &AppSettings) -> anyhow::Result<SnapshotTuning> {
+    let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
+    Ok(SnapshotTuning {
+        search_execute_school_signal_weight: profiles.tracking.search_execute_school_signal_weight,
+        search_execute_area_signal_weight: profiles.tracking.search_execute_area_signal_weight,
+    })
 }

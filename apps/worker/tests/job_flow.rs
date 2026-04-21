@@ -6,7 +6,7 @@ use std::{
 
 use cache::RecommendationCache;
 use config::AppSettings;
-use storage::{JobType, NewJob, RecommendationRepository};
+use storage::{JobType, NewJob, RecommendationRepository, SnapshotTuning};
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
 use tokio_postgres::NoTls;
 use worker_core::WorkerService;
@@ -146,6 +146,10 @@ async fn worker_processes_snapshot_and_cache_jobs() -> anyhow::Result<()> {
         cache.clone(),
         format!("worker-test-{}", std::process::id()),
         None,
+        SnapshotTuning {
+            search_execute_school_signal_weight: 0.4,
+            search_execute_area_signal_weight: 0.2,
+        },
         settings.worker_retry_delay_secs,
     );
     let processed = worker.run_until_empty(10).await?;

@@ -41,5 +41,5 @@
   ],
   "fallback_stage": "strict",
   "profile_version": "phase5-profile-version",
-  "algorithm_version": "phase5-placement-mixed-ranking-v1"
+  "algorithm_version": "phase7-search-signal-v2"
 }

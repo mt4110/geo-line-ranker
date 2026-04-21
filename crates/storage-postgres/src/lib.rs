@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use storage::{
     ClaimedJob, JobType, NewJob, RecommendationRepository, RecommendationTrace,
-    SnapshotRefreshStats,
+    SnapshotRefreshStats, SnapshotTuning,
 };
 use tokio_postgres::{Client, GenericClient, NoTls};
 
@@ -40,7 +40,6 @@ const SCHEMA_MIGRATION_LOCK_KEY: i32 = 1;
 const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
 const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
 const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference validation: ";
-
 #[derive(Debug, Clone)]
 pub struct PgRepository {
     database_url: String,
@@ -287,7 +286,8 @@ impl PgRepository {
                     school_save_count,
                     event_view_count,
                     apply_click_count,
-                    share_count
+                    share_count,
+                    search_execute_count
                  FROM popularity_snapshots
                  WHERE school_id = ANY($1)
                  ORDER BY school_id",
@@ -304,6 +304,7 @@ impl PgRepository {
                 event_view_count: row.get("event_view_count"),
                 apply_click_count: row.get("apply_click_count"),
                 share_count: row.get("share_count"),
+                search_execute_count: row.get("search_execute_count"),
             })
             .collect();
 
@@ -313,7 +314,7 @@ impl PgRepository {
         } else {
             client
                 .query(
-                    "SELECT area, affinity_score, event_count
+                    "SELECT area, affinity_score, event_count, search_execute_count
                      FROM area_affinity_snapshots
                      WHERE area = ANY($1)
                      ORDER BY area",
@@ -325,6 +326,7 @@ impl PgRepository {
                     area: row.get("area"),
                     affinity_score: row.get("affinity_score"),
                     event_count: row.get("event_count"),
+                    search_execute_count: row.get("search_execute_count"),
                 })
                 .collect()
         };
@@ -814,7 +816,8 @@ impl RecommendationRepository for PgRepository {
                     school_save_count,
                     event_view_count,
                     apply_click_count,
-                    share_count
+                    share_count,
+                    search_execute_count
                  FROM popularity_snapshots
                  ORDER BY school_id",
                 &[],
@@ -830,12 +833,13 @@ impl RecommendationRepository for PgRepository {
                 event_view_count: row.get("event_view_count"),
                 apply_click_count: row.get("apply_click_count"),
                 share_count: row.get("share_count"),
+                search_execute_count: row.get("search_execute_count"),
             })
             .collect();
 
         let area_affinity_snapshots = client
             .query(
-                "SELECT area, affinity_score, event_count
+                "SELECT area, affinity_score, event_count, search_execute_count
                  FROM area_affinity_snapshots
                  ORDER BY area",
                 &[],
@@ -846,6 +850,7 @@ impl RecommendationRepository for PgRepository {
                 area: row.get("area"),
                 affinity_score: row.get("affinity_score"),
                 event_count: row.get("event_count"),
+                search_execute_count: row.get("search_execute_count"),
             })
             .collect();
 
@@ -1165,7 +1170,10 @@ impl RecommendationRepository for PgRepository {
         Ok(())
     }
 
-    async fn refresh_popularity_snapshots(&self) -> Result<SnapshotRefreshStats> {
+    async fn refresh_popularity_snapshots(
+        &self,
+        tuning: SnapshotTuning,
+    ) -> Result<SnapshotRefreshStats> {
         let mut client = self.connect().await?;
         let transaction = client.transaction().await?;
         transaction
@@ -1177,7 +1185,7 @@ impl RecommendationRepository for PgRepository {
             .await?;
         let refreshed_rows = transaction
             .execute(
-                "WITH school_scores AS (
+                "WITH school_event_scores AS (
                     SELECT
                         school.id AS school_id,
                         COALESCE(SUM(
@@ -1190,15 +1198,7 @@ impl RecommendationRepository for PgRepository {
                                 ELSE 0.0
                             END
                         ), 0.0) AS raw_score,
-                        COUNT(user_event.id) FILTER (
-                            WHERE user_event.event_type IN (
-                                'school_view',
-                                'school_save',
-                                'event_view',
-                                'apply_click',
-                                'share'
-                            )
-                        ) AS total_events,
+                        COUNT(user_event.id) AS total_events,
                         COUNT(user_event.id) FILTER (WHERE user_event.event_type = 'school_view') AS school_view_count,
                         COUNT(user_event.id) FILTER (WHERE user_event.event_type = 'school_save') AS school_save_count,
                         COUNT(user_event.id) FILTER (WHERE user_event.event_type = 'event_view') AS event_view_count,
@@ -1207,7 +1207,43 @@ impl RecommendationRepository for PgRepository {
                     FROM schools AS school
                     LEFT JOIN user_events AS user_event
                       ON user_event.school_id = school.id
+                     AND user_event.event_type IN (
+                         'school_view',
+                         'school_save',
+                         'event_view',
+                         'apply_click',
+                         'share'
+                     )
                     GROUP BY school.id
+                ),
+                school_search_scores AS (
+                    SELECT
+                        link.school_id,
+                        COUNT(user_event.id) AS search_execute_count
+                    FROM school_station_links AS link
+                    INNER JOIN user_events AS user_event
+                      ON user_event.target_station_id = link.station_id
+                     AND user_event.event_type = 'search_execute'
+                    GROUP BY link.school_id
+                ),
+                school_scores AS (
+                    SELECT
+                        school.id AS school_id,
+                        COALESCE(event_scores.raw_score, 0.0)
+                            + COALESCE(search_scores.search_execute_count, 0) * $1::DOUBLE PRECISION AS raw_score,
+                        COALESCE(event_scores.total_events, 0)
+                            + COALESCE(search_scores.search_execute_count, 0) AS total_events,
+                        COALESCE(event_scores.school_view_count, 0) AS school_view_count,
+                        COALESCE(event_scores.school_save_count, 0) AS school_save_count,
+                        COALESCE(event_scores.event_view_count, 0) AS event_view_count,
+                        COALESCE(event_scores.apply_click_count, 0) AS apply_click_count,
+                        COALESCE(event_scores.share_count, 0) AS share_count,
+                        COALESCE(search_scores.search_execute_count, 0) AS search_execute_count
+                    FROM schools AS school
+                    LEFT JOIN school_event_scores AS event_scores
+                      ON event_scores.school_id = school.id
+                    LEFT JOIN school_search_scores AS search_scores
+                      ON search_scores.school_id = school.id
                 ),
                 normalized AS (
                     SELECT
@@ -1221,7 +1257,8 @@ impl RecommendationRepository for PgRepository {
                         school_save_count,
                         event_view_count,
                         apply_click_count,
-                        share_count
+                        share_count,
+                        search_execute_count
                     FROM school_scores
                 )
                 INSERT INTO popularity_snapshots (
@@ -1233,6 +1270,7 @@ impl RecommendationRepository for PgRepository {
                     event_view_count,
                     apply_click_count,
                     share_count,
+                    search_execute_count,
                     refreshed_at
                 )
                 SELECT
@@ -1244,6 +1282,7 @@ impl RecommendationRepository for PgRepository {
                     event_view_count,
                     apply_click_count,
                     share_count,
+                    search_execute_count,
                     NOW()
                 FROM normalized
                 ON CONFLICT (school_id) DO UPDATE
@@ -1254,8 +1293,9 @@ impl RecommendationRepository for PgRepository {
                     event_view_count = EXCLUDED.event_view_count,
                     apply_click_count = EXCLUDED.apply_click_count,
                     share_count = EXCLUDED.share_count,
+                    search_execute_count = EXCLUDED.search_execute_count,
                     refreshed_at = EXCLUDED.refreshed_at",
-                &[],
+                &[&tuning.search_execute_school_signal_weight],
             )
             .await? as i64;
 
@@ -1268,7 +1308,7 @@ impl RecommendationRepository for PgRepository {
             .await?;
         let related_rows = transaction
             .execute(
-                "WITH area_scores AS (
+                "WITH area_event_scores AS (
                     SELECT
                         school.area,
                         COALESCE(SUM(
@@ -1281,19 +1321,44 @@ impl RecommendationRepository for PgRepository {
                                 ELSE 0.0
                             END
                         ), 0.0) AS raw_score,
-                        COUNT(user_event.id) FILTER (
-                            WHERE user_event.event_type IN (
-                                'school_view',
-                                'school_save',
-                                'event_view',
-                                'apply_click',
-                                'share'
-                            )
-                        ) AS event_count
+                        COUNT(user_event.id) AS event_count
                     FROM schools AS school
                     LEFT JOIN user_events AS user_event
                       ON user_event.school_id = school.id
+                     AND user_event.event_type IN (
+                         'school_view',
+                         'school_save',
+                         'event_view',
+                         'apply_click',
+                         'share'
+                     )
                     GROUP BY school.area
+                ),
+                area_search_scores AS (
+                    SELECT
+                        school.area,
+                        COUNT(DISTINCT user_event.id) AS search_execute_count
+                    FROM schools AS school
+                    INNER JOIN school_station_links AS link
+                      ON link.school_id = school.id
+                    INNER JOIN user_events AS user_event
+                      ON user_event.target_station_id = link.station_id
+                     AND user_event.event_type = 'search_execute'
+                    GROUP BY school.area
+                ),
+                area_scores AS (
+                    SELECT
+                        area.area,
+                        COALESCE(event_scores.raw_score, 0.0)
+                            + COALESCE(search_scores.search_execute_count, 0) * $1::DOUBLE PRECISION AS raw_score,
+                        COALESCE(event_scores.event_count, 0)
+                            + COALESCE(search_scores.search_execute_count, 0) AS event_count,
+                        COALESCE(search_scores.search_execute_count, 0) AS search_execute_count
+                    FROM (SELECT DISTINCT area FROM schools) AS area
+                    LEFT JOIN area_event_scores AS event_scores
+                      ON event_scores.area = area.area
+                    LEFT JOIN area_search_scores AS search_scores
+                      ON search_scores.area = area.area
                 ),
                 normalized AS (
                     SELECT
@@ -1302,17 +1367,25 @@ impl RecommendationRepository for PgRepository {
                             WHEN MAX(raw_score) OVER () > 0 THEN raw_score / MAX(raw_score) OVER ()
                             ELSE 0.0
                         END AS affinity_score,
-                        event_count
+                        event_count,
+                        search_execute_count
                     FROM area_scores
                 )
-                INSERT INTO area_affinity_snapshots (area, affinity_score, event_count, refreshed_at)
-                SELECT area, affinity_score, event_count, NOW()
+                INSERT INTO area_affinity_snapshots (
+                    area,
+                    affinity_score,
+                    event_count,
+                    search_execute_count,
+                    refreshed_at
+                )
+                SELECT area, affinity_score, event_count, search_execute_count, NOW()
                 FROM normalized
                 ON CONFLICT (area) DO UPDATE
                 SET affinity_score = EXCLUDED.affinity_score,
                     event_count = EXCLUDED.event_count,
+                    search_execute_count = EXCLUDED.search_execute_count,
                     refreshed_at = EXCLUDED.refreshed_at",
-                &[],
+                &[&tuning.search_execute_area_signal_weight],
             )
             .await? as i64;
         transaction.commit().await?;

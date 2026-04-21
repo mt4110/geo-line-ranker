@@ -146,6 +146,7 @@ pub struct PopularitySnapshot {
     pub event_view_count: i64,
     pub apply_click_count: i64,
     pub share_count: i64,
+    pub search_execute_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -161,6 +162,7 @@ pub struct AreaAffinitySnapshot {
     pub area: String,
     pub affinity_score: f64,
     pub event_count: i64,
+    pub search_execute_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

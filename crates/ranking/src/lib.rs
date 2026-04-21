@@ -455,6 +455,7 @@ impl RankingEngine {
                         "event_view_count": popularity.event_view_count,
                         "apply_click_count": popularity.apply_click_count,
                         "share_count": popularity.share_count,
+                        "search_execute_count": popularity.search_execute_count,
                     }),
                 ),
             ));
@@ -473,6 +474,7 @@ impl RankingEngine {
                         "affinity_score": area_affinity.affinity_score,
                         "event_count": area_affinity.event_count,
                         "area": area_affinity.area,
+                        "search_execute_count": area_affinity.search_execute_count,
                     }),
                 ),
             ));
@@ -913,6 +915,7 @@ mod tests {
             event_view_count: 2,
             apply_click_count: 1,
             share_count: 0,
+            search_execute_count: 0,
         }];
 
         let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
