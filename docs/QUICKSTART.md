@@ -1,5 +1,9 @@
 # Quickstart
 
+This is the canonical local runbook for the repository. `README.md` stays as the shorter project overview.
+
+For the fixed public-MVP release gate, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md). Quickstart remains broader and still includes optional JP demo import, crawler, and full-mode steps that are outside the initial public-MVP acceptance scope.
+
 ## 1. Set environment
 
 Use `.env.example` as the baseline.
@@ -116,11 +120,19 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 
 The API stores the event in `user_events` and enqueues snapshot refresh jobs into `job_queue`.
 
+If you tune `configs/ranking/tracking.default.yaml`, restart the API and worker, then reapply the current snapshot weights explicitly:
+
+```bash
+cargo run -p cli -- snapshot refresh
+```
+
 ## 11. Run full mode
 
 ```bash
 perl -0pi -e 's/^CANDIDATE_RETRIEVAL_MODE=.*/CANDIDATE_RETRIEVAL_MODE=full/' .env
 docker compose -f .docker/docker-compose.full.yaml up -d postgres redis opensearch
+cargo run -p cli -- migrate
+cargo run -p cli -- seed example
 cargo run -p cli -- index rebuild
 ```
 
@@ -129,3 +141,5 @@ Refresh the projection after import or fixture changes:
 ```bash
 cargo run -p cli -- projection sync
 ```
+
+Operational detail such as readiness semantics, cache behavior, crawl health, and source-maturity handling lives in [docs/OPERATIONS.md](OPERATIONS.md).

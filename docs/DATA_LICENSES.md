@@ -20,3 +20,7 @@ Before using upstream data in any non-demo environment, confirm the publisher's 
 - Do not commit upstream raw dumps into the repository.
 - Stage raw files under `.storage/raw/` during import runs.
 - Keep manifests in git, but keep large source payloads outside git.
+
+## Public MVP note
+
+The initial public-MVP acceptance gate does not depend on live crawler fetches. It is scoped to the committed demo fixtures plus operator-provided `event-csv` input, while crawl sources continue to require separate source-by-source policy review before production use.

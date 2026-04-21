@@ -20,6 +20,8 @@ cargo run -p cli -- migrate
 cargo run -p cli -- seed example
 ```
 
+The manual smoke sections below are intentionally broader than the public-MVP release gate. For the fixed six-case acceptance flow that excludes live crawler and `full` mode, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md).
+
 ## What gets covered
 
 - ranking unit tests:
@@ -69,6 +71,10 @@ cargo run -p cli -- seed example
    curl -X POST http://127.0.0.1:4000/v1/track \
      -H "content-type: application/json" \
      -d '{"user_id":"manual-user-1","event_kind":"school_save","school_id":"school_garden"}'
+
+   curl -X POST http://127.0.0.1:4000/v1/track \
+     -H "content-type: application/json" \
+     -d '{"user_id":"manual-user-1","event_kind":"search_execute","target_station_id":"st_tamachi"}'
    ```
 
 5. Confirm the queue drains and snapshot rows update:
@@ -79,12 +85,22 @@ cargo run -p cli -- seed example
    ORDER BY id DESC
    LIMIT 10;
 
-   SELECT school_id, popularity_score
+   SELECT school_id, popularity_score, total_events, search_execute_count
    FROM popularity_snapshots
    ORDER BY popularity_score DESC, school_id ASC;
+
+   SELECT area, affinity_score, event_count, search_execute_count
+   FROM area_affinity_snapshots
+   ORDER BY affinity_score DESC, area ASC;
    ```
 
-6. Import the operational event CSV and confirm active rows update:
+6. Tune `configs/ranking/tracking.default.yaml` if needed, restart the API and worker, then force a recalculation with the current config:
+
+   ```bash
+   cargo run -p cli -- snapshot refresh
+   ```
+
+7. Import the operational event CSV and confirm active rows update:
 
    ```bash
    cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
@@ -97,7 +113,7 @@ cargo run -p cli -- seed example
    LIMIT 20;
    ```
 
-7. Run the optional crawler and inspect audit tables:
+8. Run the optional crawler and inspect audit tables:
 
    ```bash
    cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.yaml

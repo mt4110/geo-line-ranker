@@ -43,3 +43,22 @@ crawler:
 
 crawler-health:
   cargo run -p crawler -- health --manifest configs/crawler/sources/custom_example.yaml
+
+mvp-env:
+  [[ -f .env ]] || cp .env.example .env
+
+mvp-up:
+  docker compose -f .docker/docker-compose.yaml up -d postgres redis
+  ./scripts/wait_for_postgres.sh
+
+mvp-bootstrap:
+  ./scripts/wait_for_postgres.sh
+  cargo run -p cli -- migrate
+  cargo run -p cli -- seed example
+  cargo run -p cli -- snapshot refresh
+
+mvp-down:
+  docker compose -f .docker/docker-compose.yaml down
+
+mvp-acceptance:
+  ./scripts/mvp_acceptance.sh
