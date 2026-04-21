@@ -33,6 +33,28 @@ struct ScoredCandidate {
     item: RecommendationItem,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DiversitySelectionSummary {
+    selected_count: usize,
+    same_school_skipped: usize,
+    same_group_skipped: usize,
+    content_kind_skipped: BTreeMap<ContentKind, usize>,
+}
+
+impl DiversitySelectionSummary {
+    fn skipped_count(&self) -> usize {
+        self.same_school_skipped
+            + self.same_group_skipped
+            + self.content_kind_skipped.values().sum::<usize>()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DiversitySelection {
+    items: Vec<RecommendationItem>,
+    summary: DiversitySelectionSummary,
+}
+
 impl RankingEngine {
     pub fn new(profiles: RankingProfiles, algorithm_version: impl Into<String>) -> Self {
         Self {
@@ -91,13 +113,21 @@ impl RankingEngine {
             candidates,
             &fallback_stage,
         );
-        let items = self.select_diverse_items(scored_candidates, limit, placement_profile);
+        let DiversitySelection {
+            items,
+            summary: diversity_summary,
+        } = self.select_diverse_items(scored_candidates, limit, placement_profile);
         if items.is_empty() {
             return Err(RankingError::NoCandidates(target_station.id));
         }
 
-        let top_level_explanation =
-            build_top_level_explanation(query.placement, &target_station, &fallback_stage, &items);
+        let top_level_explanation = build_top_level_explanation(
+            query.placement,
+            &target_station,
+            &fallback_stage,
+            &items,
+            &diversity_summary,
+        );
         let score_breakdown = items
             .first()
             .map(|item| item.score_breakdown.clone())
@@ -517,13 +547,14 @@ impl RankingEngine {
         candidates: Vec<ScoredCandidate>,
         limit: usize,
         placement_profile: &PlacementProfile,
-    ) -> Vec<RecommendationItem> {
+    ) -> DiversitySelection {
         let mut school_counts = HashMap::<String, usize>::new();
         let mut group_counts = HashMap::<String, usize>::new();
         let mut kind_counts = BTreeMap::<ContentKind, usize>::new();
         let max_kind_counts = build_max_kind_counts(limit, placement_profile);
         let mut selected_keys = HashSet::<(ContentKind, String)>::new();
         let mut selected = Vec::new();
+        let mut summary = DiversitySelectionSummary::default();
 
         for candidate in candidates {
             if selected.len() >= limit {
@@ -538,6 +569,7 @@ impl RankingEngine {
                 .unwrap_or_default()
                 >= placement_profile.diversity.same_school_cap
             {
+                summary.same_school_skipped += 1;
                 continue;
             }
             if group_counts
@@ -546,6 +578,7 @@ impl RankingEngine {
                 .unwrap_or_default()
                 >= placement_profile.diversity.same_group_cap
             {
+                summary.same_group_skipped += 1;
                 continue;
             }
             if kind_counts
@@ -557,6 +590,10 @@ impl RankingEngine {
                     .copied()
                     .unwrap_or(limit)
             {
+                *summary
+                    .content_kind_skipped
+                    .entry(candidate.content_kind)
+                    .or_default() += 1;
                 continue;
             }
 
@@ -568,7 +605,12 @@ impl RankingEngine {
             selected.push(candidate.item);
         }
 
-        selected
+        summary.selected_count = selected.len();
+
+        DiversitySelection {
+            items: selected,
+            summary,
+        }
     }
 }
 
@@ -675,6 +717,7 @@ fn build_top_level_explanation(
     target_station: &Station,
     fallback_stage: &FallbackStage,
     items: &[RecommendationItem],
+    diversity_summary: &DiversitySelectionSummary,
 ) -> String {
     let reasons = items
         .first()
@@ -686,12 +729,50 @@ fn build_top_level_explanation(
         FallbackStage::Neighbor => format!("{} 近傍まで広げた候補群", target_station.name),
     };
 
-    format!(
+    let mut explanation = format!(
         "{}では {} を母集団にし、{} を効かせて決定論的に順位付けしました。",
         placement_label(placement),
         fallback_text,
         reason_text
-    )
+    );
+    if let Some(diversity_impact) = build_diversity_impact_sentence(diversity_summary) {
+        explanation.push_str(&diversity_impact);
+    }
+    explanation
+}
+
+fn build_diversity_impact_sentence(summary: &DiversitySelectionSummary) -> Option<String> {
+    let skipped_count = summary.skipped_count();
+    if skipped_count == 0 {
+        return None;
+    }
+
+    let mut reasons = Vec::new();
+    if summary.same_school_skipped > 0 {
+        reasons.push(format!("同一学校{}件", summary.same_school_skipped));
+    }
+    if summary.same_group_skipped > 0 {
+        reasons.push(format!("同一グループ{}件", summary.same_group_skipped));
+    }
+    for (kind, count) in &summary.content_kind_skipped {
+        if *count > 0 {
+            reasons.push(format!("{}{}件", content_kind_label(*kind), count));
+        }
+    }
+
+    Some(format!(
+        " 多様性上限で{}を抑制し、{}件の表示枠に整えています。",
+        join_reason_labels(&reasons),
+        summary.selected_count
+    ))
+}
+
+fn content_kind_label(kind: ContentKind) -> &'static str {
+    match kind {
+        ContentKind::School => "学校候補",
+        ContentKind::Event => "イベント候補",
+        ContentKind::Article => "記事候補",
+    }
 }
 
 fn top_reason_labels(breakdown: &[ScoreComponent]) -> Vec<String> {
@@ -878,6 +959,8 @@ mod tests {
             .filter(|item| item.school_id == "school_seaside")
             .count();
         assert_eq!(school_count, 1);
+        assert!(result.explanation.contains("多様性上限"));
+        assert!(result.explanation.contains("同一学校"));
     }
 
     #[test]
@@ -901,6 +984,20 @@ mod tests {
             .filter(|item| item.school_id == "school_seaside" || item.school_id == "school_garden")
             .count();
         assert_eq!(bayside_count, 1);
+        assert!(result.explanation.contains("同一グループ"));
+    }
+
+    #[test]
+    fn content_kind_cap_is_reflected_in_result_explanation() {
+        let sentence = super::build_diversity_impact_sentence(&super::DiversitySelectionSummary {
+            selected_count: 3,
+            content_kind_skipped: std::collections::BTreeMap::from([(ContentKind::Event, 2)]),
+            ..Default::default()
+        })
+        .expect("diversity impact sentence");
+
+        assert!(sentence.contains("多様性上限"));
+        assert!(sentence.contains("イベント候補2件"));
     }
 
     #[test]

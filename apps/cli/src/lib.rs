@@ -18,13 +18,14 @@ use jp_school::{
     SCHOOL_GEODATA_PARSER_VERSION,
 };
 use serde_json::json;
-use storage::{RecommendationRepository, SnapshotTuning};
+use storage::{JobType, NewJob, RecommendationRepository, SnapshotTuning};
 use storage_opensearch::ProjectionSyncService;
 use storage_postgres::{
     begin_import_run, derive_school_station_links, finish_import_run, import_event_csv,
     import_jp_postal, import_jp_rail, import_jp_school_codes, import_jp_school_geodata,
     record_import_report, upsert_import_run_file, EventCsvRecord, ImportReportEntry,
-    ImportRunFileAudit, ImportSummary,
+    ImportRunFileAudit, ImportSummary, JobInspection, JobMutationSummary, JobQueueSnapshot,
+    PgRepository,
 };
 
 const EVENT_CSV_PARSER_VERSION: &str = "event-csv-v1";
@@ -75,6 +76,14 @@ pub struct SnapshotRefreshSummary {
     pub projection_deleted_documents: i64,
     pub search_execute_school_signal_weight: f64,
     pub search_execute_area_signal_weight: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobEnqueueSummary {
+    pub job_id: i64,
+    pub job_type: JobType,
+    pub payload: serde_json::Value,
+    pub max_attempts: i32,
 }
 
 pub async fn run_import_command(
@@ -251,6 +260,60 @@ pub async fn run_snapshot_refresh(settings: &AppSettings) -> Result<SnapshotRefr
     })
 }
 
+pub async fn run_job_list(settings: &AppSettings, limit: i64) -> Result<JobQueueSnapshot> {
+    PgRepository::new(settings.database_url.clone())
+        .list_jobs(limit)
+        .await
+}
+
+pub async fn run_job_inspect(settings: &AppSettings, job_id: i64) -> Result<JobInspection> {
+    PgRepository::new(settings.database_url.clone())
+        .inspect_job(job_id)
+        .await
+}
+
+pub async fn run_job_retry(settings: &AppSettings, job_id: i64) -> Result<JobMutationSummary> {
+    PgRepository::new(settings.database_url.clone())
+        .retry_failed_job(job_id)
+        .await
+}
+
+pub async fn run_job_due(settings: &AppSettings, job_id: i64) -> Result<JobMutationSummary> {
+    PgRepository::new(settings.database_url.clone())
+        .make_queued_job_due(job_id)
+        .await
+}
+
+pub async fn run_job_enqueue(
+    settings: &AppSettings,
+    job_type: &str,
+    payload: &str,
+    max_attempts: i32,
+) -> Result<JobEnqueueSummary> {
+    ensure!(max_attempts > 0, "max_attempts must be positive");
+    let job_type =
+        JobType::parse(job_type).with_context(|| format!("unsupported job_type {job_type}"))?;
+    let payload: serde_json::Value =
+        serde_json::from_str(payload).with_context(|| "failed to parse job payload JSON")?;
+    ensure!(payload.is_object(), "job payload must be a JSON object");
+
+    let repository = PgRepository::new(settings.database_url.clone());
+    let job_id = repository
+        .enqueue_job(&NewJob {
+            job_type,
+            payload: payload.clone(),
+            max_attempts,
+        })
+        .await?;
+
+    Ok(JobEnqueueSummary {
+        job_id,
+        job_type,
+        payload,
+        max_attempts,
+    })
+}
+
 pub async fn run_event_csv_import(
     settings: &AppSettings,
     file_path: impl AsRef<Path>,
@@ -411,6 +474,111 @@ pub fn format_snapshot_refresh_summary(summary: &SnapshotRefreshSummary) -> Stri
         summary.projection_deleted_documents,
         summary.search_execute_school_signal_weight,
         summary.search_execute_area_signal_weight
+    )
+}
+
+pub fn format_job_list(snapshot: &JobQueueSnapshot) -> String {
+    let mut lines = vec!["job queue".to_string()];
+    if snapshot.jobs.is_empty() {
+        lines.push("recent: -".to_string());
+    } else {
+        lines.push("recent:".to_string());
+        for job in &snapshot.jobs {
+            lines.push(format!(
+                "  id={} type={} status={} attempts={}/{} run_after={} completed_at={} last_error={}",
+                job.id,
+                job.job_type,
+                job.status,
+                job.attempts,
+                job.max_attempts,
+                job.run_after,
+                job.completed_at.as_deref().unwrap_or("-"),
+                job.last_error.as_deref().unwrap_or("-")
+            ));
+        }
+    }
+
+    if snapshot.pressure.is_empty() {
+        lines.push("pressure: -".to_string());
+    } else {
+        lines.push("pressure:".to_string());
+        for row in &snapshot.pressure {
+            lines.push(format!(
+                "  type={} status={} count={} oldest_run_after={} latest_update={}",
+                row.job_type,
+                row.status,
+                row.job_count,
+                row.oldest_run_after.as_deref().unwrap_or("-"),
+                row.latest_update.as_deref().unwrap_or("-")
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+pub fn format_job_inspection(inspection: &JobInspection) -> String {
+    let job = &inspection.job;
+    let mut lines = vec![
+        format!("job id={}", job.id),
+        format!("type: {}", job.job_type),
+        format!("status: {}", job.status),
+        format!("attempts: {}/{}", job.attempts, job.max_attempts),
+        format!("run_after: {}", job.run_after),
+        format!("locked_by: {}", job.locked_by.as_deref().unwrap_or("-")),
+        format!("locked_at: {}", job.locked_at.as_deref().unwrap_or("-")),
+        format!(
+            "completed_at: {}",
+            job.completed_at.as_deref().unwrap_or("-")
+        ),
+        format!("last_error: {}", job.last_error.as_deref().unwrap_or("-")),
+        format!("payload: {}", job.payload),
+    ];
+
+    if inspection.attempts.is_empty() {
+        lines.push("attempts_detail: -".to_string());
+    } else {
+        lines.push("attempts_detail:".to_string());
+        for attempt in &inspection.attempts {
+            lines.push(format!(
+                "  attempt={} status={} started_at={} finished_at={} error={}",
+                attempt.attempt_number,
+                attempt.status,
+                attempt.started_at,
+                attempt.finished_at.as_deref().unwrap_or("-"),
+                attempt.error_message.as_deref().unwrap_or("-")
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+pub fn format_job_mutation_summary(action: &str, summary: &JobMutationSummary) -> String {
+    let outcome = if summary.updated {
+        "updated"
+    } else {
+        "skipped"
+    };
+    format!(
+        "job {action} {outcome}: id={} type={} status={} attempts={}/{} run_after={} last_error={}",
+        summary.job.id,
+        summary.job.job_type,
+        summary.job.status,
+        summary.job.attempts,
+        summary.job.max_attempts,
+        summary.job.run_after,
+        summary.job.last_error.as_deref().unwrap_or("-")
+    )
+}
+
+pub fn format_job_enqueue_summary(summary: &JobEnqueueSummary) -> String {
+    format!(
+        "job enqueued: id={} type={} max_attempts={} payload={}",
+        summary.job_id,
+        summary.job_type.as_str(),
+        summary.max_attempts,
+        summary.payload
     )
 }
 

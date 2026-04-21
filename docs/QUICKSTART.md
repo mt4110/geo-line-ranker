@@ -119,6 +119,14 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 ```
 
 The API stores the event in `user_events` and enqueues snapshot refresh jobs into `job_queue`.
+Inspect queued worker jobs from the CLI:
+
+```bash
+cargo run -p cli -- jobs list --limit 20
+```
+
+For recovery commands such as `jobs inspect`, `jobs retry`, `jobs due`, and
+`jobs enqueue`, use [docs/OPERATIONS.md](OPERATIONS.md).
 
 If you tune `configs/ranking/tracking.default.yaml`, restart the API and worker, then reapply the current snapshot weights explicitly:
 

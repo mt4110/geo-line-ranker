@@ -26,7 +26,7 @@
       ]
     }
   ],
-  "explanation": "ホームでは Tamachi 直結の候補群 を母集団にし、直結条件 と 注目イベント を効かせて決定論的に順位付けしました。",
+  "explanation": "ホームでは Tamachi 直結の候補群 を母集団にし、直結条件 と 注目イベント を効かせて決定論的に順位付けしました。 多様性上限で同一学校1件を抑制し、3件の表示枠に整えています。",
   "score_breakdown": [
     {
       "feature": "direct_station_bonus",
@@ -41,5 +41,5 @@
   ],
   "fallback_stage": "strict",
   "profile_version": "phase5-profile-version",
-  "algorithm_version": "phase7-search-signal-v2"
+  "algorithm_version": "phase8-policy-diversity-v1"
 }

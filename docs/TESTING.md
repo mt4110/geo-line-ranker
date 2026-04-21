@@ -10,6 +10,29 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
+When the local PostgreSQL container is memory constrained, the workspace test
+can also be run with serialized Rust test execution:
+
+```bash
+RUST_TEST_THREADS=1 cargo test --workspace
+```
+
+## CI test matrix
+
+Pull request CI keeps the static checks and test execution separate:
+
+- `rust-quality`: formatting and clippy for the full workspace.
+- `rust-unit-tests`: DB-free packages and the mock OpenSearch compatibility
+  tests.
+- `rust-postgres-tests`: PostgreSQL/Redis-backed shards for `api`, `cli`,
+  `crawler`, and `worker` plus `storage-postgres`.
+- `mvp-acceptance`: the public MVP acceptance flow.
+
+Each `rust-postgres-tests` shard gets its own GitHub Actions PostgreSQL and
+Redis services, and runs with `RUST_TEST_THREADS=1` inside the shard. This keeps
+PR validation deterministic while avoiding one shared PostgreSQL instance being
+hit by the entire workspace at once.
+
 ## Integration prerequisites
 
 Phase 5 integration checks use PostgreSQL and Redis. The SQL-only vs full-mode compatibility test still uses a mock OpenSearch endpoint and does not require Docker.
@@ -78,6 +101,10 @@ The manual smoke sections below are intentionally broader than the public-MVP re
    ```
 
 5. Confirm the queue drains and snapshot rows update:
+
+   ```bash
+   cargo run -p cli -- jobs list --limit 10
+   ```
 
    ```sql
    SELECT job_type, status, attempts
@@ -183,3 +210,4 @@ The manual smoke sections below are intentionally broader than the public-MVP re
    ```
 
    The request payload hash now changes across placements, so `home` and `search` should not share the same cache entry.
+   Full-mode retrieval should keep the same candidate-slice ordering as SQL-only mode before ranking: direct station first, then distance, walking minutes, school id, and station id.

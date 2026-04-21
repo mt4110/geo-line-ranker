@@ -173,6 +173,24 @@ pub struct RunReasonTrend {
     pub reasons: BTreeMap<String, i64>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PromotionGate {
+    blockers: BTreeSet<String>,
+    review: BTreeSet<String>,
+}
+
+impl PromotionGate {
+    fn status(&self) -> &'static str {
+        if !self.blockers.is_empty() {
+            "blocked"
+        } else if !self.review.is_empty() {
+            "review"
+        } else {
+            "ready"
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ResolvedManifestMetadata {
     source_maturity: SourceMaturity,
@@ -2041,6 +2059,7 @@ pub fn format_summary(summary: &CrawlCommandSummary) -> String {
 }
 
 pub fn format_doctor_summary(summary: &CrawlDoctorSummary) -> String {
+    let promotion_gate = doctor_promotion_gate(summary);
     let mut lines = vec![
         format!(
             "crawler doctor for {} ({})",
@@ -2060,6 +2079,7 @@ pub fn format_doctor_summary(summary: &CrawlDoctorSummary) -> String {
                 .unwrap_or_else(|| "-".to_string())
         ),
         format!("live_fetch_enabled: {}", summary.live_fetch_enabled),
+        format_promotion_gate(&promotion_gate),
         format!(
             "robots: requested={} status={} content_type={} final_url={}",
             summary.robots.requested_url,
@@ -2127,6 +2147,7 @@ pub fn format_doctor_summary(summary: &CrawlDoctorSummary) -> String {
 }
 
 pub fn format_dry_run_summary(summary: &CrawlDryRunSummary) -> String {
+    let promotion_gate = dry_run_promotion_gate(summary);
     let mut lines = vec![
         format!(
             "crawler dry-run for {} ({})",
@@ -2153,6 +2174,7 @@ pub fn format_dry_run_summary(summary: &CrawlDryRunSummary) -> String {
             summary.missing_school_rows,
             summary.date_drift_warnings
         ),
+        format_promotion_gate(&promotion_gate),
     ];
 
     if summary.parse_errors.is_empty() && summary.warnings.is_empty() {
@@ -2182,6 +2204,7 @@ pub fn format_dry_run_summary(summary: &CrawlDryRunSummary) -> String {
 }
 
 pub fn format_health_summary(summary: &ParserHealthSummary) -> String {
+    let promotion_gate = health_promotion_gate(summary);
     let mut lines = vec![
         format!(
             "parser health for {} ({})",
@@ -2211,6 +2234,7 @@ pub fn format_health_summary(summary: &ParserHealthSummary) -> String {
             format_count_map(&summary.parse_level_totals),
             summary.dedupe_report_total
         ),
+        format_promotion_gate(&promotion_gate),
     ];
 
     if summary.recent_runs.is_empty() {
@@ -2573,6 +2597,153 @@ fn is_green_signal(
     matches!(fetch_status, Some("fetched" | "not_modified")) && parse_error.is_none()
 }
 
+fn doctor_promotion_gate(summary: &CrawlDoctorSummary) -> PromotionGate {
+    let mut gate = PromotionGate::default();
+
+    if summary.source_maturity != SourceMaturity::LiveReady {
+        gate.blockers
+            .insert("source_maturity_not_live_ready".to_string());
+    }
+    if !summary.live_fetch_enabled {
+        gate.blockers.insert("live_fetch_disabled".to_string());
+    }
+    if !summary.parser_registered {
+        gate.blockers.insert("unknown_parser_key".to_string());
+    }
+
+    for issue in &summary.issues {
+        if issue.level == "error" || doctor_issue_blocks_promotion(&issue.code) {
+            gate.blockers.insert(issue.code.clone());
+        } else {
+            gate.review.insert(issue.code.clone());
+        }
+    }
+
+    for target in &summary.targets {
+        if matches!(target.robots_allowed, Some(false)) {
+            gate.blockers
+                .insert(format!("blocked_robots:{}", target.logical_name));
+        }
+        match target.shape_status.as_deref() {
+            Some("matched") | None => {}
+            Some("skipped")
+                if summary.source_maturity == SourceMaturity::LiveReady
+                    && summary.live_fetch_enabled =>
+            {
+                gate.blockers
+                    .insert(format!("shape_probe_skipped:{}", target.logical_name));
+            }
+            Some(status) => {
+                gate.blockers
+                    .insert(format!("shape_{status}:{}", target.logical_name));
+            }
+        }
+    }
+
+    gate
+}
+
+fn dry_run_promotion_gate(summary: &CrawlDryRunSummary) -> PromotionGate {
+    let mut gate = PromotionGate::default();
+
+    if summary.source_maturity != SourceMaturity::LiveReady {
+        gate.blockers
+            .insert("source_maturity_not_live_ready".to_string());
+    }
+    if summary.ready_targets == 0 {
+        gate.blockers.insert("no_ready_targets".to_string());
+    }
+    if summary.parsed_rows == 0 {
+        gate.blockers.insert("parsed_zero_rows".to_string());
+    }
+    if summary.imported_rows == 0 {
+        gate.blockers.insert("imported_zero_rows".to_string());
+    }
+    if summary.missing_school_rows > 0 {
+        gate.blockers.insert("missing_school_id".to_string());
+    }
+
+    for issue in &summary.parse_errors {
+        gate.blockers.insert(issue.code.clone());
+    }
+    for issue in &summary.warnings {
+        if dry_run_issue_blocks_promotion(&issue.code) {
+            gate.blockers.insert(issue.code.clone());
+        } else {
+            gate.review.insert(issue.code.clone());
+        }
+    }
+
+    gate
+}
+
+fn health_promotion_gate(summary: &ParserHealthSummary) -> PromotionGate {
+    let mut gate = PromotionGate::default();
+
+    if summary.source_maturity != SourceMaturity::LiveReady {
+        gate.blockers
+            .insert("source_maturity_not_live_ready".to_string());
+    }
+    if summary.shown_runs == 0 {
+        gate.blockers.insert("no_recent_runs".to_string());
+    }
+    if summary.succeeded_runs == 0 {
+        gate.blockers.insert("no_succeeded_runs".to_string());
+    }
+    if summary.failed_runs > 0 {
+        gate.blockers.insert("recent_failed_runs".to_string());
+    }
+    if summary.active_runs > 0 {
+        gate.review.insert("active_runs".to_string());
+    }
+    if !summary.logical_name_red_flags.is_empty() {
+        gate.blockers.insert("logical_name_red_flags".to_string());
+    }
+    for reason in summary.reason_totals.keys() {
+        gate.blockers.insert(format!("reason:{reason}"));
+    }
+
+    gate
+}
+
+fn doctor_issue_blocks_promotion(code: &str) -> bool {
+    matches!(
+        code,
+        "unknown_parser_key"
+            | "live_fetch_disabled"
+            | "missing_school_id"
+            | "target_shape_fetch_failed"
+            | "expected_shape_mismatch"
+            | "robots_fetch_failed"
+            | "robots_bad_status"
+            | "robots_unexpected_content_type"
+            | "robots_html_body"
+            | "terms_fetch_failed"
+            | "terms_bad_status"
+    )
+}
+
+fn dry_run_issue_blocks_promotion(code: &str) -> bool {
+    matches!(
+        code,
+        "parse_failed"
+            | "parsed_zero_rows"
+            | "no_events_found"
+            | "missing_school_id"
+            | "partial_import_skips_stale_deactivation"
+            | "missing_school_skips_stale_deactivation"
+    )
+}
+
+fn format_promotion_gate(gate: &PromotionGate) -> String {
+    format!(
+        "promotion_gate: {} blockers[{}] review[{}]",
+        gate.status(),
+        format_string_set(&gate.blockers),
+        format_string_set(&gate.review)
+    )
+}
+
 fn format_count_map(counts: &BTreeMap<String, i64>) -> String {
     if counts.is_empty() {
         return "-".to_string();
@@ -2583,6 +2754,14 @@ fn format_count_map(counts: &BTreeMap<String, i64>) -> String {
         .map(|(key, value)| format!("{key}:{value}"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn format_string_set(values: &BTreeSet<String>) -> String {
+    if values.is_empty() {
+        return "-".to_string();
+    }
+
+    values.iter().cloned().collect::<Vec<_>>().join(", ")
 }
 
 fn normalize_reason_for_total(reason: &str) -> Option<String> {
@@ -4295,6 +4474,8 @@ targets:
             .issues
             .iter()
             .any(|issue| issue.code == "expected_shape_mismatch"));
+        assert!(doctor_text.contains("promotion_gate: blocked"));
+        assert!(doctor_text.contains("expected_shape_mismatch"));
         assert!(doctor_text.contains("shape=mismatch"));
         assert!(doctor_text.contains("expected_shape: html_heading_page"));
 
@@ -4824,6 +5005,8 @@ targets:
             .warnings
             .iter()
             .any(|issue| issue.code == "date_drift"));
+        assert!(dry_run_text.contains("promotion_gate: review"));
+        assert!(dry_run_text.contains("review[date_drift]"));
         assert!(dry_run_text.contains("inactive=8"));
         assert!(dry_run_text.contains("date_drift"));
 
@@ -5167,11 +5350,13 @@ targets:
         let fetch_summary = run_fetch_command(&settings, &manifest_path).await?;
         let parse_summary = run_parse_command(&settings, &manifest_path).await?;
         let health_summary = run_health_command(&settings, &manifest_path, 10).await?;
+        let health_text = format_health_summary(&health_summary);
 
         assert_eq!(fetch_summary.fetched_targets, 1);
         assert_eq!(parse_summary.imported_rows, 5);
         assert!(health_summary.logical_name_red_flags.is_empty());
         assert!(health_summary.reason_totals.is_empty());
+        assert!(health_text.contains("promotion_gate: ready"));
 
         let rows = client
             .query(
@@ -5468,6 +5653,8 @@ targets:
         assert!(health_text.contains("latest_blocked_policy"));
         assert!(health_text.contains("source_maturity: policy_blocked"));
         assert!(health_text.contains("expected_shape: html_heading_page"));
+        assert!(health_text.contains("promotion_gate: blocked"));
+        assert!(health_text.contains("source_maturity_not_live_ready"));
 
         Ok(())
     }

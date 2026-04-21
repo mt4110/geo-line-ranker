@@ -71,3 +71,130 @@ async fn enqueue_job_coalesces_concurrent_global_popularity_refreshes() -> anyho
     drop_database(&admin_database_url, &database_name).await?;
     test_result
 }
+
+#[tokio::test]
+async fn job_recovery_helpers_preserve_attempt_history() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_job_recovery").await
+    else {
+        eprintln!(
+            "skipping storage-postgres job recovery test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+
+        let repository = PgRepository::new(database_url.clone());
+        let job_id = repository
+            .enqueue_job(&NewJob {
+                job_type: JobType::RefreshPopularitySnapshot,
+                payload: serde_json::json!({ "manual": true }),
+                max_attempts: 1,
+            })
+            .await?;
+        let claim = repository
+            .claim_next_job("worker-failing")
+            .await?
+            .expect("queued job should be claimable");
+        repository
+            .mark_job_failed(job_id, claim.attempt_id, "dependency unavailable", 30)
+            .await?;
+
+        let failed = repository.inspect_job(job_id).await?;
+        assert_eq!(failed.job.status, "failed");
+        assert_eq!(failed.job.attempts, 1);
+        assert_utc_timestamp(&failed.job.run_after);
+        assert_utc_timestamp(&failed.job.created_at);
+        assert_utc_timestamp(&failed.job.updated_at);
+        assert_eq!(failed.attempts.len(), 1);
+        assert_eq!(failed.attempts[0].status, "failed");
+        assert_utc_timestamp(&failed.attempts[0].started_at);
+        assert_utc_timestamp(
+            failed.attempts[0]
+                .finished_at
+                .as_deref()
+                .expect("failed attempt should have a finish timestamp"),
+        );
+        assert_eq!(
+            failed.attempts[0].error_message.as_deref(),
+            Some("dependency unavailable")
+        );
+
+        let retry = repository.retry_failed_job(job_id).await?;
+        assert!(retry.updated);
+        assert_eq!(retry.job.status, "queued");
+        assert_eq!(retry.job.attempts, 1);
+        assert_eq!(retry.job.max_attempts, 2);
+        assert_eq!(retry.job.last_error, None);
+
+        let after_retry = repository.inspect_job(job_id).await?;
+        assert_eq!(after_retry.attempts.len(), 1);
+        assert_eq!(after_retry.attempts[0].status, "failed");
+
+        let skipped_retry = repository.retry_failed_job(job_id).await?;
+        assert!(!skipped_retry.updated);
+        assert_eq!(skipped_retry.job.status, "queued");
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client
+            .execute(
+                "UPDATE job_queue
+                 SET run_after = NOW() + INTERVAL '1 hour'
+                 WHERE id = $1",
+                &[&job_id],
+            )
+            .await?;
+
+        let due = repository.make_queued_job_due(job_id).await?;
+        assert!(due.updated);
+        assert_eq!(due.job.status, "queued");
+        assert_utc_timestamp(&due.job.run_after);
+
+        let already_due = repository.make_queued_job_due(job_id).await?;
+        assert!(!already_due.updated);
+        assert_eq!(already_due.job.status, "queued");
+
+        let snapshot = repository.list_jobs(10).await?;
+        assert!(snapshot.jobs.iter().any(|job| job.id == job_id));
+        assert!(snapshot
+            .pressure
+            .iter()
+            .any(|row| row.job_type == "refresh_popularity_snapshot" && row.status == "queued"));
+        let pressure = snapshot
+            .pressure
+            .iter()
+            .find(|row| row.job_type == "refresh_popularity_snapshot" && row.status == "queued")
+            .expect("queued refresh pressure row");
+        assert_utc_timestamp(
+            pressure
+                .oldest_run_after
+                .as_deref()
+                .expect("pressure row should include oldest run_after"),
+        );
+        assert_utc_timestamp(
+            pressure
+                .latest_update
+                .as_deref()
+                .expect("pressure row should include latest update"),
+        );
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+fn assert_utc_timestamp(value: &str) {
+    assert!(
+        value.ends_with('Z') && value.contains('T') && !value.contains(' '),
+        "expected stable UTC timestamp, got {value}"
+    );
+}

@@ -1,46 +1,47 @@
 # geo-line-ranker
 
-Deterministic geo-first and line-first recommendation engine for local discovery.  
-PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is optional cache only, OpenSearch is optional candidate retrieval for full mode, and allowlist crawl remains an optional side path.
+地域探索向けの、地理優先・路線優先の決定論的推薦エンジンです。
+PostgreSQL/PostGIS を基準ストアにし、最終ランキングは Rust 内に閉じます。Redis は任意の cache、OpenSearch は full mode の候補取得だけに使い、allowlist crawler は任意の補助経路として扱います。AI / ML / embeddings / vector search は使いません。
 
-## What is in Phase 7
+## Phase 8 時点の中身
 
-- Rust workspace with `api`, `cli`, `worker`, and `crawler`
-- SQL-only minimal mode backed by PostgreSQL/PostGIS
-- OpenSearch full mode for candidate retrieval with runtime mode switching
-- `POST /v1/recommendations` with placement-aware mixed school/event ranking
-- `POST /v1/track` for append-only behavior logging
-- Placement profiles for `home`, `search`, `detail`, and `mypage`
-- Diversity hard caps for same school, same group, and content-kind ratio
-- `article` remains a reserved schema/config slot and is intentionally rejected at runtime until implemented
-- DB-backed worker queue with retryable snapshot refresh and cache invalidation jobs
-- DB to OpenSearch projection sync through CLI and worker jobs
-- Optional Redis cache for recommendation responses
-- Operational `event-csv` import with checksum staging and audit trail
-- Optional allowlist crawler with parser registry, raw HTML staging, differential checksum fetch, and audited fetch / parse / dedupe reports
-- Source maturity labels plus parser expected-shape metadata on crawl manifests
-- Parser health summary command for recent crawl runs, fetch outcomes, parse levels, latest parser errors, and `logical_name` red flags per manifest
-- `crawler scaffold-domain` for manifest / fixture / guide scaffolding when adding a new crawl source, now with inferred defaults and shape-aware guidance
-- First real-domain crawl example for the University of Tokyo public events JSON feed
-- Second real-domain crawl example for the Shibaura Institute of Technology Junior High admissions event page
-- Third real-domain crawl example for the Hachioji Gakuen Hachioji Junior High admissions schedule page
-- Fourth real-domain crawl example for the Nihon University Junior High information session page
-- Fifth real-domain crawl example for the Aoyama Gakuin Junior High school tour page
-- Local fixture seeding for a small rail-aware mixed ranking dataset
-- Japanese source adapters for rail, postal, school codes, and school geodata
-- Swagger UI and a small Next.js example frontend
+- `api` / `cli` / `worker` / `crawler` を含む Rust workspace
+- PostgreSQL/PostGIS ベースの SQL-only minimal mode
+- OpenSearch を候補取得に使う full mode と、実行時の retrieval mode 切り替え
+- placement を考慮した school / event mixed ranking を返す `POST /v1/recommendations`
+- append-only な行動ログを受ける `POST /v1/track`
+- `home` / `search` / `detail` / `mypage` の placement profile
+- same school / same group / content-kind ratio の diversity hard cap
+- `article` は schema / config 上の将来枠として残しつつ、実装されるまでは runtime で明示的に拒否
+- retry 可能な snapshot refresh / cache invalidation job を扱う DB-backed worker queue
+- `jobs list` / `jobs inspect` / `jobs retry` / `jobs due` / `jobs enqueue` による worker queue recovery CLI
+- CLI と worker job による PostgreSQL から OpenSearch への projection sync
+- recommendation response 向けの任意 Redis cache
+- checksum staging と audit trail を伴う運用 `event-csv` import
+- parser registry、raw HTML staging、差分 checksum fetch、fetch / parse / dedupe audit report を持つ任意 allowlist crawler
+- crawl manifest の source maturity label と parser expected-shape metadata
+- 直近 crawl run、fetch outcome、parse level、最新 parser error、manifest ごとの `logical_name` red flag を見る parser health summary
+- 新規 crawl source 追加時の manifest / fixture / guide を補助する `crawler scaffold-domain`
+- 東京大学の公開 events JSON feed を読む実ドメイン crawl example
+- 芝浦工業大学附属中学校の入試説明会ページを読む実ドメイン crawl example
+- 八王子学園八王子中学校の説明会日程ページを読む実ドメイン crawl example
+- 日本大学中学校の説明会ページを読む実ドメイン crawl example
+- 青山学院中等部の学校説明会ページを読む実ドメイン crawl example
+- 小さな路線-aware mixed ranking dataset の local fixture seeding
+- rail / postal / school codes / school geodata 向けの日本ソース adapter
+- Swagger UI と小さな Next.js example frontend
 
-## Current behavior notes
+## 現在の挙動メモ
 
-- `search_execute` persists through `POST /v1/track`, refreshes popularity / area snapshot weights through station-linked schools, and now uses config-driven calibration.
-- `cargo run -p cli -- snapshot refresh` reapplies the current tracking config, invalidates recommendation cache, and syncs the full-mode projection when enabled.
-- Public MVP acceptance remains SQL-only and deterministic; live crawling and full-mode retrieval stay optional side paths.
+- `search_execute` は `POST /v1/track` から保存され、駅に紐づく学校経由で popularity / area snapshot weight を更新します。weight は config で調整します。
+- `cargo run -p cli -- snapshot refresh` は現在の tracking config を再適用し、recommendation cache を invalidation し、full mode が有効なら projection も同期します。
+- 公開 MVP acceptance は SQL-only かつ決定論的です。live crawling と full-mode retrieval は任意の補助経路として扱います。
 
 ## Quickstart
 
-The canonical local runbook lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+正式なローカル手順は [docs/QUICKSTART.md](docs/QUICKSTART.md) にあります。
 
-Minimal SQL-only loop:
+最小の SQL-only loop:
 
 ```bash
 cp .env.example .env
@@ -51,18 +52,19 @@ cargo run -p worker -- serve
 cargo run -p api -- serve
 ```
 
-Useful next steps:
+次に試すと便利なコマンド:
 
 ```bash
 cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
 cargo run -p crawler -- doctor --manifest configs/crawler/sources/custom_example.yaml
 cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.yaml
 cargo run -p crawler -- parse --manifest configs/crawler/sources/custom_example.yaml
+cargo run -p cli -- jobs list --limit 20
 ```
 
-The demo fixture now includes the committed real-domain crawl schools, and `crawler -- serve` auto-runs only manifests marked `source_maturity = live_ready`. For full mode, projection sync, and the real-domain crawler manifests, use [docs/QUICKSTART.md](docs/QUICKSTART.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
+demo fixture には、コミット済みの実ドメイン crawl school も含まれています。`crawler -- serve` は `source_maturity = live_ready` の manifest だけを自動実行します。full mode、projection sync、実ドメイン crawler manifest、worker job recovery については [docs/QUICKSTART.md](docs/QUICKSTART.md) と [docs/OPERATIONS.md](docs/OPERATIONS.md) を参照してください。
 
-Sample recommendation request:
+recommendation request の例:
 
 ```bash
 curl -X POST http://127.0.0.1:4000/v1/recommendations \
@@ -70,7 +72,7 @@ curl -X POST http://127.0.0.1:4000/v1/recommendations \
   -d '{"target_station_id":"st_tamachi","placement":"home","limit":3}'
 ```
 
-Sample tracking event:
+tracking event の例:
 
 ```bash
 curl -X POST http://127.0.0.1:4000/v1/track \
@@ -78,7 +80,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
   -d '{"user_id":"demo-user-1","event_kind":"school_view","school_id":"school_seaside"}'
 ```
 
-## Example response shape
+## Response 例
 
 ```json
 {
@@ -104,18 +106,18 @@ curl -X POST http://127.0.0.1:4000/v1/track \
       ]
     }
   ],
-  "explanation": "ホームでは Tamachi 直結の候補群 を母集団にし、直結条件 と 注目イベント を効かせて決定論的に順位付けしました。",
+  "explanation": "ホームでは Tamachi 直結の候補群 を母集団にし、直結条件 と 注目イベント を効かせて決定論的に順位付けしました。 多様性上限で同一学校1件を抑制し、3件の表示枠に整えています。",
   "score_breakdown": [],
   "fallback_stage": "strict",
   "profile_version": "phase5-profile-version",
-  "algorithm_version": "phase7-search-signal-v2"
+  "algorithm_version": "phase8-policy-diversity-v1"
 }
 ```
 
-## Docs
+## ドキュメント
 
-- [Japanese README](README_JA.md)
-- [Non-engineer Friendly Design Docs](docs/design_document/README_JA.md)
+- [English README](README_EN.md)
+- [非エンジニア向け設計ドキュメント](docs/design_document/README_JA.md)
 - [Contributor Rules](AGENTS.md)
 - [Local Contributing Guide](docs/CONTRIBUTING_LOCAL.md)
 - [Quickstart](docs/QUICKSTART.md)

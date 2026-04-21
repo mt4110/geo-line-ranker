@@ -225,18 +225,9 @@ impl OpenSearchStore {
         let query = json!({
             "size": candidate_limit.clamp(1, 10_000),
             "sort": [
-                {
-                    "_geo_distance": {
-                        "station_location": {
-                            "lat": target_station.latitude,
-                            "lon": target_station.longitude
-                        },
-                        "order": "asc",
-                        "unit": "m"
-                    }
-                },
-                { "walking_minutes": { "order": "asc" } },
+                { "_score": { "order": "desc" } },
                 { "distance_meters": { "order": "asc" } },
+                { "walking_minutes": { "order": "asc" } },
                 { "school_id": { "order": "asc" } },
                 { "station_id": { "order": "asc" } }
             ],
@@ -244,39 +235,58 @@ impl OpenSearchStore {
                 "bool": {
                     "should": [
                         {
-                            "term": {
-                                "station_id": {
-                                    "value": target_station.id.as_str()
-                                }
+                            "constant_score": {
+                                "filter": {
+                                    "term": {
+                                        "station_id": {
+                                            "value": target_station.id.as_str()
+                                        }
+                                    }
+                                },
+                                "boost": 2.0
                             }
                         },
                         {
-                            "bool": {
-                                "filter": [
-                                    {
-                                        "term": {
-                                            "line_name": {
-                                                "value": target_station.line_name.as_str()
+                            "constant_score": {
+                                "filter": {
+                                    "bool": {
+                                        "must_not": [
+                                            {
+                                                "term": {
+                                                    "station_id": {
+                                                        "value": target_station.id.as_str()
+                                                    }
+                                                }
                                             }
-                                        }
-                                    },
-                                    {
-                                        "range": {
-                                            "hop_distance": {
-                                                "lte": neighbor_max_hops
+                                        ],
+                                        "filter": [
+                                            {
+                                                "term": {
+                                                    "line_name": {
+                                                        "value": target_station.line_name.as_str()
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                "range": {
+                                                    "hop_distance": {
+                                                        "lte": neighbor_max_hops
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                "geo_distance": {
+                                                    "distance": format!("{}m", neighbor_distance_cap_meters.ceil() as i64),
+                                                    "station_location": {
+                                                        "lat": target_station.latitude,
+                                                        "lon": target_station.longitude
+                                                    }
+                                                }
                                             }
-                                        }
-                                    },
-                                    {
-                                        "geo_distance": {
-                                            "distance": format!("{}m", neighbor_distance_cap_meters.ceil() as i64),
-                                            "station_location": {
-                                                "lat": target_station.latitude,
-                                                "lon": target_station.longitude
-                                            }
-                                        }
+                                        ]
                                     }
-                                ]
+                                },
+                                "boost": 1.0
                             }
                         }
                     ],
@@ -342,6 +352,18 @@ impl OpenSearchStore {
                 line_name: line_name.to_string(),
             });
         }
+
+        links.sort_by(|left, right| {
+            let left_is_not_direct = left.station_id != target_station.id;
+            let right_is_not_direct = right.station_id != target_station.id;
+            left_is_not_direct
+                .cmp(&right_is_not_direct)
+                .then_with(|| left.distance_meters.cmp(&right.distance_meters))
+                .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
+                .then_with(|| left.school_id.cmp(&right.school_id))
+                .then_with(|| left.station_id.cmp(&right.station_id))
+        });
+        links.truncate(candidate_limit.clamp(1, 10_000));
 
         Ok(links)
     }
