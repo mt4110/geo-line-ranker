@@ -186,8 +186,18 @@ pub struct TrackingProfile {
     pub popularity_bonus_weight: f64,
     pub user_affinity_bonus_weight: f64,
     pub area_affinity_bonus_weight: f64,
+    #[serde(default = "default_search_execute_school_signal_weight")]
     pub search_execute_school_signal_weight: f64,
+    #[serde(default = "default_search_execute_area_signal_weight")]
     pub search_execute_area_signal_weight: f64,
+}
+
+fn default_search_execute_school_signal_weight() -> f64 {
+    0.0
+}
+
+fn default_search_execute_area_signal_weight() -> f64 {
+    0.0
 }
 
 #[derive(Debug, Clone)]
@@ -534,5 +544,23 @@ search_execute_area_signal_weight: 0.2
         assert!(error
             .to_string()
             .contains("tracking weights must be zero or positive"));
+    }
+
+    #[test]
+    fn defaults_missing_search_signal_weights_for_legacy_tracking_config() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("tracking.default.yaml"),
+            r#"popularity_bonus_weight: 0.75
+user_affinity_bonus_weight: 0.9
+area_affinity_bonus_weight: 0.35
+"#,
+        )
+        .expect("write config");
+
+        let profiles = RankingProfiles::load_from_dir(temp.path()).expect("legacy config");
+        assert_eq!(profiles.tracking.search_execute_school_signal_weight, 0.0);
+        assert_eq!(profiles.tracking.search_execute_area_signal_weight, 0.0);
     }
 }

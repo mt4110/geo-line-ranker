@@ -222,13 +222,6 @@ pub async fn run_snapshot_refresh(settings: &AppSettings) -> Result<SnapshotRefr
     let repository = storage_postgres::PgRepository::new(settings.database_url.clone());
     let snapshot_stats = repository.refresh_popularity_snapshots(tuning).await?;
 
-    let invalidated_cache_keys = RecommendationCache::new(
-        settings.redis_url.clone(),
-        settings.recommendation_cache_ttl_secs,
-    )
-    .invalidate_recommendations()
-    .await?;
-
     let (projection_indexed_documents, projection_deleted_documents) =
         if settings.candidate_retrieval_mode.is_full() {
             let summary =
@@ -239,6 +232,13 @@ pub async fn run_snapshot_refresh(settings: &AppSettings) -> Result<SnapshotRefr
         } else {
             (0, 0)
         };
+
+    let invalidated_cache_keys = RecommendationCache::new(
+        settings.redis_url.clone(),
+        settings.recommendation_cache_ttl_secs,
+    )
+    .invalidate_recommendations()
+    .await?;
 
     Ok(SnapshotRefreshSummary {
         refreshed_school_rows: snapshot_stats.refreshed_rows,
