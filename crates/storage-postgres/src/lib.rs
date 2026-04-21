@@ -497,6 +497,8 @@ async fn insert_or_reuse_queued_global_refresh(
                  WHERE job_type = $1
                    AND payload = $2
                    AND status = 'queued'
+                   AND attempts = 0
+                   AND last_error IS NULL
                  ORDER BY id
                  LIMIT 1
                  FOR UPDATE

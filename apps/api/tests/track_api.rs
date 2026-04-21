@@ -457,6 +457,122 @@ async fn track_endpoint_search_execute_enqueues_follow_up_when_popularity_refres
 }
 
 #[tokio::test]
+async fn track_endpoint_search_execute_does_not_reuse_retrying_popularity_refresh(
+) -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api").await
+    else {
+        eprintln!(
+            "skipping api tracking integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let job_baseline = client
+            .query_one("SELECT COALESCE(MAX(id), 0) AS max_id FROM job_queue", &[])
+            .await?
+            .get::<_, i64>("max_id");
+        client
+            .execute(
+                "INSERT INTO job_queue (
+                     job_type,
+                     payload,
+                     status,
+                     attempts,
+                     max_attempts,
+                     run_after,
+                     last_error
+                 )
+                 VALUES (
+                     'refresh_popularity_snapshot',
+                     '{}'::jsonb,
+                     'queued',
+                     2,
+                     3,
+                     NOW(),
+                     'previous transient failure'
+                 )",
+                &[],
+            )
+            .await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase7-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase7-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+        let user_id = format!("api-track-search-retry-{}", std::process::id());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/track")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "user_id": user_id.clone(),
+                            "event_kind": "search_execute",
+                            "target_station_id": "st_tamachi"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("tracking response");
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let refresh_jobs = client
+            .query(
+                "SELECT status, attempts, last_error
+                 FROM job_queue
+                 WHERE id > $1
+                   AND job_type = 'refresh_popularity_snapshot'
+                 ORDER BY id",
+                &[&job_baseline],
+            )
+            .await?;
+        assert_eq!(refresh_jobs.len(), 2);
+        assert_eq!(refresh_jobs[0].get::<_, String>("status"), "queued");
+        assert_eq!(refresh_jobs[0].get::<_, i32>("attempts"), 2);
+        assert_eq!(
+            refresh_jobs[0].get::<_, Option<String>>("last_error"),
+            Some("previous transient failure".to_string())
+        );
+        assert_eq!(refresh_jobs[1].get::<_, String>("status"), "queued");
+        assert_eq!(refresh_jobs[1].get::<_, i32>("attempts"), 0);
+        assert_eq!(refresh_jobs[1].get::<_, Option<String>>("last_error"), None);
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
 async fn track_endpoint_rejects_unknown_foreign_keys() -> anyhow::Result<()> {
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
