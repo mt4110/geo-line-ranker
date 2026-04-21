@@ -461,7 +461,7 @@ async fn resolve_user_event_school_id(
 
 async fn insert_job(client: &(impl GenericClient + Sync), job: &NewJob) -> Result<i64> {
     if is_reusable_global_refresh(job) {
-        return insert_or_reuse_active_global_refresh(client, job).await;
+        return insert_or_reuse_queued_global_refresh(client, job).await;
     }
 
     insert_job_row(client, job).await
@@ -475,7 +475,7 @@ fn is_reusable_global_refresh(job: &NewJob) -> bool {
             .is_some_and(serde_json::Map::is_empty)
 }
 
-async fn insert_or_reuse_active_global_refresh(
+async fn insert_or_reuse_queued_global_refresh(
     client: &(impl GenericClient + Sync),
     job: &NewJob,
 ) -> Result<i64> {
@@ -491,13 +491,21 @@ async fn insert_or_reuse_active_global_refresh(
 
     if let Some(row) = client
         .query_opt(
-            "SELECT id
-             FROM job_queue
-             WHERE job_type = $1
-               AND payload = $2
-               AND status IN ('queued', 'running')
-             ORDER BY id
-             LIMIT 1",
+            "WITH existing_job AS (
+                 SELECT id
+                 FROM job_queue
+                 WHERE job_type = $1
+                   AND payload = $2
+                   AND status = 'queued'
+                 ORDER BY id
+                 LIMIT 1
+                 FOR UPDATE
+             )
+             UPDATE job_queue
+             SET run_after = LEAST(run_after, NOW()),
+                 updated_at = NOW()
+             WHERE id = (SELECT id FROM existing_job)
+             RETURNING id",
             &[&job.job_type.as_str(), &job.payload],
         )
         .await?

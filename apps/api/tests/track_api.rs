@@ -189,7 +189,7 @@ async fn track_endpoint_persists_events_and_enqueues_jobs() -> anyhow::Result<()
 }
 
 #[tokio::test]
-async fn track_endpoint_search_execute_reuses_active_popularity_refresh() -> anyhow::Result<()> {
+async fn track_endpoint_search_execute_reuses_queued_popularity_refresh() -> anyhow::Result<()> {
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_api").await
     else {
@@ -334,6 +334,119 @@ async fn track_endpoint_search_execute_reuses_active_popularity_refresh() -> any
             .await?
             .get::<_, i64>("count");
         assert_eq!(active_refresh_count, 1);
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn track_endpoint_search_execute_enqueues_follow_up_when_popularity_refresh_is_running(
+) -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api").await
+    else {
+        eprintln!(
+            "skipping api tracking integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let job_baseline = client
+            .query_one("SELECT COALESCE(MAX(id), 0) AS max_id FROM job_queue", &[])
+            .await?
+            .get::<_, i64>("max_id");
+        client
+            .execute(
+                "INSERT INTO job_queue (
+                     job_type,
+                     payload,
+                     status,
+                     attempts,
+                     max_attempts,
+                     locked_at,
+                     locked_by
+                 )
+                 VALUES (
+                     'refresh_popularity_snapshot',
+                     '{}'::jsonb,
+                     'running',
+                     1,
+                     3,
+                     NOW(),
+                     'test-worker'
+                 )",
+                &[],
+            )
+            .await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase7-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase7-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+        let user_id = format!("api-track-search-running-{}", std::process::id());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/track")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "user_id": user_id.clone(),
+                            "event_kind": "search_execute",
+                            "target_station_id": "st_tamachi"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("tracking response");
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let refresh_statuses = client
+            .query(
+                "SELECT status
+                 FROM job_queue
+                 WHERE id > $1
+                   AND job_type = 'refresh_popularity_snapshot'
+                 ORDER BY id",
+                &[&job_baseline],
+            )
+            .await?
+            .into_iter()
+            .map(|row| row.get::<_, String>("status"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            refresh_statuses,
+            vec!["running".to_string(), "queued".to_string()]
+        );
 
         Ok(())
     }

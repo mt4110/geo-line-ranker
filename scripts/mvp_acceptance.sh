@@ -68,7 +68,7 @@ trap cleanup EXIT INT TERM
 
 sql() {
   docker compose -f "$COMPOSE_FILE" exec -T "$POSTGRES_SERVICE" \
-    psql -U postgres -d geo_line_ranker -v ON_ERROR_STOP=1 -Atqc "$1"
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc "$1"
 }
 
 wait_for_http_json() {
