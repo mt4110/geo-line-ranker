@@ -27,7 +27,7 @@ have_command() {
 }
 
 redact_url() {
-  printf '%s' "$1" | sed -E 's#(://[^:/@]+:)[^@]+@#\1***@#'
+  printf '%s' "$1" | sed -E 's#(://)[^/@]*@#\1***@#'
 }
 
 display_path() {
@@ -123,15 +123,21 @@ run_redis() {
 
 table_exists() {
   local table_name="$1"
+  local table_exists_output
+
   psql_ready || return 1
 
-  [[ "$(
+  if ! table_exists_output="$(
     run_psql \
       -v ON_ERROR_STOP=1 \
       -P pager=off \
       -Atqc "SET default_transaction_read_only = on; SELECT to_regclass('public.${table_name}') IS NOT NULL;" \
       2>/dev/null
-  )" == "t" ]]
+  )"; then
+    return 1
+  fi
+
+  [[ "$table_exists_output" == "t" ]]
 }
 
 run_sql() {
@@ -354,7 +360,7 @@ else
     info "redis=reachable"
     cache_sample_count="$(
       run_redis --scan --pattern 'geo-line-ranker:recommendations:*' 2>/dev/null \
-        | awk 'NR <= 1000 { count++ } END { print count + 0 }'
+        | awk '{ count++; if (count == 1000) exit } END { print count + 0 }'
     )"
     info "recommendation_cache_keys_sampled=${cache_sample_count:-0}"
   else
