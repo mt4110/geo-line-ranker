@@ -3,7 +3,7 @@
 Deterministic geo-first and line-first recommendation engine for local discovery.
 PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is optional cache only, OpenSearch is optional candidate retrieval for full mode, and allowlist crawl remains an optional side path. No AI, ML, embeddings, or vector search.
 
-## What is in Phase 8
+## What is in Phase 10
 
 - Rust workspace with `api`, `cli`, `worker`, and `crawler`
 - SQL-only minimal mode backed by PostgreSQL/PostGIS
@@ -21,6 +21,7 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 - Optional allowlist crawler with parser registry, raw HTML staging, differential checksum fetch, and audited fetch / parse / dedupe reports
 - Source maturity labels plus parser expected-shape metadata on crawl manifests
 - Parser health summary command for recent crawl runs, fetch outcomes, parse levels, latest parser errors, and `logical_name` red flags per manifest
+- Read-only post-launch doctor and runbook for incident triage
 - `crawler scaffold-domain` for manifest / fixture / guide scaffolding when adding a new crawl source, now with inferred defaults and shape-aware guidance
 - First real-domain crawl example for the University of Tokyo public events JSON feed
 - Second real-domain crawl example for the Shibaura Institute of Technology Junior High admissions event page
@@ -60,6 +61,7 @@ cargo run -p crawler -- doctor --manifest configs/crawler/sources/custom_example
 cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.yaml
 cargo run -p crawler -- parse --manifest configs/crawler/sources/custom_example.yaml
 cargo run -p cli -- jobs list --limit 20
+./scripts/post_launch_doctor.sh
 ```
 
 The demo fixture now includes the committed real-domain crawl schools, and `crawler -- serve` auto-runs only manifests marked `source_maturity = live_ready`. For full mode, projection sync, the real-domain crawler manifests, and worker job recovery, use [docs/QUICKSTART.md](docs/QUICKSTART.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
@@ -123,6 +125,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 - [Quickstart](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Operations](docs/OPERATIONS.md)
+- [Post-launch Runbook](docs/POST_LAUNCH_RUNBOOK.md)
 - [Testing](docs/TESTING.md)
 - [Data Sources](docs/DATA_SOURCES.md)
 - [Data Licenses](docs/DATA_LICENSES.md)

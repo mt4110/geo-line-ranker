@@ -22,6 +22,7 @@
             buildInputs = with pkgs; [
               cargo
               clippy
+              just
               nodejs_22
               pkg-config
               rustc
