@@ -10,6 +10,10 @@ After choosing the stale hygiene decision, write the decision history with
 [OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md).
 The closeout ledger records why the record closed, stayed open, split, opened a
 follow-up, or linked explicit review.
+Then use
+[OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md)
+to check that the closeout record is complete, linked records are reachable,
+and repeat markers have an owner and next action.
 
 This is a read-only audit and stale hygiene guide. It does not create GitHub
 labels, run validation by itself, change source maturity, enable full mode,
@@ -155,6 +159,9 @@ Do not close `split`, `follow-up`, or `explicit-review` decisions without the
 linked split records, linked issue or PR, or linked explicit review record.
 Repeated stale or repeated keep-open records must return to explicit review,
 split, or follow-up unless one final dated external wait is recorded.
+Use [OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md)
+after the ledger entry to confirm those links and repeat-marker routes are not
+orphaned.
 
 ## Lane-Specific Overdue Handling
 
@@ -182,6 +189,9 @@ Use this checklist for each open optional evidence record:
 9. Keep strict doctor `review_items` as human-classified evidence.
 10. Keep crawler graduation, full-mode/OpenSearch, and managed infrastructure
     outside the fixed gate.
+11. After writing closeout history, confirm closeout integrity and orphan
+    prevention with
+    [OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md).
 
 ## Audit Note Template
 

@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[optional-evidence-review] intake, triage, recheck audit, closeout ledger, and stale hygiene checklist
+[optional-evidence-review] intake, triage, recheck audit, closeout ledger, integrity, and stale hygiene checklist
 
 Repository:
   root: $ROOT_DIR
@@ -42,6 +42,7 @@ Primary guides:
   docs/OPTIONAL_EVIDENCE_TRIAGE.md
   docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
   docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md
+  docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md
   docs/POST_MVP_HARDENING.md
   docs/OPTIONAL_EVIDENCE_GRADUATION.md
   docs/OPTIONAL_EVIDENCE_PACKETS.md
@@ -67,7 +68,8 @@ Triage after an issue, PR, or review note exists:
   4. record owner, recheck date, recheck command, and close condition
   5. use needs-recheck only when the record must be revisited later
   6. record the closeout ledger decision history after stale hygiene
-  7. close only when the lane-specific close condition is satisfied
+  7. check closeout integrity before closing or moving action
+  8. close only when the lane-specific close condition is satisfied
 
 Recheck audit and stale hygiene:
   guide: docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
@@ -151,6 +153,38 @@ Closeout ledger and decision history:
       narrow evidence source, and reason no split, follow-up, or explicit
       review is needed yet
 
+Closeout integrity and orphan prevention:
+  guide: docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md
+  use after a closeout ledger record is added or edited, before closing the
+    original record or moving action elsewhere
+  this is read-only unless record text or links are missing
+  required closeout completeness:
+    closeout date, owner, record, original evidence source, stale class,
+      stale hygiene decision, primary closeout status, repeat/escalation
+      marker, final lane, result summary, fixed boundary answer, public API
+      answer, label status, linked split/follow-up/explicit review, and next
+      recheck date or reason none is needed
+  link integrity:
+    split: every split record is linked, scoped to one lane and owner, and the
+      original says it is no longer the action holder
+    follow-up: linked issue or PR has one root cause, owner, validation plan,
+      and recheck command
+    explicit-review: linked review names decision authority, scope, rollback,
+      cost or risk owner when relevant, and current decision status
+  repeated stale or repeated keep-open must not be marker-only:
+    route to explicit-review, split, follow-up, or one final dated external
+      wait with owner, narrow evidence source, and reason no route is needed yet
+  primary closeout status and repeat/escalation marker:
+    record both separately; the marker never replaces the primary status
+    final allowed keep-open belongs only with closeout:kept-open
+    repeated stale or repeated keep-open should route through split,
+      follow-up, or explicit review unless already resolved
+  labels:
+    labels and written label equivalents are record aids only, not gates
+    do not fail integrity because a GitHub label is missing; fail it when the
+      body lacks status, owner, evidence, link, next action, boundary, or API
+      answers
+
 Suggested label aids, not gates:
   optional-evidence
   lane:follow-up
@@ -212,6 +246,8 @@ Packet templates to paste into issues, PRs, or review notes:
     docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
   closeout ledger and decision history:
     docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md
+  closeout integrity and orphan prevention:
+    docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md
   crawler graduation:
     docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
   full-mode automation candidate:
@@ -293,6 +329,14 @@ Closeout ledger template:
     marker, final lane, result summary, fixed boundary, public API shape,
     label status as record aid only, linked split, follow-up, or explicit
     review, next recheck date or reason none is needed
+
+Closeout integrity template:
+  docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md#integrity-note-template
+  fields: reviewer, record, ledger present, required fields complete, primary
+    status, repeat/escalation marker, status-marker consistency, split,
+    follow-up, and explicit-review link reachability, original action holder,
+    repeated stale or repeated keep-open next action, fixed boundary, public
+    API shape, label-aid status, and integrity result
 
 Local validation and evidence when files change:
   cargo fmt --all --check
