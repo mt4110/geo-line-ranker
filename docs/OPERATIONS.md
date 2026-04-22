@@ -52,8 +52,7 @@ Without `just`:
 
 ## Release readiness routine
 
-Use the Phase 12 release readiness guide before cutting or validating a release
-candidate:
+Use the release readiness guide before cutting or validating a release candidate:
 
 ```bash
 just release-readiness
@@ -89,6 +88,27 @@ evidence using
 quality doctor is required evidence capture for release readiness; strict mode
 makes doctor warnings fail the evidence step, but it does not add cases to
 `just mvp-acceptance`.
+
+## Post-MVP hardening routine
+
+Use the post-MVP hardening guide after the release gate is healthy and the
+question becomes what to improve next:
+
+```bash
+just post-mvp-hardening
+```
+
+Without `just`:
+
+```bash
+./scripts/post_mvp_hardening.sh
+```
+
+This command plan is read-only. It keeps local and CI validation aligned while
+making optional crawler graduation, full-mode evaluation, and managed
+infrastructure review visible outside the public-MVP gate. Classify doctor
+`review_items` as blocker, accepted risk, or follow-up before opening
+implementation work.
 
 ## Readiness checks
 

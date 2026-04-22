@@ -8,7 +8,9 @@ For release candidate preparation and the evidence bundle used before launch,
 start with
 [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md). After
 release, use this runbook for first response and feed follow-up work into
-[OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md).
+[OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md). For recurring
+post-MVP evidence review, use
+[POST_MVP_HARDENING.md](POST_MVP_HARDENING.md).
 
 ## Public MVP profile
 
@@ -67,6 +69,8 @@ as real-time railway data.
 
    - use [OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md) to classify
      the finding
+   - use [POST_MVP_HARDENING.md](POST_MVP_HARDENING.md) when the finding needs
+     a blocker, accepted-risk, or follow-up decision record
    - if the finding appears during release candidate validation, record the
      decision in the release readiness evidence bundle
    - keep the issue or PR scoped to one invariant and one root cause

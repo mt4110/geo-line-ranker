@@ -46,9 +46,9 @@ cargo run -p cli -- seed example
 
 The manual smoke sections below are intentionally broader than the public-MVP release gate. For the fixed six-case acceptance flow that excludes live crawler and `full` mode, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md).
 
-## Release Candidate Validation
+## Release and Post-MVP Validation
 
-Phase 12 release readiness uses
+Release readiness uses
 [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) as the
 top-level checklist. Print the command plan first:
 
@@ -96,6 +96,33 @@ CI also runs this as a separate `data-quality-doctor` job. Keep it separate
 from `mvp-acceptance` so Phase 11 evidence improves operator review without
 expanding the public-MVP release gate. The CI job fails on doctor warnings,
 while review items stay as human-classified evidence.
+
+For post-MVP hardening, print the command plan:
+
+```bash
+just post-mvp-hardening
+```
+
+Without `just`:
+
+```bash
+./scripts/post_mvp_hardening.sh
+```
+
+Use it before hardening reviews or follow-up PRs to keep the same validation
+set visible:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+just mvp-acceptance
+DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
+git diff --check
+```
+
+Crawler graduation and full-mode evaluation can be attached as optional
+evidence, but they remain outside the fixed public-MVP gate.
 
 ## What gets covered
 

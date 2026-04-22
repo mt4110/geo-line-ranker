@@ -71,3 +71,6 @@ data-quality-doctor:
 
 release-readiness:
   ./scripts/release_readiness.sh
+
+post-mvp-hardening:
+  ./scripts/post_mvp_hardening.sh
