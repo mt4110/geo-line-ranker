@@ -2,29 +2,34 @@
 
 ## Current
 
-- Phase 12: public MVP release readiness
-  - keep the April 30, 2026 public MVP release gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
-  - make release candidate evidence repeatable across CI results, local validation, data quality doctor output, and residual risk review
-  - connect the Phase 11 operator feedback loop to release candidate and post-release decisions
-  - keep live crawler, full-mode retrieval, OpenSearch, and managed infrastructure outside the release gate
-  - make the `sql_only` public MVP baseline visible in release notes and operator handoff docs
+- Phase 13: post-MVP hardening
+  - move from "can we publish?" to "can we keep improving safely after publishing?"
+  - connect release readiness evidence to post-launch triage, data quality review, and follow-up decisions
+  - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - keep crawler graduation, full-mode evaluation, and managed infrastructure outside the fixed gate as optional evidence or explicit review paths
+  - make doctor `review_items` easy to classify as blocker, accepted risk, or follow-up
 
-## Phase 12 Exit Gates
+## Phase 13 Exit Gates
 
-- `ROADMAP.md` names Phase 12 as current and moves Phase 11 into Recently Completed.
-- Release readiness guidance gives one path from release candidate prep to evidence capture, release notes, and post-launch follow-up.
-- `MVP_ACCEPTANCE.md`, `OPERATIONS.md`, `POST_LAUNCH_RUNBOOK.md`, and `TESTING.md` point to the Phase 12 readiness flow.
-- `just mvp-acceptance` remains fixed to the six public-MVP cases and only requires PostgreSQL/PostGIS plus Redis.
-- `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` is release candidate evidence for human classification; it does not expand the public-MVP acceptance gate.
-- Live crawler, full mode, OpenSearch, and managed infrastructure remain optional evidence or future review items, not release blockers for the fixed MVP profile.
-- Release notes and handoff docs explicitly describe the public MVP baseline as `sql_only` plus `event-csv`.
-- CI and local validation commands are documented with matching names and outcomes.
+- `ROADMAP.md` names Phase 13 as current and moves Phase 12 into Recently Completed.
+- Phase 12 readiness docs point clearly into post-MVP hardening, post-launch triage, and the operator feedback loop.
+- The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
+- `just mvp-acceptance` remains the fixed six-case public-MVP gate.
+- `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans as blocker, accepted risk, or follow-up.
+- Crawler graduation evidence and full-mode evaluation are documented outside the public MVP gate.
+- Managed infrastructure, OpenSearch, live crawler operation, ML/embeddings/vector search, and frontend final-ranking changes are not fixed-gate requirements.
+- CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
-- No cloud production resources, managed infrastructure, ML/embeddings/vector search, mandatory crawling, or frontend final-ranking changes are introduced.
 
 ## Recently Completed
 
+- Phase 12: public MVP release readiness
+  - release readiness guidance keeps the April 30, 2026 public MVP release gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - release candidate evidence is repeatable across CI results, local validation, strict data quality doctor output, and residual risk review
+  - the Phase 11 operator feedback loop is connected to release candidate and post-release decisions
+  - live crawler, full-mode retrieval, OpenSearch, and managed infrastructure remain outside the release gate
+  - release notes and operator handoff docs make the `sql_only` public MVP baseline visible
 - Phase 11: operator feedback loop and data quality guardrails
   - operator feedback guidance documents the evidence bundle, incident classification, issue/PR granularity, and recheck loop after a post-launch finding
   - read-only data quality doctor surfaces review items across event-csv imports, school event coverage, station link coverage, snapshots, logical sources, and queue pressure without mutating PostgreSQL, Redis, OpenSearch, or staged raw files
@@ -49,7 +54,7 @@
 
 ## Next
 
-- Later hardening after Phase 12
-  - promote additional crawler manifests only after release readiness and graduation evidence is available
+- Later hardening after Phase 13
+  - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

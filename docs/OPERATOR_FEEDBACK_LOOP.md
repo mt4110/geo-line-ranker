@@ -4,7 +4,9 @@ This guide turns a post-launch finding into reproducible improvement work. It
 starts after the first read-only triage pass in [POST_LAUNCH_RUNBOOK.md](POST_LAUNCH_RUNBOOK.md).
 During release candidate validation, the same findings should be summarized in
 [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) evidence
-before deciding whether they block the public MVP.
+before deciding whether they block the public MVP. After release, summarize the
+same classification in [POST_MVP_HARDENING.md](POST_MVP_HARDENING.md) evidence
+so recurring reviews can separate blockers, accepted risks, and follow-ups.
 
 ## Public MVP Boundary
 
@@ -105,6 +107,13 @@ Review items are not destructive and are not automatically public-MVP blockers.
 Treat them as prompts for human classification. A review item becomes a blocker
 when it affects the fixed `sql_only` + `event-csv` public-MVP behavior or hides
 whether `just mvp-acceptance` is meaningful.
+
+Classify every nonzero `review_items` summary as one of:
+
+- Blocker: must be fixed before shipping or before closing the incident.
+- Accepted risk: safe to carry temporarily with an owner and review date.
+- Follow-up: actionable, but not blocking the current public-MVP operating
+  profile.
 
 ## Closing the Loop
 

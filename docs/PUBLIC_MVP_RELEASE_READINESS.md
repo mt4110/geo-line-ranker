@@ -186,6 +186,8 @@ and update the evidence bundle.
 After the public MVP is released, keep the same boundary for first-response
 operations:
 
+- Use [POST_MVP_HARDENING.md](POST_MVP_HARDENING.md) to connect release
+  evidence to recurring post-MVP review.
 - Start with [POST_LAUNCH_RUNBOOK.md](POST_LAUNCH_RUNBOOK.md).
 - Feed findings into [OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md).
 - Use [PHASE11_REGRESSION_EVIDENCE.md](PHASE11_REGRESSION_EVIDENCE.md) for
@@ -193,4 +195,6 @@ operations:
   guardrails.
 
 Crawler graduation, full-mode automation, and managed infrastructure remain
-separate review decisions after the MVP release candidate is healthy.
+optional evidence or separate review decisions after the MVP release candidate
+is healthy. They do not become public-MVP gate requirements through post-release
+handoff.

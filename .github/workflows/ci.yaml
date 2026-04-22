@@ -109,9 +109,11 @@ jobs:
           test -x scripts/mvp_acceptance.sh
           test -x scripts/data_quality_doctor.sh
           test -x scripts/release_readiness.sh
+          test -x scripts/post_mvp_hardening.sh
           bash -n scripts/mvp_acceptance.sh
           bash -n scripts/data_quality_doctor.sh
           bash -n scripts/release_readiness.sh
+          bash -n scripts/post_mvp_hardening.sh
       - name: Public MVP acceptance
         run: ./scripts/mvp_acceptance.sh
 
