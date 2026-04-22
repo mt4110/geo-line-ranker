@@ -17,6 +17,9 @@ When several records need review inventory, use
 [OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
 to list their lifecycle state, owner, lane, stale status, linked actions, and
 integrity result without replacing the source records.
+When the inventory needs to be shared, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md)
+to prepare a read-only report snapshot with summary counts and review findings.
 
 This workflow is read-only. It does not run validation, change source
 maturity, enable full mode, require OpenSearch, provision managed
@@ -52,8 +55,8 @@ workflow to choose the optional packet. Otherwise, classify it through the
 post-MVP hardening review lanes.
 
 Public API changes should be avoided in optional evidence intake. If a change
-does alter public API shape, update `schemas/openapi.json` and `API_SPEC.md`
-in the same change.
+does alter public API shape, update `schemas/openapi.json` and create or
+update `API_SPEC.md` in the same change.
 
 ## Intake Steps
 
@@ -179,6 +182,8 @@ history in
 [OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md),
 the lifecycle index and review inventory in
 [OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md),
+the inventory report and review snapshot in
+[OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md),
 the decision ladder in
 [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), and the
 packet templates in [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md),

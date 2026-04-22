@@ -14,6 +14,9 @@ After integrity is complete, use
 [OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
 when reviewers need a read-only inventory of lifecycle state, owner, lane,
 stale status, linked actions, and integrity result.
+When those rows need to be shared, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md)
+to prepare a read-only inventory report or review snapshot.
 
 The ledger is a record format, not a new acceptance gate. It does not create
 GitHub labels, run validation by itself, change source maturity, enable full
@@ -48,8 +51,8 @@ humans before issue or PR work starts.
 
 Public API shape should not change as part of closeout bookkeeping. If a
 decision would change public API shape, link an explicit review record and
-update `schemas/openapi.json` plus `API_SPEC.md` only in the approved
-implementation change.
+update `schemas/openapi.json` plus create or update `API_SPEC.md` only in the
+approved implementation change.
 
 ## Ledger Location
 
@@ -280,3 +283,7 @@ Before closing or keeping an optional evidence record open, confirm:
     can show the record as `closeout-recorded`, `integrity-complete`,
     `follow-up-linked`, `explicit-review-linked`, or `closed` without becoming
     a gate.
+13. A report snapshot in
+    [OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md)
+    can summarize the row and record orphan, stale, or unclear-owner findings
+    as edit candidates, not failures.

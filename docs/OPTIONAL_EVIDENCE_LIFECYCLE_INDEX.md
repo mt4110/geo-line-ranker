@@ -10,6 +10,9 @@ The lifecycle index is exploration and review support only. It is not an
 acceptance gate, release gate, required label setup, automation requirement, or
 replacement source of truth. The source record remains the issue, PR, review
 note, packet, closeout ledger entry, or integrity note that the index links.
+When index rows need to be shared as a compact handoff, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md)
+to prepare a read-only inventory report or review snapshot.
 
 This workflow is read-only. It does not create GitHub labels, run validation by
 itself, change source maturity, enable full mode, require OpenSearch, provision
@@ -43,8 +46,8 @@ humans before issue or PR work starts.
 
 Public API shape should not change as part of lifecycle indexing. If an indexed
 record would change public API shape, route it to explicit review before
-implementation and update `schemas/openapi.json` plus `API_SPEC.md` only in the
-approved implementation change.
+implementation and update `schemas/openapi.json` plus create or update
+`API_SPEC.md` only in the approved implementation change.
 
 ## Purpose
 
@@ -206,6 +209,18 @@ The absence of labels is not a gate failure.
 
 Do not run lane-specific validation commands while collecting inventory. Record
 the narrow command or evidence source that the owner should use next.
+
+## Inventory Report and Review Snapshot
+
+Use the lifecycle index row template below for per-record review. When several
+rows need to be shared, summarized, or handed off, prepare an inventory report
+with
+[OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md).
+
+The report summarizes lifecycle-state counts and records orphan, stale, and
+unclear-owner candidates as findings. Those findings are not failures. They are
+edit candidates for the source record, linked record, closeout ledger entry, or
+integrity note.
 
 ## Row Template
 

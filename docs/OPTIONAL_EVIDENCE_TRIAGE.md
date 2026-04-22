@@ -16,6 +16,9 @@ reachability, repeated-stale routing, and primary status consistency.
 When operators need to review records across intake, triage, recheck, closeout,
 and integrity, use `docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md` as a read-only
 lifecycle index and review inventory.
+When those lifecycle rows need to be shared as a handoff, use
+`docs/OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md` for the read-only
+inventory report and review snapshot.
 
 This guide is a triage loop, not an acceptance test. It does not create GitHub
 labels, run validation by itself, change source maturity, require OpenSearch,
@@ -48,8 +51,9 @@ Doctor warnings fail the evidence pass. Doctor `review_items` are classified
 by humans before issue or PR work starts.
 
 Public API changes should stay out of optional evidence triage. If a change
-does alter public API shape, update `schemas/openapi.json` and `API_SPEC.md`
-in the same change and route the record to explicit review required.
+does alter public API shape, update `schemas/openapi.json` and create or
+update `API_SPEC.md` in the same change and route the record to explicit
+review required.
 
 ## Triage Loop
 
@@ -71,7 +75,10 @@ Use this loop for every optional evidence issue, PR, or review note:
 9. For multi-record review, update or paste a lifecycle index row from
    `docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md` so the current state, owner,
    stale status, links, and integrity result are visible.
-10. Close only when the lane close condition below is satisfied.
+10. When rows need to be shared, prepare a report snapshot with
+    `docs/OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md` so orphan, stale,
+    and unclear-owner findings point back to source-record edits.
+11. Close only when the lane close condition below is satisfied.
 
 If one record needs multiple lanes, split it before implementation starts.
 When more than one lane seems plausible, choose the stricter lane.
@@ -165,6 +172,10 @@ to map the same flow into lifecycle states such as `intake-recorded`,
 `triaged`, `recheck-scheduled`, `recheck-overdue`, `closeout-recorded`,
 `integrity-complete`, `follow-up-linked`, `explicit-review-linked`, and
 `closed`.
+For a shareable snapshot of those rows, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md)
+to summarize lifecycle-state counts and record findings without turning them
+into gate failures.
 
 ## Recheck Result Template
 
@@ -198,11 +209,13 @@ Before closing an optional evidence issue, PR, or review note, confirm:
 - the closeout integrity check confirms required fields, linked records,
   repeated-stale routing, and status/marker consistency
 - lifecycle index state is clear when the record is part of a review inventory
+- report snapshot findings, if any, point to source-record, linked-record,
+  closeout, or integrity-note edits rather than gate failure
 - labels or written label equivalents are recorded as aids only
 - `just mvp-acceptance` remains the fixed six-case gate
 - crawler graduation remains outside the fixed gate even when packet complete
 - full-mode automation does not add `full` mode or OpenSearch to the fixed gate
 - managed infrastructure remains explicit review only
 - strict doctor `review_items` are classified by humans
-- public API shape is unchanged, or `schemas/openapi.json` and `API_SPEC.md`
-  changed in the same explicit-review follow-up
+- public API shape is unchanged, or `schemas/openapi.json` and
+  `API_SPEC.md` were created or updated in the same explicit-review follow-up
