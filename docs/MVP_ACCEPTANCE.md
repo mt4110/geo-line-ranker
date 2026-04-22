@@ -80,6 +80,11 @@ Before marking the public MVP ready:
 - optional crawler and full-mode notes remain clearly outside the public-MVP gate
 - any public API change includes `schemas/openapi.json` and `API_SPEC.md` updates in the same change
 
+Use [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) after
+this gate is healthy when optional crawler, full-mode, OpenSearch, or managed
+infrastructure evidence needs a follow-up, graduation, or explicit-review
+decision.
+
 `just data-quality-doctor` is required release evidence capture. Run it with
 `DATA_QUALITY_FAIL_ON_WARNING=true` for release readiness so warnings fail the
 evidence step. It does not change the six fixed cases in this document, and

@@ -36,8 +36,9 @@ Fixed public MVP boundary:
   fixed gate: just mvp-acceptance
   outside gate: crawler graduation, full mode, OpenSearch, managed infrastructure
 
-Primary guide:
+Primary guides:
   docs/POST_MVP_HARDENING.md
+  docs/OPTIONAL_EVIDENCE_GRADUATION.md for crawler/full-mode/infra packets
 
 Evidence chain:
   docs/PUBLIC_MVP_RELEASE_READINESS.md
@@ -75,6 +76,7 @@ Doctor classification:
     maturity, full-mode/OpenSearch role, managed infra, or final-ranking owner
 
 Optional evidence outside the public MVP gate:
+  command plan: just optional-evidence-review
   crawler graduation: crawler doctor, dry-run, health, policy review, rollback path
   full-mode evaluation: SQL-only/full-mode comparison, projection sync, OpenSearch health
   managed infrastructure: explicit review only; not a fixed-gate requirement

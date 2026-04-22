@@ -2,31 +2,39 @@
 
 ## Current
 
-- Phase 14: evidence review loop
-  - connect post-MVP hardening evidence to repeatable improvement decisions, issue scope, and PR verification
+- Phase 15: optional evidence graduation
+  - turn Phase 14 optional evidence into clear graduation, follow-up, or explicit-review decisions without widening the public MVP gate
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
-  - treat strict data-quality doctor output as evidence, with `review_items` classified by humans
-  - classify every doctor, post-launch, and optional evidence result as blocker, accepted risk, follow-up, optional evidence only, or explicit review required
-  - keep crawler graduation, full-mode evaluation, and managed infrastructure outside the fixed gate as optional evidence or explicit review paths
+  - keep strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - define crawler graduation evidence packets before any `source_maturity: live_ready` change
+  - define full-mode automation candidate criteria while keeping OpenSearch and `full` mode outside the fixed gate
+  - keep managed infrastructure as explicit review only
 
-## Phase 14 Exit Gates
+## Phase 15 Exit Gates
 
-- `ROADMAP.md` names Phase 14 as current and moves Phase 13 into Recently Completed.
-- Phase 13 post-MVP hardening docs lead clearly into the evidence review loop.
+- `ROADMAP.md` names Phase 15 as current and moves Phase 14 into Recently Completed.
+- Phase 14 evidence review docs lead clearly into optional evidence graduation.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
-- Blocker, accepted risk, follow-up, optional evidence only, and explicit review required criteria are documented.
-- Optional evidence has clear conditions for opening an issue, preparing a PR, or requesting explicit review.
-- Crawler graduation and full-mode evaluation remain optional evidence outside the public MVP gate.
-- Managed infrastructure, OpenSearch, live crawler operation, ML/embeddings/vector search, and frontend final-ranking changes are not fixed-gate requirements.
+- Crawler graduation conditions and evidence packet contents are documented.
+- Full-mode automation candidate conditions are documented.
+- Managed infrastructure remains explicit review only and outside the fixed gate.
+- Crawler, full mode, OpenSearch, live crawler operation, and managed infrastructure are not added to fixed-gate requirements.
 - CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
 
 ## Recently Completed
 
+- Phase 14: evidence review loop
+  - connected post-MVP hardening evidence to repeatable improvement decisions, issue scope, and PR verification
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - treated strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - classified doctor, post-launch, and optional evidence results as blocker, accepted risk, follow-up, optional evidence only, or explicit review required
+  - kept crawler graduation, full-mode evaluation, and managed infrastructure outside the fixed gate as optional evidence or explicit review paths
 - Phase 13: post-MVP hardening
   - moved from "can we publish?" to "can we keep improving safely after publishing?"
   - connected release readiness evidence to post-launch triage, data quality review, and follow-up decisions
@@ -63,7 +71,7 @@
 
 ## Next
 
-- Later hardening after Phase 14
+- Later hardening after Phase 15
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

@@ -50,6 +50,10 @@ Summarize the evidence in the PR body:
 - required validation commands and outcomes
 - optional full-mode or crawler notes, clearly labeled outside the MVP gate
 
+Use [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) when
+those optional notes need a graduation, automation, follow-up, or explicit
+review decision.
+
 ## Review Guardrails
 
 Ask for review before merging when:

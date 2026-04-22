@@ -257,7 +257,9 @@ cargo run -p cli -- projection sync
 
 Then compare against SQL-only outputs with the existing compatibility tests and
 operator spot checks. Keep any findings as comparison notes unless the public
-operating profile is explicitly changed.
+operating profile is explicitly changed. Use
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) before
+turning repeated full-mode comparison into an automation follow-up.
 
 ```bash
 cargo test -p compatibility-tests --test sql_only_vs_full
@@ -266,7 +268,9 @@ cargo test -p compatibility-tests --test sql_only_vs_full
 ## Crawler graduation checklist
 
 Crawling remains optional. Move a manifest to `source_maturity: live_ready` only
-after all of these are true:
+after the evidence packet in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) is complete
+and all of these are true:
 
 - source policy and intended use are documented for the target domain
 - robots and terms checks are current and do not block the target path
