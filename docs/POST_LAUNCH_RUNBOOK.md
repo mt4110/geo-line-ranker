@@ -24,6 +24,7 @@ as real-time railway data.
 
    ```bash
    ./scripts/post_launch_doctor.sh
+   ./scripts/data_quality_doctor.sh
    ```
 
 2. Check API readiness:
@@ -54,6 +55,14 @@ as real-time railway data.
    - snapshot row counts and latest refresh timestamps
    - any crawl run ids only if the incident involves optional crawler output
 
+5. Move follow-up work into the feedback loop:
+
+   - use [OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md) to classify
+     the finding
+   - keep the issue or PR scoped to one invariant and one root cause
+   - use [PHASE11_REGRESSION_EVIDENCE.md](PHASE11_REGRESSION_EVIDENCE.md)
+     for recheck evidence
+
 ## SQL-only readiness
 
 `sql_only` is the correctness baseline. In this mode `/readyz` should report
@@ -79,6 +88,18 @@ Without `just`:
 
 ```bash
 ./scripts/mvp_acceptance.sh
+```
+
+Run the Phase 11 read-only data quality pass when PostgreSQL is available:
+
+```bash
+just data-quality-doctor
+```
+
+Without `just`:
+
+```bash
+./scripts/data_quality_doctor.sh
 ```
 
 ## Event CSV replay

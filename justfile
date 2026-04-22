@@ -65,3 +65,6 @@ mvp-acceptance:
 
 post-launch-doctor:
   ./scripts/post_launch_doctor.sh
+
+data-quality-doctor:
+  ./scripts/data_quality_doctor.sh

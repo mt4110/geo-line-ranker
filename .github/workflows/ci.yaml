@@ -107,6 +107,68 @@ jobs:
       - name: Check MVP acceptance runner
         run: |
           test -x scripts/mvp_acceptance.sh
+          test -x scripts/data_quality_doctor.sh
           bash -n scripts/mvp_acceptance.sh
+          bash -n scripts/data_quality_doctor.sh
       - name: Public MVP acceptance
         run: ./scripts/mvp_acceptance.sh
+
+  data-quality-doctor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: geo_line_ranker
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d geo_line_ranker"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker
+      REDIS_URL: redis://127.0.0.1:6379
+      RANKING_CONFIG_DIR: configs/ranking
+      FIXTURE_DIR: storage/fixtures/minimal
+      RAW_STORAGE_DIR: .storage/raw
+      CANDIDATE_RETRIEVAL_MODE: sql_only
+      DATA_QUALITY_FAIL_ON_WARNING: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Wait for PostgreSQL
+        run: |
+          deadline=$((SECONDS + 90))
+          until psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "SELECT NOT pg_is_in_recovery();" | grep -qx t; do
+            if (( SECONDS >= deadline )); then
+              echo "timed out waiting for PostgreSQL" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: Bootstrap data quality baseline
+        run: |
+          cargo run -p cli -- migrate
+          cargo run -p cli -- seed example
+          cargo run -p cli -- snapshot refresh
+      - name: Read-only data quality doctor
+        run: ./scripts/data_quality_doctor.sh
