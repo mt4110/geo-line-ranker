@@ -170,8 +170,11 @@ Without `just`:
 ```
 
 The output points back to this workflow, the triage and recheck loop in
-[OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md), the decision ladder
-in [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), and the
+[OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md), closeout decision
+history in
+[OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md),
+the decision ladder in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), and the
 packet templates in [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md),
 plus the GitHub issue and PR templates above. It remains read-only and does not
 run validation or change local services.

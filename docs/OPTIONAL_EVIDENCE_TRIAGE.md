@@ -7,7 +7,9 @@ without widening the fixed public MVP gate.
 When a recheck date has arrived, a record has `needs-recheck`, or open optional
 evidence may have gone stale, use
 `docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md` to classify the record and route the
-next action.
+next action. After a stale hygiene decision is chosen, use
+`docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md` to record why the record closed,
+stayed open, split, opened a follow-up, or linked explicit review.
 
 This guide is a triage loop, not an acceptance test. It does not create GitHub
 labels, run validation by itself, change source maturity, require OpenSearch,
@@ -55,7 +57,10 @@ Use this loop for every optional evidence issue, PR, or review note:
 6. On or after the recheck date, use
    `docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md` to classify stale records, then
    rerun the lane-specific command or inspect the linked evidence source.
-7. Close only when the lane close condition below is satisfied.
+7. Record the stale hygiene decision in
+   `docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md` before closing, keeping open,
+   splitting, opening follow-up, or linking explicit review.
+8. Close only when the lane close condition below is satisfied.
 
 If one record needs multiple lanes, split it before implementation starts.
 When more than one lane seems plausible, choose the stricter lane.
@@ -134,6 +139,13 @@ named owner, next action, and close condition. They are not new gates, and they
 do not add crawler graduation, full mode, OpenSearch, managed infrastructure,
 or public API changes to the fixed public MVP boundary.
 
+After choosing one of those decisions, use
+[OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md) to
+record the decision history. Split, follow-up, and explicit-review decisions
+must link their new records before the original record closes. Repeated stale
+or repeated keep-open records must route to explicit review, split, or
+follow-up unless one final dated external wait is recorded.
+
 ## Recheck Result Template
 
 Paste this into the issue, PR, or review note when the recheck date arrives:
@@ -145,11 +157,13 @@ Optional evidence recheck:
 - Source labels:
 - Decision lane:
 - Recheck command or evidence source:
-- Result: close / keep open / split / explicit review
+- Result: close / keep-open / split / follow-up / explicit-review
 - Fixed public MVP boundary unchanged:
 - Public API shape unchanged:
 - Next recheck date, if any:
 - Issue or PR:
+- Primary closeout status:
+- Repeat/escalation marker, if any:
 ```
 
 ## Close Checklist
@@ -160,6 +174,7 @@ Before closing an optional evidence issue, PR, or review note, confirm:
 - exactly one primary decision lane is recorded
 - owner and recheck date are recorded, or the record says no recheck is needed
 - the lane-specific close condition is satisfied
+- the closeout ledger record explains the decision history
 - labels or written label equivalents are recorded as aids only
 - `just mvp-acceptance` remains the fixed six-case gate
 - crawler graduation remains outside the fixed gate even when packet complete

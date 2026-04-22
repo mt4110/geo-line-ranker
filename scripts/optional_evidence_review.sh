@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[optional-evidence-review] intake, triage, recheck audit, and stale hygiene checklist
+[optional-evidence-review] intake, triage, recheck audit, closeout ledger, and stale hygiene checklist
 
 Repository:
   root: $ROOT_DIR
@@ -41,6 +41,7 @@ Primary guides:
   docs/OPTIONAL_EVIDENCE_INTAKE.md
   docs/OPTIONAL_EVIDENCE_TRIAGE.md
   docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
+  docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md
   docs/POST_MVP_HARDENING.md
   docs/OPTIONAL_EVIDENCE_GRADUATION.md
   docs/OPTIONAL_EVIDENCE_PACKETS.md
@@ -65,7 +66,8 @@ Triage after an issue, PR, or review note exists:
   3. choose one primary source label and one primary decision lane
   4. record owner, recheck date, recheck command, and close condition
   5. use needs-recheck only when the record must be revisited later
-  6. close only when the lane-specific close condition is satisfied
+  6. record the closeout ledger decision history after stale hygiene
+  7. close only when the lane-specific close condition is satisfied
 
 Recheck audit and stale hygiene:
   guide: docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
@@ -83,8 +85,8 @@ Recheck audit and stale hygiene:
   stale hygiene decisions:
     close: evidence is recorded, no action remains, and the lane close
       condition is met
-    keep-open: still waiting for a named owner, date, source, or external
-      decision
+    keep-open: still waiting for a named owner plus a dated evidence source or
+      external decision
     split: mixed evidence, lanes, owners, commands, or close conditions
     follow-up: scoped issue or PR needed without public-MVP profile expansion
     explicit-review: boundary, API shape, managed infrastructure,
@@ -100,6 +102,54 @@ Recheck audit and stale hygiene:
   if labels are unavailable:
     search issue, PR, or review-note bodies for optional evidence,
       needs-recheck, recheck date, and lane names
+
+Closeout ledger and decision history:
+  guide: docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md
+  use after stale hygiene chooses close, keep-open, split, follow-up, or
+    explicit-review
+  required closeout fields:
+    closeout date
+    owner
+    original evidence source
+    stale class
+    stale hygiene decision
+    final lane
+    result summary
+    fixed public MVP boundary unchanged
+    public API shape unchanged
+    labels or written label equivalents as record aids only
+    linked split, follow-up, or explicit review
+    next recheck date or reason none is needed
+    primary closeout status
+    repeat or escalation marker
+  primary closeout status aids, not gates:
+    closeout:closed
+    closeout:kept-open
+    closeout:split
+    closeout:follow-up-opened
+    closeout:explicit-review-linked
+  repeat or escalation label aid, record alongside the primary closeout status:
+    closeout:repeated-stale
+  body-recorded repeat markers, not suggested labels by default:
+    repeated keep-open
+    final allowed keep-open
+  link requirements:
+    split: link every split record before closing the original
+    follow-up: link the issue or PR with one root cause, owner, validation plan,
+      and recheck command
+    explicit-review: link the review record with decision authority, rollback,
+      cost or risk owner when relevant, and decision status
+  repeated stale or repeated keep-open:
+    route to explicit-review for boundary, API, infra, public profile,
+      full-mode/OpenSearch production role, crawler maturity outside the
+      graduation lane, or final-ranking ownership risk
+    route to split when mixed evidence, lanes, owners, commands, or close
+      conditions are blocking progress
+    route to follow-up when scoped work can answer the question without
+      changing the public MVP profile
+    allow one final keep-open only for a dated external event with owner,
+      narrow evidence source, and reason no split, follow-up, or explicit
+      review is needed yet
 
 Suggested label aids, not gates:
   optional-evidence
@@ -160,6 +210,8 @@ Packet templates to paste into issues, PRs, or review notes:
     docs/OPTIONAL_EVIDENCE_TRIAGE.md
   recheck audit and stale hygiene:
     docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
+  closeout ledger and decision history:
+    docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md
   crawler graduation:
     docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
   full-mode automation candidate:
@@ -224,7 +276,8 @@ Minimal intake header:
 Recheck result template:
   docs/OPTIONAL_EVIDENCE_TRIAGE.md#recheck-result-template
   fields: date, owner, labels, lane, recheck command or source, result,
-    fixed boundary, public API shape, next recheck date, issue or PR
+    fixed boundary, public API shape, next recheck date, issue or PR,
+    primary closeout status, repeat/escalation marker
 
 Recheck audit templates:
   docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md#audit-note-template
@@ -232,6 +285,14 @@ Recheck audit templates:
   fields: stale class, stale hygiene decision, owner, overdue date,
     recheck command or source, next action, close condition, fixed boundary,
     public API shape, linked follow-up, split record, or explicit review
+
+Closeout ledger template:
+  docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md#closeout-record-template
+  fields: closeout date, owner, original evidence source, stale class,
+    stale hygiene decision, primary closeout status, repeat or escalation
+    marker, final lane, result summary, fixed boundary, public API shape,
+    label status as record aid only, linked split, follow-up, or explicit
+    review, next recheck date or reason none is needed
 
 Local validation and evidence when files change:
   cargo fmt --all --check
