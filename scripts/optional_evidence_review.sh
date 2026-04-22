@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[optional-evidence-review] intake, triage, recheck audit, closeout ledger, integrity, lifecycle index, and stale hygiene checklist
+[optional-evidence-review] intake, triage, recheck audit, closeout ledger, integrity, lifecycle index, inventory report, and stale hygiene checklist
 
 Repository:
   root: $ROOT_DIR
@@ -44,6 +44,7 @@ Primary guides:
   docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md
   docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md
   docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md
+  docs/OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md
   docs/POST_MVP_HARDENING.md
   docs/OPTIONAL_EVIDENCE_GRADUATION.md
   docs/OPTIONAL_EVIDENCE_PACKETS.md
@@ -225,6 +226,41 @@ Lifecycle index and review inventory:
   labels:
     labels and written label equivalents are record aids only, not gates
 
+Inventory report and review snapshot:
+  guide: docs/OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md
+  use when lifecycle index rows need a shareable report or handoff snapshot
+    across intake, triage, recheck audit, closeout ledger, and closeout
+    integrity
+  this is review inventory only; it is not an acceptance gate, release gate,
+    required label setup, validation result, automation requirement, or
+    replacement source of truth
+  report sections:
+    header: snapshot date, reviewer, scope, collection method, repository
+      reference, fixed boundary, outside-gate status, strict doctor status,
+      public API shape, and label status
+    summary: total rows, lifecycle-state counts, lane counts, source-type
+      counts, edit-target counts, finding counts, explicit review links,
+      boundary status, API status, and label status
+    rows: one lifecycle index row per included record, with finding references
+    findings: orphan, stale, and unclear-owner review findings
+  lifecycle-state summary counts:
+    intake-recorded
+    triaged
+    recheck-scheduled
+    recheck-overdue
+    closeout-recorded
+    integrity-complete
+    follow-up-linked
+    explicit-review-linked
+    closed
+  findings are not failures:
+    orphan candidate, stale candidate, and unclear owner point to source-record,
+      linked-record, closeout-ledger, or integrity-note edits
+    route to explicit review only when the edit would affect public profile,
+      public API shape, managed infrastructure, full-mode/OpenSearch production
+      role, crawler maturity outside the graduation lane, or final-ranking
+      ownership
+
 Suggested label aids, not gates:
   optional-evidence
   lane:follow-up
@@ -290,6 +326,8 @@ Packet templates to paste into issues, PRs, or review notes:
     docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md
   lifecycle index and review inventory:
     docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md
+  inventory report and review snapshot:
+    docs/OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md
   crawler graduation:
     docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
   full-mode automation candidate:
@@ -387,6 +425,13 @@ Lifecycle index row template:
     linked split/follow-up/explicit review, next recheck date or reason none,
     integrity result, inventory finding, fixed boundary, public API shape, and
     label-aid status
+
+Inventory report snapshot template:
+  docs/OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md#snapshot-template
+  sections: header, summary, rows, findings
+  findings: orphan candidate, stale candidate, and unclear owner are review
+    findings only; edit the source record, linked record, closeout ledger, or
+    integrity note instead of treating them as gate failures
 
 Local validation and evidence when files change:
   cargo fmt --all --check

@@ -2,13 +2,15 @@
 
 ## Current
 
-- Phase 23: optional evidence lifecycle index / review inventory
-  - turn optional evidence intake, triage, recheck audit, closeout ledger, and closeout integrity records into a read-only lifecycle index operators can review
-  - add a lifecycle index guide for record states, minimum inventory fields, and review conditions for orphan, stale, and unclear-owner records
-  - connect intake, triage, recheck audit, closeout ledger, and closeout integrity guidance to the lifecycle index without replacing their source records
-  - make `just optional-evidence-review` point to lifecycle index and review inventory guidance while staying read-only
-  - define lifecycle states from `intake-recorded` through `closed`, including recheck, closeout, integrity, follow-up, and explicit-review states
-  - keep the lifecycle index as exploration, inventory, and review support only, not an acceptance or release gate
+- Phase 24: optional evidence lifecycle inventory report / review snapshot
+  - turn lifecycle index rows into a read-only inventory report and review snapshot operators can share without replacing source records
+  - add a lifecycle inventory report guide for purpose, scope, non-goals, header, row, summary, and finding formats
+  - connect lifecycle index, intake, triage, recheck audit, closeout ledger, and closeout integrity guidance to the report snapshot
+  - make `just optional-evidence-review` point to inventory report and review snapshot guidance while staying read-only
+  - define lifecycle-state summary counts for intake, triage, recheck, closeout, integrity, follow-up, explicit review, and closed records
+  - record orphan, stale, and unclear-owner conditions as review findings, not gate failures
+  - keep findings as edit candidates for the source record, linked record, closeout ledger, or integrity note
+  - keep the inventory report as shared review inventory only, not an acceptance gate, release gate, required label setup, or replacement source of truth
   - keep labels as record aids only, not required gates or repository setup prerequisites
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
@@ -18,16 +20,17 @@
   - keep managed infrastructure explicit review only
   - keep public API shape unchanged
 
-## Phase 23 Exit Gates
+## Phase 24 Exit Gates
 
-- `ROADMAP.md` names Phase 23 as current and moves Phase 22 into Recently Completed.
-- Optional evidence lifecycle index guidance is added.
-- Optional evidence closeout integrity guidance leads to the lifecycle index.
-- Intake, triage, recheck audit, closeout ledger, and closeout integrity flow is organized into lifecycle states.
-- Lifecycle states include `intake-recorded`, `triaged`, `recheck-scheduled`, `recheck-overdue`, `closeout-recorded`, `integrity-complete`, `follow-up-linked`, `explicit-review-linked`, and `closed`.
-- Lifecycle index minimum fields are defined for record link, owner, lane, source type, stale class, stale hygiene decision, primary closeout status, repeat or escalation marker, linked split/follow-up/explicit review, next recheck date or reason none, and integrity result.
-- Read-only inventory conditions are defined for finding orphan, stale, and unclear-owner records.
-- The lifecycle index is review inventory, not an acceptance gate, release gate, required label setup, or replacement source of truth.
+- `ROADMAP.md` names Phase 24 as current and moves Phase 23 into Recently Completed.
+- Optional evidence lifecycle inventory report guidance is added.
+- Optional evidence lifecycle index guidance leads to the inventory report.
+- Intake, triage, recheck audit, closeout ledger, and closeout integrity flow connects to a report snapshot.
+- The report defines minimum header, row, summary, and finding fields.
+- Lifecycle-state aggregate items are defined for the review snapshot.
+- Orphan, stale, and unclear-owner records are findings only, not gate failures.
+- Findings are edit candidates for the source record, linked record, closeout ledger, or integrity note.
+- The inventory report is review inventory and a snapshot, not an acceptance gate, release gate, required label setup, or replacement source of truth.
 - Labels are documented as record aids only and are not required gates.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
@@ -43,6 +46,21 @@
 
 ## Recently Completed
 
+- Phase 23: optional evidence lifecycle index / review inventory
+  - turned optional evidence intake, triage, recheck audit, closeout ledger, and closeout integrity records into a read-only lifecycle index operators can review
+  - added a lifecycle index guide for record states, minimum inventory fields, and review conditions for orphan, stale, and unclear-owner records
+  - connected intake, triage, recheck audit, closeout ledger, and closeout integrity guidance to the lifecycle index without replacing their source records
+  - made `just optional-evidence-review` point to lifecycle index and review inventory guidance while staying read-only
+  - defined lifecycle states from `intake-recorded` through `closed`, including recheck, closeout, integrity, follow-up, and explicit-review states
+  - kept the lifecycle index as exploration, inventory, and review support only, not an acceptance or release gate
+  - kept labels as record aids only, not required gates or repository setup prerequisites
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - kept crawler graduation outside the fixed gate even when its packet is complete
+  - kept full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
+  - kept managed infrastructure explicit review only
+  - kept public API shape unchanged
 - Phase 22: optional evidence closeout integrity / orphan prevention
   - checked that closeout ledger records are complete, reachable, and not contradicted by stale hygiene state
   - added an integrity guide for closeout record completeness, link checks, repeat marker routing, and orphan prevention
@@ -178,7 +196,7 @@
 
 ## Next
 
-- Later hardening after Phase 23
+- Later hardening after Phase 24
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

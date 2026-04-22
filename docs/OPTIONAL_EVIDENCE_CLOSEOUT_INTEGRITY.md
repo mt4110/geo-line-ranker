@@ -11,6 +11,9 @@ After this pass, use
 [OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
 when records need a read-only lifecycle index or review inventory across
 intake, triage, recheck audit, closeout ledger, and closeout integrity.
+When those index rows need a shared handoff, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md)
+to prepare a read-only inventory report and review snapshot.
 
 This is an integrity and orphan-prevention pass, not a new acceptance gate. It
 does not create GitHub labels, run validation by itself, change source maturity,
@@ -246,3 +249,6 @@ Before accepting a closeout record as complete, confirm:
     work starts.
 11. The lifecycle index can point to this integrity result as review inventory
     only; it does not become a gate or replace the source records.
+12. The inventory report can summarize this integrity result and any orphan,
+    stale, or unclear-owner finding as an edit candidate only; it does not
+    become a gate or replace the source records.

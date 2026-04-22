@@ -18,6 +18,9 @@ When multiple records need a read-only shelf view, use
 [OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
 to inventory lifecycle state, owner, lane, stale class, closeout status, linked
 actions, and integrity result.
+When that shelf view needs to be shared, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md)
+to prepare a read-only inventory report and review snapshot.
 
 This is a read-only audit and stale hygiene guide. It does not create GitHub
 labels, run validation by itself, change source maturity, enable full mode,
@@ -200,6 +203,9 @@ Use this checklist for each open optional evidence record:
     [OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
     so orphan, stale, and unclear-owner candidates are visible without running
     validation.
+13. For a shared handoff, prepare a report snapshot with
+    [OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md](OPTIONAL_EVIDENCE_LIFECYCLE_INVENTORY_REPORT.md)
+    and keep its findings as source-record edit candidates, not gate failures.
 
 ## Audit Note Template
 
