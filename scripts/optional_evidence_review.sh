@@ -120,13 +120,15 @@ Closeout ledger and decision history:
     labels or written label equivalents as record aids only
     linked split, follow-up, or explicit review
     next recheck date or reason none is needed
-    repeat status
-  closeout status aids, not gates:
+    primary closeout status
+    repeat or escalation marker
+  primary closeout status aids, not gates:
     closeout:closed
     closeout:kept-open
     closeout:split
     closeout:follow-up-opened
     closeout:explicit-review-linked
+  repeat or escalation aids, record alongside the primary closeout status:
     closeout:repeated-stale
   link requirements:
     split: link every split record before closing the original
@@ -283,10 +285,10 @@ Recheck audit templates:
 Closeout ledger template:
   docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md#closeout-record-template
   fields: closeout date, owner, original evidence source, stale class,
-    stale hygiene decision, final lane, result summary, fixed boundary,
-    public API shape, label status as record aid only, linked split,
-    follow-up, or explicit review, next recheck date or reason none is needed,
-    repeat status
+    stale hygiene decision, primary closeout status, repeat or escalation
+    marker, final lane, result summary, fixed boundary, public API shape,
+    label status as record aid only, linked split, follow-up, or explicit
+    review, next recheck date or reason none is needed
 
 Local validation and evidence when files change:
   cargo fmt --all --check

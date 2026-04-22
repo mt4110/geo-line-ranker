@@ -115,7 +115,7 @@ After classifying an overdue or blocked record, choose exactly one decision:
 | Decision | Use when | Required record |
 | --- | --- | --- |
 | `close` | Evidence is recorded, no action remains, and the lane close condition is met. | Closeout ledger record with fixed boundary unchanged, public API shape unchanged, and a reason no next recheck is needed. |
-| `keep-open` | The record is still waiting for a named owner plus a dated evidence source or external decision. | Closeout ledger record with owner, next recheck date or condition, narrow recheck source, waiting reason, and repeat status. |
+| `keep-open` | The record is still waiting for a named owner plus a dated evidence source or external decision. | Closeout ledger record with owner, next recheck date or condition, narrow recheck source, waiting reason, and repeat or escalation marker. |
 | `split` | The record mixes evidence, lanes, owners, commands, or close conditions. | Closeout ledger record with links to every split record and the reason the original is no longer the action holder. |
 | `follow-up` | A scoped implementation or documentation task is needed without changing the public MVP profile. | Closeout ledger record with a linked issue or PR that has one root cause, one owner, one validation plan, and one recheck command. |
 | `explicit-review` | The next action could change public profile, API shape, managed infrastructure, full-mode/OpenSearch production role, crawler maturity outside the graduation lane, or final-ranking ownership. | Closeout ledger record with a linked explicit review naming the decision authority, rollback path, cost or risk owner when relevant, and decision status. |
@@ -130,17 +130,21 @@ stays explicit review only.
 Use [OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md)
 after every stale hygiene decision. The ledger defines the required closeout
 record fields for `close`, `keep-open`, `split`, `follow-up`, and
-`explicit-review`, plus optional closeout status aids:
+`explicit-review`, plus primary closeout status aids:
 
 - `closeout:closed`
 - `closeout:kept-open`
 - `closeout:split`
 - `closeout:follow-up-opened`
 - `closeout:explicit-review-linked`
+
+It also defines a repeat or escalation marker that can be recorded alongside the
+primary closeout status:
+
 - `closeout:repeated-stale`
 
 Labels are still record aids only. If labels are unavailable, write the
-closeout status in the record body.
+primary closeout status and any repeat or escalation marker in the record body.
 
 Do not close `split`, `follow-up`, or `explicit-review` decisions without the
 linked split records, linked issue or PR, or linked explicit review record.
@@ -211,7 +215,8 @@ Optional evidence closeout ledger:
 - Original evidence source:
 - Stale class: recheck:on-time / recheck:overdue / recheck:blocked / recheck:split-needed / recheck:closed
 - Stale hygiene decision: close / keep-open / split / follow-up / explicit-review
-- Closeout status: closeout:closed / closeout:kept-open / closeout:split / closeout:follow-up-opened / closeout:explicit-review-linked / closeout:repeated-stale
+- Primary closeout status: closeout:closed / closeout:kept-open / closeout:split / closeout:follow-up-opened / closeout:explicit-review-linked
+- Repeat or escalation marker: none / closeout:repeated-stale / repeated keep-open / final allowed keep-open
 - Final lane:
 - Result summary:
 - Fixed public MVP boundary unchanged:
@@ -219,7 +224,6 @@ Optional evidence closeout ledger:
 - Labels or written label equivalents were record aids only:
 - Linked split, follow-up, or explicit review:
 - Next recheck date or reason none is needed:
-- Repeat status:
 ```
 
 ## Validation When Files Change

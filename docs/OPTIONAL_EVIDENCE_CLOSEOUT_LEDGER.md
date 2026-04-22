@@ -57,20 +57,25 @@ parallel source of truth.
 
 Labels are record aids only. GitHub label creation is not required for the fixed
 public MVP gate, local validation, PR merge, recheck audit, or closeout ledger.
-If labels are unavailable, write the same status in the record body.
+If labels are unavailable, write the primary status and any repeat or escalation
+marker in the record body.
 
-Suggested closeout statuses:
+Suggested primary closeout statuses:
 
 - `closeout:closed`
 - `closeout:kept-open`
 - `closeout:split`
 - `closeout:follow-up-opened`
 - `closeout:explicit-review-linked`
+
+Suggested repeat or escalation marker:
+
 - `closeout:repeated-stale`
 
-`closeout:repeated-stale` is a warning status, not a terminal lane. It means the
-record has come back stale enough times that it must be routed to explicit
-review, split into smaller records, or moved into a scoped follow-up.
+`closeout:repeated-stale` is recorded alongside the primary closeout status,
+not instead of it. It means the record has come back stale enough times that it
+must be routed to explicit review, split into smaller records, or moved into a
+scoped follow-up.
 
 ## Required Closeout Record Fields
 
@@ -83,6 +88,7 @@ Every closeout record must include these fields:
 | Original evidence source | Link, command output, issue, PR, review note, packet, or doctor result that started the record. |
 | Stale class | One of `recheck:on-time`, `recheck:overdue`, `recheck:blocked`, `recheck:split-needed`, or `recheck:closed`. |
 | Stale hygiene decision | One of `close`, `keep-open`, `split`, `follow-up`, or `explicit-review`. |
+| Primary closeout status | One of `closeout:closed`, `closeout:kept-open`, `closeout:split`, `closeout:follow-up-opened`, or `closeout:explicit-review-linked`. |
 | Final lane | Optional evidence only, follow-up, crawler graduation, or explicit review required. |
 | Result summary | Short explanation of what changed, what was learned, or why no work remains. |
 | Fixed public MVP boundary unchanged | Must say yes, or link explicit review before implementation. |
@@ -90,18 +96,18 @@ Every closeout record must include these fields:
 | Label status | State that labels or written label equivalents are record aids only. |
 | Linked split, follow-up, or explicit review | Required for `split`, `follow-up`, and `explicit-review`; otherwise say none and why none is needed. |
 | Next recheck date or reason none is needed | Required for `keep-open`; for terminal records, explain why no recheck remains. |
-| Repeat status | State first closeout, repeated stale, repeated keep-open, or final allowed keep-open. |
+| Repeat or escalation marker | State none, `closeout:repeated-stale`, repeated keep-open, or final allowed keep-open. Record this alongside the primary closeout status. |
 
 ## Stale Hygiene to Closeout Mapping
 
 Use the stale hygiene decision from
 [OPTIONAL_EVIDENCE_RECHECK_AUDIT.md](OPTIONAL_EVIDENCE_RECHECK_AUDIT.md), then
-record the matching closeout status.
+record the matching primary closeout status.
 
-| Stale hygiene decision | Closeout status | Closeout record condition |
+| Stale hygiene decision | Primary closeout status | Closeout record condition |
 | --- | --- | --- |
 | `close` | `closeout:closed` | Recheck result is recorded, lane close condition is satisfied, no action remains, fixed boundary is unchanged, public API shape is unchanged, and no unlinked follow-up or explicit review exists. |
-| `keep-open` | `closeout:kept-open` | Owner, next recheck date or condition, narrow evidence source, waiting reason, and repeat status are recorded. This is not a final close. |
+| `keep-open` | `closeout:kept-open` | Owner, next recheck date or condition, narrow evidence source, waiting reason, and repeat or escalation marker are recorded. This is not a final close. |
 | `split` | `closeout:split` | Every split record is linked, each split has one lane and owner, and the original record no longer carries an unresolved action. |
 | `follow-up` | `closeout:follow-up-opened` | A linked issue or PR exists with one root cause, one owner, one validation plan, and one recheck command. |
 | `explicit-review` | `closeout:explicit-review-linked` | A linked explicit review record names the decision authority, decision scope, rollback path, cost or risk owner when relevant, and current decision status. |
@@ -216,7 +222,8 @@ Optional evidence closeout ledger:
 - Original evidence source:
 - Stale class: recheck:on-time / recheck:overdue / recheck:blocked / recheck:split-needed / recheck:closed
 - Stale hygiene decision: close / keep-open / split / follow-up / explicit-review
-- Closeout status: closeout:closed / closeout:kept-open / closeout:split / closeout:follow-up-opened / closeout:explicit-review-linked / closeout:repeated-stale
+- Primary closeout status: closeout:closed / closeout:kept-open / closeout:split / closeout:follow-up-opened / closeout:explicit-review-linked
+- Repeat or escalation marker: none / closeout:repeated-stale / repeated keep-open / final allowed keep-open
 - Final lane:
 - Result summary:
 - Fixed public MVP boundary unchanged:
@@ -224,7 +231,6 @@ Optional evidence closeout ledger:
 - Labels or written label equivalents were record aids only:
 - Linked split, follow-up, or explicit review:
 - Next recheck date or reason none is needed:
-- Repeat status:
 ```
 
 ## Closeout Checklist
