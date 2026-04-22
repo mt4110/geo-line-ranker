@@ -14,7 +14,9 @@ confirm the lane before a packet is treated as review-ready.
 
 For issue, PR, or review-note records, use the concrete packet templates in
 [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) after choosing a
-decision lane here.
+decision lane here. Then use
+[OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md) to record labels,
+owner, recheck command, and close condition.
 
 ## Fixed Boundary
 

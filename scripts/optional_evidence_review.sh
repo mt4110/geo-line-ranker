@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[optional-evidence-review] intake workflow checklist
+[optional-evidence-review] intake, triage, and recheck checklist
 
 Repository:
   root: $ROOT_DIR
@@ -39,6 +39,7 @@ Fixed public MVP boundary:
 
 Primary guides:
   docs/OPTIONAL_EVIDENCE_INTAKE.md
+  docs/OPTIONAL_EVIDENCE_TRIAGE.md
   docs/POST_MVP_HARDENING.md
   docs/OPTIONAL_EVIDENCE_GRADUATION.md
   docs/OPTIONAL_EVIDENCE_PACKETS.md
@@ -55,6 +56,42 @@ Intake workflow:
   4. paste the minimal intake header into the issue, PR, or review note
   5. choose one decision lane before implementation starts
   6. record owner, recheck date, public API shape status, and rollback path
+
+Triage after an issue, PR, or review note exists:
+  guide: docs/OPTIONAL_EVIDENCE_TRIAGE.md
+  1. confirm the minimal intake header is present or linked
+  2. confirm the fixed public MVP boundary is unchanged
+  3. choose one primary source label and one primary decision lane
+  4. record owner, recheck date, recheck command, and close condition
+  5. use needs-recheck only when the record must be revisited later
+  6. close only when the lane-specific close condition is satisfied
+
+Suggested label aids, not gates:
+  optional-evidence
+  lane:follow-up
+  lane:crawler-graduation
+  lane:explicit-review
+  lane:optional-only
+  source:doctor
+  source:crawler
+  source:full-mode
+  source:managed-infra
+  needs-recheck
+
+Decision lane close conditions:
+  optional evidence only:
+    close when the evidence source, fixed boundary check, and reason for no
+    implementation are recorded, with no recheck pending
+  follow-up:
+    close when the linked issue or PR has one root cause, one recheck command,
+    and no public-MVP profile expansion
+  crawler graduation:
+    close when the packet is complete, source policy and robots are current,
+    blockers are clear or accepted, rollback is recorded, and live crawler
+    operation stays outside the fixed gate
+  explicit review required:
+    close when the decision authority records approved, deferred, or rejected;
+    move any approved implementation into a separate issue or PR
 
 Packet selection:
   strict data-quality doctor review item:
@@ -83,6 +120,8 @@ Packet templates to paste into issues, PRs, or review notes:
     .github/ISSUE_TEMPLATE/optional_evidence.md
   PR fixed-boundary checks:
     .github/pull_request_template.md
+  triage, labels, recheck, and close:
+    docs/OPTIONAL_EVIDENCE_TRIAGE.md
   crawler graduation:
     docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
   full-mode automation candidate:
@@ -122,10 +161,32 @@ Managed infrastructure:
   use the managed infrastructure explicit review packet for hosting, managed
     DB, cache, OpenSearch, IaC, cost, and rollback evidence
 
+Recheck commands:
+  doctor:
+    DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
+  crawler:
+    cargo run -p crawler -- doctor --manifest <manifest>
+    cargo run -p crawler -- dry-run --manifest <manifest>
+    cargo run -p crawler -- health --manifest <manifest>
+  full-mode comparison:
+    cargo test -p compatibility-tests --test sql_only_vs_full
+  full-mode or OpenSearch optional evidence only:
+    docker compose -f .docker/docker-compose.full.yaml up -d postgres redis opensearch
+    cargo run -p cli -- index rebuild
+  fixed boundary:
+    just mvp-acceptance
+  managed infrastructure:
+    inspect the explicit review record; do not provision from triage
+
 Minimal intake header:
   docs/OPTIONAL_EVIDENCE_INTAKE.md#minimal-intake-header
   fields: evidence type, source, packet used, decision lane, owner, recheck,
     fixed public MVP boundary, public API shape, strict doctor evidence
+
+Recheck result template:
+  docs/OPTIONAL_EVIDENCE_TRIAGE.md#recheck-result-template
+  fields: date, owner, labels, lane, recheck command or source, result,
+    fixed boundary, public API shape, next recheck date, issue or PR
 
 Local validation and evidence when files change:
   cargo fmt --all --check
