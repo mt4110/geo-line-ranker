@@ -43,6 +43,11 @@ Primary guides:
   docs/OPTIONAL_EVIDENCE_GRADUATION.md
   docs/OPTIONAL_EVIDENCE_PACKETS.md
 
+GitHub templates:
+  .github/ISSUE_TEMPLATE/optional_evidence.md
+  .github/pull_request_template.md
+  templates are records, not acceptance tests or new gates
+
 Intake workflow:
   1. capture the evidence source and confirm it is reproducible enough to route
   2. confirm this evidence does not expand just mvp-acceptance
@@ -74,6 +79,10 @@ Decision ladder:
      production role, managed infra, or final-ranking owner
 
 Packet templates to paste into issues, PRs, or review notes:
+  minimal GitHub issue record:
+    .github/ISSUE_TEMPLATE/optional_evidence.md
+  PR fixed-boundary checks:
+    .github/pull_request_template.md
   crawler graduation:
     docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
   full-mode automation candidate:
