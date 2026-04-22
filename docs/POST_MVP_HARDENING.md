@@ -29,7 +29,8 @@ snapshot".
 
 ## Evidence Flow
 
-Use one chain for post-MVP hardening evidence and Phase 14 evidence review:
+Use one chain for post-MVP hardening evidence, Phase 14 evidence review, and
+Phase 15 optional evidence graduation:
 
 1. Confirm the release baseline with
    [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md).
@@ -41,7 +42,10 @@ Use one chain for post-MVP hardening evidence and Phase 14 evidence review:
    [PHASE11_REGRESSION_EVIDENCE.md](PHASE11_REGRESSION_EVIDENCE.md) when a
    follow-up PR changes operator feedback, imports, snapshots, jobs, or data
    quality guardrails.
-5. Record the final decision in the review shape below before closing the
+5. Use [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md)
+   when crawler graduation, full-mode automation, or managed infrastructure
+   evidence needs a graduation, follow-up, or explicit-review decision.
+6. Record the final decision in the review shape below before closing the
    hardening review, issue, or PR.
 
 Strict data-quality doctor output remains required release and post-MVP
@@ -140,6 +144,19 @@ Without `just`:
 ./scripts/post_mvp_hardening.sh
 ```
 
+Print the optional evidence graduation checklist when a crawler, full-mode, or
+managed infrastructure packet needs routing:
+
+```bash
+just optional-evidence-review
+```
+
+Without `just`:
+
+```bash
+./scripts/optional_evidence_review.sh
+```
+
 Then run the local validation and evidence commands when preparing a follow-up
 PR, a hardening review, or a release train:
 
@@ -162,26 +179,31 @@ DATA_QUALITY_FAIL_ON_WARNING=true ./scripts/data_quality_doctor.sh
 ## Optional Evidence Review
 
 Optional evidence is useful for deciding what to improve next, but it must stay
-outside the public MVP gate.
+outside the public MVP gate. Use
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) for the
+Phase 15 decision ladder and evidence packet details.
 
-Crawler graduation evidence should include:
+At this level, route each optional packet to one of four outcomes:
 
-- source policy and robots or terms review
-- manifest `source_maturity` and expected parser shape
-- `crawler doctor`, `crawler dry-run`, and `crawler health` output
-- latest staged checksum or crawl run ids when relevant
-- rollback path to `event-csv` if public content is affected
-- decision: do not promote, promote with accepted risk, or promote after a
-  scoped follow-up
+- Optional evidence only: informative, not actionable yet, and outside the
+  public MVP gate.
+- Follow-up: one reproducible improvement that does not change the public MVP
+  profile.
+- Crawler graduation: source-specific evidence is complete and promotion has
+  no blockers, with rollback recorded.
+- Explicit review required: the next step would change public profile, public
+  API shape, crawler maturity, full-mode/OpenSearch production role, managed
+  infrastructure, or final-ranking ownership.
 
-Full-mode evaluation evidence should include:
+Crawler graduation evidence must include policy review, manifest fields,
+`crawler doctor`, `crawler dry-run`, `crawler health`, fixture or staged
+checksum context when relevant, and a rollback path to `parser_only` or
+`policy_blocked` plus `event-csv` repair.
 
-- SQL-only response samples and full-mode response samples for the same inputs
-- projection sync state and OpenSearch index health
-- compatibility test output, when applicable
-- operator notes explaining whether the comparison reveals a product need
-- decision: keep manual comparison, add a follow-up, or request explicit review
-  for a public profile change
+Full-mode automation candidate evidence must include SQL-only and full-mode
+samples for the same inputs, projection sync state, OpenSearch health,
+compatibility test output when applicable, and a reason manual comparison is no
+longer enough.
 
 Managed infrastructure evidence should stay in explicit review. Do not add
 hosting, managed databases, managed cache, managed OpenSearch, or new cloud

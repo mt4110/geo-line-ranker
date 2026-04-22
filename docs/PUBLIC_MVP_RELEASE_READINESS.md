@@ -59,7 +59,11 @@ Optional evidence:
 - SQL-only vs full-mode comparison
 - crawler doctor, dry-run, health, or promotion evidence
 
-Optional evidence must be labeled outside the public MVP gate.
+Optional evidence must be labeled outside the public MVP gate. After the
+candidate is healthy, use
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) to decide
+whether that evidence stays informational, becomes a follow-up, prepares
+crawler graduation, or needs explicit review.
 
 ## Command Plan
 
@@ -197,4 +201,5 @@ operations:
 Crawler graduation, full-mode automation, and managed infrastructure remain
 optional evidence or separate review decisions after the MVP release candidate
 is healthy. They do not become public-MVP gate requirements through post-release
-handoff.
+handoff. Route those packets through
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md).

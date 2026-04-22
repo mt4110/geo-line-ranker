@@ -109,9 +109,22 @@ Without `just`:
 ./scripts/post_mvp_hardening.sh
 ```
 
-Use it before hardening reviews or follow-up PRs to keep the same validation
-set visible while the evidence review loop classifies findings as blocker,
-accepted risk, follow-up, optional evidence only, or explicit review required:
+For optional evidence graduation decisions, print the read-only checklist:
+
+```bash
+just optional-evidence-review
+```
+
+Without `just`:
+
+```bash
+./scripts/optional_evidence_review.sh
+```
+
+Use the hardening command plan before hardening reviews or follow-up PRs to
+keep the same validation set visible while the evidence review loop classifies
+findings as blocker, accepted risk, follow-up, optional evidence only, or
+explicit review required:
 
 ```bash
 cargo fmt --all --check
@@ -123,7 +136,9 @@ git diff --check
 ```
 
 Crawler graduation and full-mode evaluation can be attached as optional
-evidence, but they remain outside the fixed public-MVP gate.
+evidence, but they remain outside the fixed public-MVP gate. The optional
+evidence checklist is read-only and does not add crawler, full mode,
+OpenSearch, or managed infrastructure to local or CI release gates.
 
 ## What gets covered
 

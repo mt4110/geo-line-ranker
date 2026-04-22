@@ -50,6 +50,8 @@ Required release evidence:
   This makes doctor warnings or command failures block release readiness.
   Treat review items as classification evidence unless they affect the fixed
   sql_only + event-csv gate.
+  Route optional crawler/full-mode/infra packets after the candidate is healthy
+  with: just optional-evidence-review
 
 If just is unavailable:
   ./scripts/mvp_acceptance.sh

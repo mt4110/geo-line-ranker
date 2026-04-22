@@ -7,7 +7,7 @@ During release candidate validation, the same findings should be summarized in
 before deciding whether they block the public MVP. After release, summarize the
 same classification in [POST_MVP_HARDENING.md](POST_MVP_HARDENING.md) evidence
 so recurring reviews can separate blockers, accepted risks, follow-ups,
-optional evidence only, and explicit review decisions.
+optional evidence only, and explicit review required records.
 
 ## Public MVP Boundary
 
@@ -68,6 +68,9 @@ root cause clearly explains all of them.
 For recurring post-MVP review, map the lane to the decision vocabulary in
 [POST_MVP_HARDENING.md](POST_MVP_HARDENING.md): blocker, accepted risk,
 follow-up, optional evidence only, or explicit review required.
+When optional crawler, full-mode, OpenSearch, or managed infrastructure
+evidence needs a graduation or automation decision, continue with
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md).
 
 ## Issue and PR Granularity
 

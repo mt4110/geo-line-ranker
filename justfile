@@ -74,3 +74,6 @@ release-readiness:
 
 post-mvp-hardening:
   ./scripts/post_mvp_hardening.sh
+
+optional-evidence-review:
+  ./scripts/optional_evidence_review.sh

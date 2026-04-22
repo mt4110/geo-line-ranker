@@ -110,6 +110,20 @@ infrastructure review visible outside the public-MVP gate. Classify doctor
 `review_items` as blocker, accepted risk, follow-up, optional evidence only, or
 explicit review required before opening implementation work.
 
+When optional crawler, full-mode, OpenSearch, or managed infrastructure
+evidence needs a graduation or automation decision, print the read-only
+checklist:
+
+```bash
+just optional-evidence-review
+```
+
+Without `just`:
+
+```bash
+./scripts/optional_evidence_review.sh
+```
+
 ## Readiness checks
 
 The API exposes:
