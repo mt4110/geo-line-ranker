@@ -30,8 +30,8 @@ snapshot".
 ## Evidence Flow
 
 Use one chain for post-MVP hardening evidence, Phase 14 evidence review,
-Phase 15 optional evidence graduation, Phase 16 packet templates, and Phase 17
-intake workflow:
+Phase 15 optional evidence graduation, Phase 16 packet templates, Phase 17
+intake workflow, and Phase 18 GitHub issue and PR templates:
 
 1. Confirm the release baseline with
    [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md).
@@ -50,7 +50,9 @@ intake workflow:
    [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), then
    paste the matching packet from
    [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md).
-6. Record the final decision in the review shape below before closing the
+6. Use `.github/ISSUE_TEMPLATE/optional_evidence.md` for optional evidence
+   issues and `.github/pull_request_template.md` for PR fixed-boundary checks.
+7. Record the final decision in the review shape below before closing the
    hardening review, issue, or PR.
 
 Strict data-quality doctor output remains required release and post-MVP
@@ -190,7 +192,9 @@ intake workflow, confirm the decision lane in
 [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), then use
 the Phase 16 templates in
 [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) for issue, PR, or
-review-note packet templates.
+review-note packet templates. For GitHub records, start from the Phase 18
+optional evidence issue template in `.github/ISSUE_TEMPLATE/optional_evidence.md`
+and keep the fixed-boundary checks in `.github/pull_request_template.md`.
 
 At this level, route each optional packet to one of four outcomes:
 

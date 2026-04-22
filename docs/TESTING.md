@@ -141,8 +141,9 @@ evidence, but they remain outside the fixed public-MVP gate. The optional
 evidence checklist is read-only and points to
 [OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) for routing and
 [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) for templates. It
-does not add crawler, full mode, OpenSearch, or managed infrastructure to
-local or CI release gates.
+also points to `.github/ISSUE_TEMPLATE/optional_evidence.md` and
+`.github/pull_request_template.md` for GitHub records. It does not add crawler,
+full mode, OpenSearch, or managed infrastructure to local or CI release gates.
 
 ## What gets covered
 
