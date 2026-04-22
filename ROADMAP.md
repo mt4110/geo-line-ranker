@@ -3,7 +3,7 @@
 ## Current
 
 - Phase 12: public MVP release readiness
-  - keep the April 30 public MVP release gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - keep the April 30, 2026 public MVP release gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - make release candidate evidence repeatable across CI results, local validation, data quality doctor output, and residual risk review
   - connect the Phase 11 operator feedback loop to release candidate and post-release decisions
   - keep live crawler, full-mode retrieval, OpenSearch, and managed infrastructure outside the release gate

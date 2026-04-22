@@ -45,8 +45,10 @@ Required local validation:
   just mvp-acceptance
   git diff --check
 
-Supplementary release evidence:
+Required release evidence:
   just data-quality-doctor
+  Treat doctor warnings or command failures as blockers. Treat review items as
+  classification evidence unless they affect the fixed sql_only + event-csv gate.
 
 If just is unavailable:
   ./scripts/mvp_acceptance.sh

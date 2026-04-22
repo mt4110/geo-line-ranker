@@ -63,14 +63,19 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 just mvp-acceptance
-just data-quality-doctor
 git diff --check
 ```
 
+Then capture the required release evidence:
+
+```bash
+just data-quality-doctor
+```
+
 `just mvp-acceptance` remains the six-case public-MVP release gate.
-`just data-quality-doctor` is supplementary evidence for operator review and
-does not add live crawler, full mode, OpenSearch, or managed infrastructure to
-the release gate.
+`just data-quality-doctor` is required evidence capture for operator review,
+not an additional acceptance-gate case. It does not add live crawler, full mode,
+OpenSearch, or managed infrastructure to the release gate.
 
 For Phase 11 operator feedback changes, run the read-only data quality doctor
 against a bootstrapped PostgreSQL database:

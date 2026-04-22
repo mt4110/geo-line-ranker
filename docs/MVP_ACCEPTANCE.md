@@ -80,7 +80,7 @@ Before marking the public MVP ready:
 - optional crawler and full-mode notes remain clearly outside the public-MVP gate
 - any public API change includes `schemas/openapi.json` and `API_SPEC.md` updates in the same change
 
-`just data-quality-doctor` remains supplementary release evidence. It does not
+`just data-quality-doctor` is required release evidence capture. It does not
 change the six fixed cases in this document, and review items become blockers
 only when they affect the fixed `sql_only` + `event-csv` public-MVP behavior or
 hide whether this gate is meaningful.

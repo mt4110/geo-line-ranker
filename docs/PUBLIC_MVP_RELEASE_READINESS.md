@@ -34,12 +34,13 @@ Release blockers:
 - any failure in `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - any failure in `cargo test --workspace`
 - any failure in `just mvp-acceptance`
+- any failed or warning-emitting `just data-quality-doctor` evidence pass
 - a red CI job for the release candidate branch
 - a public API change without matching `schemas/openapi.json` and `API_SPEC.md`
 - release notes that make live crawler, full mode, OpenSearch, or managed
   infrastructure sound required for the MVP gate
 
-Supplementary release evidence:
+Required release evidence:
 
 - `just data-quality-doctor` output
 - `GET /readyz` response from the candidate environment when available
@@ -47,11 +48,11 @@ Supplementary release evidence:
   operator content
 - residual risks and their release decision
 
-The data quality doctor is a review aid, not a seventh MVP acceptance case.
-Doctor warnings are blockers because they mean the evidence pass could not be
-trusted. Doctor review items become blockers only when they affect the fixed
-`sql_only` + `event-csv` behavior or hide whether `just mvp-acceptance` is
-meaningful.
+The data quality doctor is required evidence capture, not a seventh MVP
+acceptance case. Doctor warnings or command failures are blockers because they
+mean the evidence pass could not be trusted. Doctor review items become
+blockers only when they affect the fixed `sql_only` + `event-csv` behavior or
+hide whether `just mvp-acceptance` is meaningful.
 
 Optional evidence:
 
@@ -81,8 +82,13 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 just mvp-acceptance
-just data-quality-doctor
 git diff --check
+```
+
+Then capture the required release evidence:
+
+```bash
+just data-quality-doctor
 ```
 
 If `just` is not installed, use:

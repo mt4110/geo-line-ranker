@@ -79,13 +79,14 @@ Without `just`:
 
 This gate deliberately starts only PostgreSQL/PostGIS and Redis, forces `CANDIDATE_RETRIEVAL_MODE=sql_only`, and exercises the CLI, worker, API, snapshots, tracking jobs, and `event-csv` import semantics. Do not add live crawler or OpenSearch requirements to this gate unless the public-MVP operating profile changes through explicit review.
 
-For release candidate evidence, also capture `cargo fmt --all --check`,
+For release candidate evidence, also capture the local validation results
+(`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --workspace`, `just data-quality-doctor`, `git diff --check`, CI
-status, and release notes using
+`cargo test --workspace`, and `git diff --check`), CI status, release notes,
+and the required `just data-quality-doctor` evidence using
 [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md). The data
-quality doctor is a supplementary review pass; it does not add cases to
-`just mvp-acceptance`.
+quality doctor is required evidence capture for release readiness; it does not
+add cases to `just mvp-acceptance`.
 
 ## Readiness checks
 
