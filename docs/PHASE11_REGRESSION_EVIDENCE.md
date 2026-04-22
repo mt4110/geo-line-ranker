@@ -50,9 +50,11 @@ Summarize the evidence in the PR body:
 - required validation commands and outcomes
 - optional full-mode or crawler notes, clearly labeled outside the MVP gate
 
-Use [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) when
-those optional notes need a graduation, automation, follow-up, or explicit
-review decision.
+Use [OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) when those
+optional notes need packet and lane selection, confirm the lane in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), then attach
+the matching packet from
+[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md).
 
 ## Review Guardrails
 

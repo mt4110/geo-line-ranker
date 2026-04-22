@@ -109,7 +109,8 @@ Without `just`:
 ./scripts/post_mvp_hardening.sh
 ```
 
-For optional evidence graduation decisions, print the read-only checklist:
+For optional evidence intake and graduation decisions, print the read-only
+checklist:
 
 ```bash
 just optional-evidence-review
@@ -137,8 +138,11 @@ git diff --check
 
 Crawler graduation and full-mode evaluation can be attached as optional
 evidence, but they remain outside the fixed public-MVP gate. The optional
-evidence checklist is read-only and does not add crawler, full mode,
-OpenSearch, or managed infrastructure to local or CI release gates.
+evidence checklist is read-only and points to
+[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) for routing and
+[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) for templates. It
+does not add crawler, full mode, OpenSearch, or managed infrastructure to
+local or CI release gates.
 
 ## What gets covered
 

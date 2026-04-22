@@ -1,11 +1,20 @@
 # Optional Evidence Graduation
 
-Use this guide after the Phase 14 evidence review loop has classified crawler,
-full-mode, OpenSearch, or infrastructure notes. Its job is to decide whether
-optional evidence stays informational, becomes a scoped follow-up, graduates a
-crawler source, or needs explicit review.
+Use this guide after optional evidence intake or the Phase 14 evidence review
+loop has identified crawler, full-mode, OpenSearch, or infrastructure notes.
+Its job is to confirm whether optional evidence stays informational, becomes a
+scoped follow-up, graduates a crawler source, or needs explicit review.
 
 This guide does not widen the public MVP gate.
+
+When evidence first arrives, start with
+[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) to choose the
+evidence type, packet template, and initial decision lane. Use this guide to
+confirm the lane before a packet is treated as review-ready.
+
+For issue, PR, or review-note records, use the concrete packet templates in
+[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) after choosing a
+decision lane here.
 
 ## Fixed Boundary
 
@@ -47,11 +56,27 @@ Use this ladder for every optional evidence packet:
 5. Prepare crawler graduation only when the crawler packet is complete and the
    source has no promotion blockers.
 6. Request explicit review before changing public gate membership, public API
-   shape, crawler maturity, full-mode/OpenSearch production role, managed
-   infrastructure, or final-ranking ownership.
+   shape, crawler maturity outside the crawler graduation lane,
+   full-mode/OpenSearch production role, managed infrastructure, or
+   final-ranking ownership.
 
 Do not combine public-MVP recovery with crawler graduation, full-mode
 automation, or managed infrastructure work in the same PR.
+
+## Packet Templates
+
+After the ladder chooses a lane, paste the matching template from
+[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md):
+
+- [Crawler Graduation Packet](OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet)
+  for source-specific policy, robots, parser, dry-run, health, and rollback
+  evidence.
+- [Full-Mode Automation Candidate Packet](OPTIONAL_EVIDENCE_PACKETS.md#full-mode-automation-candidate-packet)
+  for SQL-only comparisons, projection sync, OpenSearch health, automation
+  reason, and rollback evidence.
+- [Managed Infrastructure Explicit Review Packet](OPTIONAL_EVIDENCE_PACKETS.md#managed-infrastructure-explicit-review-packet)
+  for hosting, managed database, cache, OpenSearch, IaC, cost, and rollback
+  evidence that must stay explicit review only.
 
 ## Crawler Graduation
 
@@ -60,6 +85,10 @@ or keeping an already-live source in live operation. It remains
 outside the fixed public MVP gate, and the review record must say so.
 
 ### Evidence Packet
+
+Use the
+[Crawler Graduation Packet](OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet)
+template when attaching this evidence to an issue, PR, or review note.
 
 Attach these items before approving graduation:
 
@@ -110,6 +139,10 @@ is already established.
 
 ### Evidence Packet
 
+Use the
+[Full-Mode Automation Candidate Packet](OPTIONAL_EVIDENCE_PACKETS.md#full-mode-automation-candidate-packet)
+template when attaching this evidence to an issue, PR, or review note.
+
 Attach these items:
 
 - SQL-only response samples and full-mode response samples for the same
@@ -151,6 +184,10 @@ managed databases, managed cache, managed OpenSearch, networking, secrets,
 observability, backup, or cost assumptions, but it cannot graduate through a
 hardening PR.
 
+Use the
+[Managed Infrastructure Explicit Review Packet](OPTIONAL_EVIDENCE_PACKETS.md#managed-infrastructure-explicit-review-packet)
+template when attaching this evidence to an issue, PR, or review note.
+
 Do not add production cloud resources, managed services, production IaC, or
 new service dependencies to the fixed public MVP gate without an explicit
 review record.
@@ -173,6 +210,7 @@ Fixed public MVP boundary unchanged:
 - just mvp-acceptance remains six cases:
 
 Evidence packet:
+- Packet template used:
 - Crawler graduation:
 - Full-mode automation candidate:
 - Managed infrastructure:

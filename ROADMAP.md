@@ -2,32 +2,53 @@
 
 ## Current
 
-- Phase 15: optional evidence graduation
-  - turn Phase 14 optional evidence into clear graduation, follow-up, or explicit-review decisions without widening the public MVP gate
+- Phase 17: optional evidence intake workflow
+  - route received crawler, full-mode, managed infrastructure, and doctor evidence to the right packet or review record
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
   - keep strict data-quality doctor output as evidence, with `review_items` classified by humans
-  - define crawler graduation evidence packets before any `source_maturity: live_ready` change
-  - define full-mode automation candidate criteria while keeping OpenSearch and `full` mode outside the fixed gate
-  - keep managed infrastructure as explicit review only
+  - add an intake workflow before packet filling so operators can choose the packet, lane, owner, and recheck path
+  - keep crawler graduation, full-mode automation candidates, OpenSearch, live crawler operation, and managed infrastructure outside the fixed gate
+  - keep managed infrastructure explicit review only
+  - keep `just optional-evidence-review` read-only while pointing to intake workflow and packet templates
 
-## Phase 15 Exit Gates
+## Phase 17 Exit Gates
 
-- `ROADMAP.md` names Phase 15 as current and moves Phase 14 into Recently Completed.
-- Phase 14 evidence review docs lead clearly into optional evidence graduation.
+- `ROADMAP.md` names Phase 17 as current and moves Phase 16 into Recently Completed.
+- Phase 16 packet templates lead clearly to the intake workflow.
+- Operators can choose the right packet from the evidence type.
+- Intake workflow makes the decision-lane prerequisites clear before packet work starts.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
-- Crawler graduation conditions and evidence packet contents are documented.
-- Full-mode automation candidate conditions are documented.
-- Managed infrastructure remains explicit review only and outside the fixed gate.
-- Crawler, full mode, OpenSearch, live crawler operation, and managed infrastructure are not added to fixed-gate requirements.
+- Crawler graduation remains outside the fixed gate even when its packet is complete.
+- Full-mode automation candidates do not add `full` mode or OpenSearch to the fixed gate.
+- Managed infrastructure stays explicit review only and outside hardening gates.
+- OpenSearch, live crawler operation, and managed infrastructure are not added to fixed-gate requirements.
+- `just optional-evidence-review` points operators to the intake workflow and packet templates without running validation or changing services.
 - CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
 
 ## Recently Completed
 
+- Phase 16: optional evidence packet templates
+  - turned Phase 15 optional evidence graduation criteria into issue, PR, and review-note packet templates
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - made crawler graduation packets record policy, robots, parser, dry-run, health, and rollback evidence
+  - made full-mode automation candidate packets record SQL-only comparison, projection sync, OpenSearch health, automation reason, and rollback evidence
+  - kept managed infrastructure as an explicit-review-only packet outside hardening gates
+  - kept OpenSearch, live crawler operation, and managed infrastructure outside the fixed gate
+- Phase 15: optional evidence graduation
+  - turned Phase 14 optional evidence into clear graduation, follow-up, or explicit-review decisions without widening the public MVP gate
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - defined crawler graduation evidence packets before any `source_maturity: live_ready` change
+  - defined full-mode automation candidate criteria while keeping OpenSearch and `full` mode outside the fixed gate
+  - kept managed infrastructure as explicit review only
 - Phase 14: evidence review loop
   - connected post-MVP hardening evidence to repeatable improvement decisions, issue scope, and PR verification
   - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
@@ -71,7 +92,7 @@
 
 ## Next
 
-- Later hardening after Phase 15
+- Later hardening after Phase 17
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

@@ -52,6 +52,8 @@ Required release evidence:
   sql_only + event-csv gate.
   Route optional crawler/full-mode/infra packets after the candidate is healthy
   with: just optional-evidence-review
+  Intake workflow: docs/OPTIONAL_EVIDENCE_INTAKE.md
+  Packet templates: docs/OPTIONAL_EVIDENCE_PACKETS.md
 
 If just is unavailable:
   ./scripts/mvp_acceptance.sh

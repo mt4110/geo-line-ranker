@@ -69,8 +69,11 @@ For recurring post-MVP review, map the lane to the decision vocabulary in
 [POST_MVP_HARDENING.md](POST_MVP_HARDENING.md): blocker, accepted risk,
 follow-up, optional evidence only, or explicit review required.
 When optional crawler, full-mode, OpenSearch, or managed infrastructure
-evidence needs a graduation or automation decision, continue with
-[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md).
+evidence needs packet and lane selection, continue with
+[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md), confirm the lane in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), then use
+[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) for the packet
+record.
 
 ## Issue and PR Granularity
 

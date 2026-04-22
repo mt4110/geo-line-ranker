@@ -111,8 +111,10 @@ infrastructure review visible outside the public-MVP gate. Classify doctor
 explicit review required before opening implementation work.
 
 When optional crawler, full-mode, OpenSearch, or managed infrastructure
-evidence needs a graduation or automation decision, print the read-only
-checklist:
+evidence needs packet and lane selection, print the read-only checklist. It
+points to the intake workflow in
+[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) and the packet
+templates in [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md):
 
 ```bash
 just optional-evidence-review

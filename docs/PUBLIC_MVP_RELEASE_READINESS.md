@@ -61,9 +61,11 @@ Optional evidence:
 
 Optional evidence must be labeled outside the public MVP gate. After the
 candidate is healthy, use
-[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) to decide
-whether that evidence stays informational, becomes a follow-up, prepares
-crawler graduation, or needs explicit review.
+[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) to choose the
+evidence type, packet, and initial lane. Confirm the lane in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), then use
+[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) to record the
+matching packet in an issue, PR, or review note.
 
 ## Command Plan
 
@@ -202,4 +204,6 @@ Crawler graduation, full-mode automation, and managed infrastructure remain
 optional evidence or separate review decisions after the MVP release candidate
 is healthy. They do not become public-MVP gate requirements through post-release
 handoff. Route those packets through
-[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md).
+[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md), confirm the lane in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), and record
+them with [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md).
