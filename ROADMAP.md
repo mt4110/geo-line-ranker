@@ -15,7 +15,7 @@
 - Release readiness guidance gives one path from release candidate prep to evidence capture, release notes, and post-launch follow-up.
 - `MVP_ACCEPTANCE.md`, `OPERATIONS.md`, `POST_LAUNCH_RUNBOOK.md`, and `TESTING.md` point to the Phase 12 readiness flow.
 - `just mvp-acceptance` remains fixed to the six public-MVP cases and only requires PostgreSQL/PostGIS plus Redis.
-- `just data-quality-doctor` is release candidate evidence for human classification; it does not expand the public-MVP acceptance gate.
+- `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` is release candidate evidence for human classification; it does not expand the public-MVP acceptance gate.
 - Live crawler, full mode, OpenSearch, and managed infrastructure remain optional evidence or future review items, not release blockers for the fixed MVP profile.
 - Release notes and handoff docs explicitly describe the public MVP baseline as `sql_only` plus `event-csv`.
 - CI and local validation commands are documented with matching names and outcomes.

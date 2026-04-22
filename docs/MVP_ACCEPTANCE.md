@@ -73,17 +73,18 @@ Before marking the public MVP ready:
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes
 - `cargo test --workspace` passes
 - `just mvp-acceptance` passes
-- `just data-quality-doctor` evidence is captured and classified
+- `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` evidence is captured and classified
 - `git diff --check` passes
 - CI is green for the release candidate branch
 - release notes describe `sql_only` as the public-MVP baseline
 - optional crawler and full-mode notes remain clearly outside the public-MVP gate
 - any public API change includes `schemas/openapi.json` and `API_SPEC.md` updates in the same change
 
-`just data-quality-doctor` is required release evidence capture. It does not
-change the six fixed cases in this document, and review items become blockers
-only when they affect the fixed `sql_only` + `event-csv` public-MVP behavior or
-hide whether this gate is meaningful.
+`just data-quality-doctor` is required release evidence capture. Run it with
+`DATA_QUALITY_FAIL_ON_WARNING=true` for release readiness so warnings fail the
+evidence step. It does not change the six fixed cases in this document, and
+review items become blockers only when they affect the fixed `sql_only` +
+`event-csv` public-MVP behavior or hide whether this gate is meaningful.
 
 ## One-Shot Run
 

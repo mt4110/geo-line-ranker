@@ -83,10 +83,12 @@ For release candidate evidence, also capture the local validation results
 (`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
 `cargo test --workspace`, and `git diff --check`), CI status, release notes,
-and the required `just data-quality-doctor` evidence using
+and the required `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
+evidence using
 [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md). The data
-quality doctor is required evidence capture for release readiness; it does not
-add cases to `just mvp-acceptance`.
+quality doctor is required evidence capture for release readiness; strict mode
+makes doctor warnings fail the evidence step, but it does not add cases to
+`just mvp-acceptance`.
 
 ## Readiness checks
 

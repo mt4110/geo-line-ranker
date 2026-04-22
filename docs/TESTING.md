@@ -69,13 +69,15 @@ git diff --check
 Then capture the required release evidence:
 
 ```bash
-just data-quality-doctor
+DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
 ```
 
 `just mvp-acceptance` remains the six-case public-MVP release gate.
 `just data-quality-doctor` is required evidence capture for operator review,
-not an additional acceptance-gate case. It does not add live crawler, full mode,
-OpenSearch, or managed infrastructure to the release gate.
+not an additional acceptance-gate case. Run it with
+`DATA_QUALITY_FAIL_ON_WARNING=true` for release readiness so doctor warnings
+fail the evidence step. It does not add live crawler, full mode, OpenSearch, or
+managed infrastructure to the release gate.
 
 For Phase 11 operator feedback changes, run the read-only data quality doctor
 against a bootstrapped PostgreSQL database:

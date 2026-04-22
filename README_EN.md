@@ -39,7 +39,7 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 - `search_execute` persists through `POST /v1/track`, refreshes popularity / area snapshot weights through station-linked schools, and now uses config-driven calibration.
 - `cargo run -p cli -- snapshot refresh` reapplies the current tracking config, invalidates recommendation cache, and syncs the full-mode projection when enabled.
 - Public MVP acceptance remains SQL-only and deterministic; live crawling and full-mode retrieval stay optional side paths.
-- Release candidate decisions use `just release-readiness` to review the flow, `just mvp-acceptance` as the fixed gate, and `just data-quality-doctor` as required evidence capture.
+- Release candidate decisions use `just release-readiness` to review the flow, `just mvp-acceptance` as the fixed gate, and `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` as required evidence capture.
 
 ## Quickstart
 

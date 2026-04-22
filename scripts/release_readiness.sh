@@ -46,13 +46,14 @@ Required local validation:
   git diff --check
 
 Required release evidence:
-  just data-quality-doctor
-  Treat doctor warnings or command failures as blockers. Treat review items as
-  classification evidence unless they affect the fixed sql_only + event-csv gate.
+  DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
+  This makes doctor warnings or command failures block release readiness.
+  Treat review items as classification evidence unless they affect the fixed
+  sql_only + event-csv gate.
 
 If just is unavailable:
   ./scripts/mvp_acceptance.sh
-  ./scripts/data_quality_doctor.sh
+  DATA_QUALITY_FAIL_ON_WARNING=true ./scripts/data_quality_doctor.sh
 
 CI evidence to compare with local validation:
   rust-quality
