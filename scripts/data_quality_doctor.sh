@@ -434,24 +434,19 @@ ORDER BY duplicate_count DESC, source_type ASC, source_key ASC, school_id ASC
 LIMIT 20;
 "
 
-guardrail_count "duplicate source manifest ids" "source_manifests" "
+guardrail_count "source manifest identity mismatches" "source_manifests" "
 SELECT COUNT(*)
-FROM (
-    SELECT source_id, COUNT(*) AS manifest_count
-    FROM source_manifests
-    GROUP BY source_id
-    HAVING COUNT(*) > 1
-) AS duplicates;
+FROM source_manifests
+WHERE COALESCE(manifest_json ->> 'source_id', '') <> source_id;
 " "
 SELECT
+    manifest_path,
     source_id,
-    COUNT(*) AS manifest_count,
-    MIN(updated_at) AS first_updated_at,
-    MAX(updated_at) AS latest_updated_at
+    manifest_json ->> 'source_id' AS manifest_json_source_id,
+    updated_at
 FROM source_manifests
-GROUP BY source_id
-HAVING COUNT(*) > 1
-ORDER BY source_id ASC
+WHERE COALESCE(manifest_json ->> 'source_id', '') <> source_id
+ORDER BY updated_at DESC, manifest_path ASC
 LIMIT 20;
 "
 
