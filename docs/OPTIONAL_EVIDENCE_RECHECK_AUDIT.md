@@ -14,6 +14,10 @@ Then use
 [OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md)
 to check that the closeout record is complete, linked records are reachable,
 and repeat markers have an owner and next action.
+When multiple records need a read-only shelf view, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
+to inventory lifecycle state, owner, lane, stale class, closeout status, linked
+actions, and integrity result.
 
 This is a read-only audit and stale hygiene guide. It does not create GitHub
 labels, run validation by itself, change source maturity, enable full mode,
@@ -192,6 +196,10 @@ Use this checklist for each open optional evidence record:
 11. After writing closeout history, confirm closeout integrity and orphan
     prevention with
     [OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md).
+12. For review inventory, add or update a lifecycle index row with
+    [OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
+    so orphan, stale, and unclear-owner candidates are visible without running
+    validation.
 
 ## Audit Note Template
 

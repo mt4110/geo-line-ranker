@@ -13,6 +13,9 @@ stayed open, split, opened a follow-up, or linked explicit review.
 After the closeout record exists, use
 `docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md` to check required fields, link
 reachability, repeated-stale routing, and primary status consistency.
+When operators need to review records across intake, triage, recheck, closeout,
+and integrity, use `docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md` as a read-only
+lifecycle index and review inventory.
 
 This guide is a triage loop, not an acceptance test. It does not create GitHub
 labels, run validation by itself, change source maturity, require OpenSearch,
@@ -65,7 +68,10 @@ Use this loop for every optional evidence issue, PR, or review note:
    splitting, opening follow-up, or linking explicit review.
 8. Check `docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md` so closeout records do
    not leave orphaned links or marker-only next actions.
-9. Close only when the lane close condition below is satisfied.
+9. For multi-record review, update or paste a lifecycle index row from
+   `docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md` so the current state, owner,
+   stale status, links, and integrity result are visible.
+10. Close only when the lane close condition below is satisfied.
 
 If one record needs multiple lanes, split it before implementation starts.
 When more than one lane seems plausible, choose the stricter lane.
@@ -153,6 +159,12 @@ follow-up unless one final dated external wait is recorded. Then use
 [OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md)
 to confirm required-field completeness, link reachability, orphan prevention,
 and primary closeout status consistency.
+For review inventory across multiple records, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
+to map the same flow into lifecycle states such as `intake-recorded`,
+`triaged`, `recheck-scheduled`, `recheck-overdue`, `closeout-recorded`,
+`integrity-complete`, `follow-up-linked`, `explicit-review-linked`, and
+`closed`.
 
 ## Recheck Result Template
 
@@ -185,6 +197,7 @@ Before closing an optional evidence issue, PR, or review note, confirm:
 - the closeout ledger record explains the decision history
 - the closeout integrity check confirms required fields, linked records,
   repeated-stale routing, and status/marker consistency
+- lifecycle index state is clear when the record is part of a review inventory
 - labels or written label equivalents are recorded as aids only
 - `just mvp-acceptance` remains the fixed six-case gate
 - crawler graduation remains outside the fixed gate even when packet complete
