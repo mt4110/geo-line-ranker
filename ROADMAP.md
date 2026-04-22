@@ -2,15 +2,13 @@
 
 ## Current
 
-- Phase 24: optional evidence lifecycle inventory report / review snapshot
-  - turn lifecycle index rows into a read-only inventory report and review snapshot operators can share without replacing source records
-  - add a lifecycle inventory report guide for purpose, scope, non-goals, header, row, summary, and finding formats
-  - connect lifecycle index, intake, triage, recheck audit, closeout ledger, and closeout integrity guidance to the report snapshot
-  - make `just optional-evidence-review` point to inventory report and review snapshot guidance while staying read-only
-  - define lifecycle-state summary counts for intake, triage, recheck, closeout, integrity, follow-up, explicit review, and closed records
-  - record orphan, stale, and unclear-owner conditions as review findings, not gate failures
-  - keep findings as edit candidates for the source record, linked record, closeout ledger, or integrity note
-  - keep the inventory report as shared review inventory only, not an acceptance gate, release gate, required label setup, or replacement source of truth
+- Phase 25: optional evidence operating handoff / closeout
+  - close the Phase 17-24 optional evidence operating skeleton as a final read-only handoff flow
+  - add a one-page operating handoff guide for intake -> triage -> recheck audit -> closeout ledger -> closeout integrity -> lifecycle index -> inventory report
+  - make it clear which optional evidence document to use at each operating moment
+  - make `just optional-evidence-review` point to the operating handoff / closeout guide while staying read-only
+  - keep optional evidence records, lifecycle index rows, inventory reports, and findings as review inventory and handoff support only
+  - record orphan, stale, and unclear-owner findings as edit candidates for the source record, linked record, closeout ledger, or integrity note, not gate failures
   - keep labels as record aids only, not required gates or repository setup prerequisites
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
@@ -19,18 +17,17 @@
   - keep full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
   - keep managed infrastructure explicit review only
   - keep public API shape unchanged
+  - set the next improvement area to README, Quickstart, default sample, and human-friendly onboarding polish
 
-## Phase 24 Exit Gates
+## Phase 25 Exit Gates
 
-- `ROADMAP.md` names Phase 24 as current and moves Phase 23 into Recently Completed.
-- Optional evidence lifecycle inventory report guidance is added.
-- Optional evidence lifecycle index guidance leads to the inventory report.
-- Intake, triage, recheck audit, closeout ledger, and closeout integrity flow connects to a report snapshot.
-- The report defines minimum header, row, summary, and finding fields.
-- Lifecycle-state aggregate items are defined for the review snapshot.
-- Orphan, stale, and unclear-owner records are findings only, not gate failures.
-- Findings are edit candidates for the source record, linked record, closeout ledger, or integrity note.
-- The inventory report is review inventory and a snapshot, not an acceptance gate, release gate, required label setup, or replacement source of truth.
+- `ROADMAP.md` names Phase 25 as current and moves Phase 24 into Recently Completed.
+- Optional evidence operating handoff / closeout guidance is added.
+- The final operating flow is visible as intake -> triage -> recheck audit -> closeout ledger -> closeout integrity -> lifecycle index -> inventory report.
+- The handoff guide makes it clear which optional evidence document to use in each operating moment.
+- `just optional-evidence-review` points operators to the operating handoff / closeout guide without running validation or changing services.
+- Optional evidence records, lifecycle index rows, inventory reports, and findings remain review inventory and handoff support only, not gates.
+- Orphan, stale, and unclear-owner findings remain edit candidates for the source record, linked record, closeout ledger, or integrity note, not gate failures.
 - Labels are documented as record aids only and are not required gates.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
@@ -39,13 +36,30 @@
 - Full-mode automation candidates do not add `full` mode or OpenSearch to the fixed gate.
 - Managed infrastructure stays explicit review only and outside hardening gates.
 - OpenSearch, live crawler operation, and managed infrastructure are not added to fixed-gate requirements.
-- `just optional-evidence-review` points operators to the GitHub templates, intake workflow, triage loop, recheck audit, and packet templates without running validation or changing services.
+- The next improvement area is README, Quickstart, default sample, and human-friendly onboarding, without changing the fixed public MVP boundary.
 - CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
 
 ## Recently Completed
 
+- Phase 24: optional evidence lifecycle inventory report / review snapshot
+  - turned lifecycle index rows into a read-only inventory report and review snapshot operators can share without replacing source records
+  - added a lifecycle inventory report guide for purpose, scope, non-goals, header, row, summary, and finding formats
+  - connected lifecycle index, intake, triage, recheck audit, closeout ledger, and closeout integrity guidance to the report snapshot
+  - made `just optional-evidence-review` point to inventory report and review snapshot guidance while staying read-only
+  - defined lifecycle-state summary counts for intake, triage, recheck, closeout, integrity, follow-up, explicit review, and closed records
+  - recorded orphan, stale, and unclear-owner conditions as review findings, not gate failures
+  - kept findings as edit candidates for the source record, linked record, closeout ledger, or integrity note
+  - kept the inventory report as shared review inventory only, not an acceptance gate, release gate, required label setup, or replacement source of truth
+  - kept labels as record aids only, not required gates or repository setup prerequisites
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - kept crawler graduation outside the fixed gate even when its packet is complete
+  - kept full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
+  - kept managed infrastructure explicit review only
+  - kept public API shape unchanged
 - Phase 23: optional evidence lifecycle index / review inventory
   - turned optional evidence intake, triage, recheck audit, closeout ledger, and closeout integrity records into a read-only lifecycle index operators can review
   - added a lifecycle index guide for record states, minimum inventory fields, and review conditions for orphan, stale, and unclear-owner records
@@ -196,7 +210,12 @@
 
 ## Next
 
-- Later hardening after Phase 24
+- After Phase 25 human-friendly onboarding polish
+  - improve README orientation without widening the fixed public MVP gate
+  - polish Quickstart language and command flow for first-time operators
+  - make the default sample easier to understand and inspect
+  - improve human-friendly onboarding around what to run first, what success looks like, and where to go next
+- Later hardening after Phase 25
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review
