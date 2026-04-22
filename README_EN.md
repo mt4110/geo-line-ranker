@@ -3,7 +3,7 @@
 Deterministic geo-first and line-first recommendation engine for local discovery.
 PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is optional cache only, OpenSearch is optional candidate retrieval for full mode, and allowlist crawl remains an optional side path. No AI, ML, embeddings, or vector search.
 
-## What is in Phase 10
+## What is included
 
 - Rust workspace with `api`, `cli`, `worker`, and `crawler`
 - SQL-only minimal mode backed by PostgreSQL/PostGIS
@@ -21,7 +21,9 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 - Optional allowlist crawler with parser registry, raw HTML staging, differential checksum fetch, and audited fetch / parse / dedupe reports
 - Source maturity labels plus parser expected-shape metadata on crawl manifests
 - Parser health summary command for recent crawl runs, fetch outcomes, parse levels, latest parser errors, and `logical_name` red flags per manifest
-- Read-only post-launch doctor and runbook for incident triage
+- Read-only post-launch doctor, data quality doctor, and operator feedback loop
+  for incident triage
+- Release readiness guide for public MVP release candidate evidence
 - `crawler scaffold-domain` for manifest / fixture / guide scaffolding when adding a new crawl source, now with inferred defaults and shape-aware guidance
 - First real-domain crawl example for the University of Tokyo public events JSON feed
 - Second real-domain crawl example for the Shibaura Institute of Technology Junior High admissions event page
@@ -37,6 +39,7 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 - `search_execute` persists through `POST /v1/track`, refreshes popularity / area snapshot weights through station-linked schools, and now uses config-driven calibration.
 - `cargo run -p cli -- snapshot refresh` reapplies the current tracking config, invalidates recommendation cache, and syncs the full-mode projection when enabled.
 - Public MVP acceptance remains SQL-only and deterministic; live crawling and full-mode retrieval stay optional side paths.
+- Release candidate decisions use `just release-readiness` to review the flow, `just mvp-acceptance` as the fixed gate, and `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` as required evidence capture.
 
 ## Quickstart
 
@@ -62,6 +65,8 @@ cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.
 cargo run -p crawler -- parse --manifest configs/crawler/sources/custom_example.yaml
 cargo run -p cli -- jobs list --limit 20
 ./scripts/post_launch_doctor.sh
+./scripts/data_quality_doctor.sh
+./scripts/release_readiness.sh
 ```
 
 The demo fixture now includes the committed real-domain crawl schools, and `crawler -- serve` auto-runs only manifests marked `source_maturity = live_ready`. For full mode, projection sync, the real-domain crawler manifests, and worker job recovery, use [docs/QUICKSTART.md](docs/QUICKSTART.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
@@ -123,9 +128,12 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 - [Contributor Rules](AGENTS.md)
 - [Local Contributing Guide](docs/CONTRIBUTING_LOCAL.md)
 - [Quickstart](docs/QUICKSTART.md)
+- [Public MVP Release Readiness](docs/PUBLIC_MVP_RELEASE_READINESS.md)
+- [MVP Acceptance](docs/MVP_ACCEPTANCE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Operations](docs/OPERATIONS.md)
 - [Post-launch Runbook](docs/POST_LAUNCH_RUNBOOK.md)
+- [Operator Feedback Loop](docs/OPERATOR_FEEDBACK_LOOP.md)
 - [Testing](docs/TESTING.md)
 - [Data Sources](docs/DATA_SOURCES.md)
 - [Data Licenses](docs/DATA_LICENSES.md)

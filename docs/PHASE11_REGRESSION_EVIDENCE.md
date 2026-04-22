@@ -3,6 +3,11 @@
 Use this checklist when a PR changes operator feedback, runbooks, imports,
 snapshots, jobs, or data quality checks.
 
+For release candidate readiness, use
+[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) as the
+top-level evidence bundle and use this file only for the operator feedback or
+data quality regression portion.
+
 ## Required Validation
 
 Run the stable workspace checks:

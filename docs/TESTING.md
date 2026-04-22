@@ -27,6 +27,7 @@ Pull request CI keeps the static checks and test execution separate:
 - `rust-postgres-tests`: PostgreSQL/Redis-backed shards for `api`, `cli`,
   `crawler`, and `worker` plus `storage-postgres`.
 - `mvp-acceptance`: the public MVP acceptance flow.
+- `data-quality-doctor`: the read-only data quality evidence pass.
 
 Each `rust-postgres-tests` shard gets its own GitHub Actions PostgreSQL and
 Redis services, and runs with `RUST_TEST_THREADS=1` inside the shard. This keeps
@@ -44,6 +45,39 @@ cargo run -p cli -- seed example
 ```
 
 The manual smoke sections below are intentionally broader than the public-MVP release gate. For the fixed six-case acceptance flow that excludes live crawler and `full` mode, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md).
+
+## Release Candidate Validation
+
+Phase 12 release readiness uses
+[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) as the
+top-level checklist. Print the command plan first:
+
+```bash
+just release-readiness
+```
+
+Then run the local release candidate validation set:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+just mvp-acceptance
+git diff --check
+```
+
+Then capture the required release evidence:
+
+```bash
+DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
+```
+
+`just mvp-acceptance` remains the six-case public-MVP release gate.
+`just data-quality-doctor` is required evidence capture for operator review,
+not an additional acceptance-gate case. Run it with
+`DATA_QUALITY_FAIL_ON_WARNING=true` for release readiness so doctor warnings
+fail the evidence step. It does not add live crawler, full mode, OpenSearch, or
+managed infrastructure to the release gate.
 
 For Phase 11 operator feedback changes, run the read-only data quality doctor
 against a bootstrapped PostgreSQL database:

@@ -68,3 +68,6 @@ post-launch-doctor:
 
 data-quality-doctor:
   ./scripts/data_quality_doctor.sh
+
+release-readiness:
+  ./scripts/release_readiness.sh

@@ -25,6 +25,7 @@
 - Added crawl audit tables for run status, fetch logs, parse reports, and dedupe reports.
 - Added `apps/crawler`, `crates/crawler-core`, and `crates/connectors/generic-http`.
 - Added crawl manifest `source_maturity`, parser `expected_shape`, shape-aware doctor checks, and `crawler scaffold-domain`.
+- Added public MVP release readiness guidance for release candidate evidence, fixed SQL-only acceptance, data quality review, and release notes handoff.
 - Added the Aoyama Gakuin Junior High school-tour crawl manifest, fixture scaffold, parser, and live-ready integration coverage.
 - Upgraded `crawler scaffold-domain` to infer better defaults from source metadata and emit shape-aware fixture / promotion guidance.
 - Expanded `crawler --help` and subcommand help so routine crawler workflows can be discovered directly from the CLI.

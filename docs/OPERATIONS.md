@@ -16,7 +16,9 @@ The initial public-MVP operating profile is intentionally narrow:
 
 - candidate retrieval mode: `sql_only`
 - operational content path: `event-csv`
-- release gate: [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md)
+- release readiness flow:
+  [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md)
+- fixed release gate: [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md)
 
 Live crawler flows and `full` mode stay supported as operator workflows, but they are not part of the public-MVP acceptance gate. Some crawl sources still carry manual-review expectations before production use, so the first public release should stay on the deterministic SQL-only path.
 
@@ -50,7 +52,20 @@ Without `just`:
 
 ## Release readiness routine
 
-Use the fixed public-MVP gate before cutting a release candidate:
+Use the Phase 12 release readiness guide before cutting or validating a release
+candidate:
+
+```bash
+just release-readiness
+```
+
+Without `just`:
+
+```bash
+./scripts/release_readiness.sh
+```
+
+Then run the fixed public-MVP gate:
 
 ```bash
 just mvp-acceptance
@@ -63,6 +78,17 @@ Without `just`:
 ```
 
 This gate deliberately starts only PostgreSQL/PostGIS and Redis, forces `CANDIDATE_RETRIEVAL_MODE=sql_only`, and exercises the CLI, worker, API, snapshots, tracking jobs, and `event-csv` import semantics. Do not add live crawler or OpenSearch requirements to this gate unless the public-MVP operating profile changes through explicit review.
+
+For release candidate evidence, also capture the local validation results
+(`cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --workspace`, and `git diff --check`), CI status, release notes,
+and the required `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
+evidence using
+[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md). The data
+quality doctor is required evidence capture for release readiness; strict mode
+makes doctor warnings fail the evidence step, but it does not add cases to
+`just mvp-acceptance`.
 
 ## Readiness checks
 
