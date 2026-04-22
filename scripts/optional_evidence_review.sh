@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[optional-evidence-review] intake, triage, recheck audit, closeout ledger, integrity, lifecycle index, inventory report, and stale hygiene checklist
+[optional-evidence-review] operating handoff, intake, triage, recheck audit, closeout ledger, integrity, lifecycle index, inventory report, and stale hygiene checklist
 
 Repository:
   root: $ROOT_DIR
@@ -38,6 +38,7 @@ Fixed public MVP boundary:
     OpenSearch, managed infrastructure
 
 Primary guides:
+  docs/OPTIONAL_EVIDENCE_OPERATING_HANDOFF.md
   docs/OPTIONAL_EVIDENCE_INTAKE.md
   docs/OPTIONAL_EVIDENCE_TRIAGE.md
   docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
@@ -53,6 +54,22 @@ GitHub templates:
   .github/ISSUE_TEMPLATE/optional_evidence.md
   .github/pull_request_template.md
   templates are records, not acceptance tests or new gates
+
+Operating handoff and closeout:
+  guide: docs/OPTIONAL_EVIDENCE_OPERATING_HANDOFF.md
+  use as the one-page map for which optional evidence document to open next
+  final operating flow:
+    intake -> triage -> recheck audit -> closeout ledger -> closeout integrity
+      -> lifecycle index -> inventory report
+  this is review and handoff support only; it is not an acceptance gate,
+    release gate, required label setup, validation result, automation
+    requirement, or replacement source of truth
+  closeout findings:
+    orphan candidate, stale candidate, and unclear owner are edit candidates
+      for the source record, linked record, closeout ledger, or integrity note
+    they are not failures
+  next improvement area after this handoff:
+    README, Quickstart, default sample, and human-friendly onboarding polish
 
 Intake workflow:
   1. capture the evidence source and confirm it is reproducible enough to route
@@ -312,6 +329,8 @@ Decision ladder:
      production role, managed infra, or final-ranking owner
 
 Packet templates to paste into issues, PRs, or review notes:
+  operating handoff and closeout:
+    docs/OPTIONAL_EVIDENCE_OPERATING_HANDOFF.md
   minimal GitHub issue record:
     .github/ISSUE_TEMPLATE/optional_evidence.md
   PR fixed-boundary checks:
