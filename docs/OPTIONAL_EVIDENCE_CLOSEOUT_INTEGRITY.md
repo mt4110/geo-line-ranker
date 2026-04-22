@@ -49,8 +49,8 @@ humans before issue or PR work starts.
 Public API shape should not change as part of closeout integrity. If an
 integrity check finds a record whose next action would change public API shape,
 route it to explicit review before implementation and update
-`schemas/openapi.json` plus `API_SPEC.md` only in the approved implementation
-change.
+`schemas/openapi.json` plus create or update `API_SPEC.md` only in the approved
+implementation change.
 
 ## When to Run
 

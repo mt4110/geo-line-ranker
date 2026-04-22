@@ -51,8 +51,9 @@ Doctor warnings fail the evidence pass. Doctor `review_items` are classified
 by humans before issue or PR work starts.
 
 Public API changes should stay out of optional evidence triage. If a change
-does alter public API shape, update `schemas/openapi.json` and `API_SPEC.md`
-in the same change and route the record to explicit review required.
+does alter public API shape, update `schemas/openapi.json` and create or
+update `API_SPEC.md` in the same change and route the record to explicit
+review required.
 
 ## Triage Loop
 
@@ -216,5 +217,5 @@ Before closing an optional evidence issue, PR, or review note, confirm:
 - full-mode automation does not add `full` mode or OpenSearch to the fixed gate
 - managed infrastructure remains explicit review only
 - strict doctor `review_items` are classified by humans
-- public API shape is unchanged, or `schemas/openapi.json` and `API_SPEC.md`
-  changed in the same explicit-review follow-up
+- public API shape is unchanged, or `schemas/openapi.json` and
+  `API_SPEC.md` were created or updated in the same explicit-review follow-up

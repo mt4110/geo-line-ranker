@@ -55,8 +55,8 @@ workflow to choose the optional packet. Otherwise, classify it through the
 post-MVP hardening review lanes.
 
 Public API changes should be avoided in optional evidence intake. If a change
-does alter public API shape, update `schemas/openapi.json` and `API_SPEC.md`
-in the same change.
+does alter public API shape, update `schemas/openapi.json` and create or
+update `API_SPEC.md` in the same change.
 
 ## Intake Steps
 

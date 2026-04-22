@@ -42,8 +42,8 @@ humans before issue or PR work starts.
 
 Public API shape should not change as part of inventory reporting. If a report
 finding points to work that would change public API shape, route it to explicit
-review before implementation and update `schemas/openapi.json` plus
-`API_SPEC.md` only in the approved implementation change.
+review before implementation and update `schemas/openapi.json` plus create or
+update `API_SPEC.md` only in the approved implementation change.
 
 ## Purpose
 

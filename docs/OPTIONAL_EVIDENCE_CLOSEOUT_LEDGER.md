@@ -51,8 +51,8 @@ humans before issue or PR work starts.
 
 Public API shape should not change as part of closeout bookkeeping. If a
 decision would change public API shape, link an explicit review record and
-update `schemas/openapi.json` plus `API_SPEC.md` only in the approved
-implementation change.
+update `schemas/openapi.json` plus create or update `API_SPEC.md` only in the
+approved implementation change.
 
 ## Ledger Location
 
