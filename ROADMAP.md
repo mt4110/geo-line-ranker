@@ -2,12 +2,12 @@
 
 ## Current
 
-- Phase 19: optional evidence triage / recheck loop
-  - make optional evidence issues, PRs, and review notes easy to classify, recheck, and close after intake
-  - add a triage guide for label aids, decision lanes, owners, recheck commands, and lane-specific close conditions
+- Phase 20: optional evidence recheck audit / stale hygiene
+  - make overdue optional evidence rechecks easy to find, classify, and route without widening the fixed public MVP gate
+  - add a recheck audit guide for stale recheck classes, owners, next actions, and close conditions
+  - connect optional evidence triage to the recheck audit path so stale records can return to a clear decision
+  - make `just optional-evidence-review` point to recheck audit and stale hygiene guidance while staying read-only
   - keep labels as record aids only, not required gates or repository setup prerequisites
-  - connect optional evidence issue and PR templates to the triage loop
-  - make `just optional-evidence-review` point to intake, triage, packets, labels, recheck, and close guidance while staying read-only
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
   - keep strict data-quality doctor output as evidence, with `review_items` classified by humans
@@ -16,27 +16,40 @@
   - keep managed infrastructure explicit review only
   - keep public API shape unchanged
 
-## Phase 19 Exit Gates
+## Phase 20 Exit Gates
 
-- `ROADMAP.md` names Phase 19 as current and moves Phase 18 into Recently Completed.
-- Optional evidence issue and PR templates lead to the triage guide.
-- Decision lane, owner, recheck command, recheck date, and close condition are defined for each lane.
+- `ROADMAP.md` names Phase 20 as current and moves Phase 19 into Recently Completed.
+- Optional evidence triage guidance leads to the recheck audit guide.
+- Stale recheck, overdue, blocked, split-needed, and closed classes are defined.
+- Recheck-overdue records have a named owner, next action, and close condition.
 - Labels are documented as record aids only and are not required gates.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
-- Recheck-date guidance identifies the exact command or evidence source to inspect before close.
 - Crawler graduation remains outside the fixed gate even when its packet is complete.
 - Full-mode automation candidates do not add `full` mode or OpenSearch to the fixed gate.
 - Managed infrastructure stays explicit review only and outside hardening gates.
 - OpenSearch, live crawler operation, and managed infrastructure are not added to fixed-gate requirements.
-- `just optional-evidence-review` points operators to the GitHub templates, intake workflow, triage loop, and packet templates without running validation or changing services.
+- `just optional-evidence-review` points operators to the GitHub templates, intake workflow, triage loop, recheck audit, and packet templates without running validation or changing services.
 - CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
 
 ## Recently Completed
 
+- Phase 19: optional evidence triage / recheck loop
+  - made optional evidence issues, PRs, and review notes easy to classify, recheck, and close after intake
+  - added a triage guide for label aids, decision lanes, owners, recheck commands, and lane-specific close conditions
+  - kept labels as record aids only, not required gates or repository setup prerequisites
+  - connected optional evidence issue and PR templates to the triage loop
+  - made `just optional-evidence-review` point to intake, triage, packets, labels, recheck, and close guidance while staying read-only
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - kept crawler graduation outside the fixed gate even when its packet is complete
+  - kept full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
+  - kept managed infrastructure explicit review only
+  - kept public API shape unchanged
 - Phase 18: optional evidence issue and PR templates
   - connected the Phase 17 optional evidence intake workflow to minimal GitHub issue and PR templates
   - kept templates ready to paste as review aids, not new release gates
@@ -116,7 +129,7 @@
 
 ## Next
 
-- Later hardening after Phase 19
+- Later hardening after Phase 20
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

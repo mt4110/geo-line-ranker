@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[optional-evidence-review] intake, triage, and recheck checklist
+[optional-evidence-review] intake, triage, recheck audit, and stale hygiene checklist
 
 Repository:
   root: $ROOT_DIR
@@ -40,6 +40,7 @@ Fixed public MVP boundary:
 Primary guides:
   docs/OPTIONAL_EVIDENCE_INTAKE.md
   docs/OPTIONAL_EVIDENCE_TRIAGE.md
+  docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
   docs/POST_MVP_HARDENING.md
   docs/OPTIONAL_EVIDENCE_GRADUATION.md
   docs/OPTIONAL_EVIDENCE_PACKETS.md
@@ -65,6 +66,40 @@ Triage after an issue, PR, or review note exists:
   4. record owner, recheck date, recheck command, and close condition
   5. use needs-recheck only when the record must be revisited later
   6. close only when the lane-specific close condition is satisfied
+
+Recheck audit and stale hygiene:
+  guide: docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
+  use when a recheck date has arrived, needs-recheck is present, or an open
+    optional evidence record has no clear next action
+  stale recheck means:
+    an open record whose recheck date arrived, whose needs-recheck marker has
+      no current result, or whose next action is unclear after intake
+  stale recheck classes:
+    recheck:on-time
+    recheck:overdue
+    recheck:blocked
+    recheck:split-needed
+    recheck:closed
+  stale hygiene decisions:
+    close: evidence is recorded, no action remains, and the lane close
+      condition is met
+    keep-open: still waiting for a named owner, date, source, or external
+      decision
+    split: mixed evidence, lanes, owners, commands, or close conditions
+    follow-up: scoped issue or PR needed without public-MVP profile expansion
+    explicit-review: boundary, API shape, managed infrastructure,
+      full-mode/OpenSearch production role, crawler maturity outside the
+      graduation lane, or final-ranking ownership risk
+  overdue records must name:
+    owner
+    next action
+    close condition
+  optional GitHub read-only inventory when labels are available:
+    gh issue list --state open --label optional-evidence --json number,title,labels,assignees,updatedAt,url
+    gh pr list --state open --label optional-evidence --json number,title,labels,assignees,updatedAt,url
+  if labels are unavailable:
+    search issue, PR, or review-note bodies for optional evidence,
+      needs-recheck, recheck date, and lane names
 
 Suggested label aids, not gates:
   optional-evidence
@@ -97,6 +132,7 @@ Packet selection:
   strict data-quality doctor review item:
     use docs/POST_MVP_HARDENING.md doctor review item unless it points to
     crawler, full-mode, OpenSearch, or managed infrastructure evidence
+    review_items are evidence and still require human classification
   crawler source, policy, robots, parser, dry-run, health, or maturity:
     docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
   SQL-only/full-mode comparison, projection sync, or OpenSearch health:
@@ -122,6 +158,8 @@ Packet templates to paste into issues, PRs, or review notes:
     .github/pull_request_template.md
   triage, labels, recheck, and close:
     docs/OPTIONAL_EVIDENCE_TRIAGE.md
+  recheck audit and stale hygiene:
+    docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
   crawler graduation:
     docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
   full-mode automation candidate:
@@ -187,6 +225,13 @@ Recheck result template:
   docs/OPTIONAL_EVIDENCE_TRIAGE.md#recheck-result-template
   fields: date, owner, labels, lane, recheck command or source, result,
     fixed boundary, public API shape, next recheck date, issue or PR
+
+Recheck audit templates:
+  docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md#audit-note-template
+  docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md#closeout-comment-template
+  fields: stale class, stale hygiene decision, owner, overdue date,
+    recheck command or source, next action, close condition, fixed boundary,
+    public API shape, linked follow-up, split record, or explicit review
 
 Local validation and evidence when files change:
   cargo fmt --all --check

@@ -4,6 +4,11 @@ Use this guide after an optional evidence issue, PR, or review note exists.
 Its job is to make the next label, lane, recheck, and close condition obvious
 without widening the fixed public MVP gate.
 
+When a recheck date has arrived, a record has `needs-recheck`, or open optional
+evidence may have gone stale, use
+`docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md` to classify the record and route the
+next action.
+
 This guide is a triage loop, not an acceptance test. It does not create GitHub
 labels, run validation by itself, change source maturity, require OpenSearch,
 enable full mode, provision managed infrastructure, or change public API shape.
@@ -47,8 +52,9 @@ Use this loop for every optional evidence issue, PR, or review note:
 3. Choose one primary source label and one primary decision lane.
 4. Record the owner, recheck date, recheck command, and close condition.
 5. Add `needs-recheck` only when the record must be revisited later.
-6. On or after the recheck date, rerun the lane-specific command or inspect
-   the linked evidence source.
+6. On or after the recheck date, use
+   `docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md` to classify stale records, then
+   rerun the lane-specific command or inspect the linked evidence source.
 7. Close only when the lane close condition below is satisfied.
 
 If one record needs multiple lanes, split it before implementation starts.
@@ -108,6 +114,25 @@ just mvp-acceptance
 DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
 git diff --check
 ```
+
+## Recheck Audit
+
+Use `docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md` when an optional evidence issue,
+PR, or review note has an arrived recheck date, a `needs-recheck` marker, or no
+clear next action after intake. The audit guide defines these stale recheck
+classes:
+
+- `recheck:on-time`
+- `recheck:overdue`
+- `recheck:blocked`
+- `recheck:split-needed`
+- `recheck:closed`
+
+It also defines stale hygiene decisions: `close`, `keep-open`, `split`,
+`follow-up`, and `explicit-review`. These decisions route records back to a
+named owner, next action, and close condition. They are not new gates, and they
+do not add crawler graduation, full mode, OpenSearch, managed infrastructure,
+or public API changes to the fixed public MVP boundary.
 
 ## Recheck Result Template
 
