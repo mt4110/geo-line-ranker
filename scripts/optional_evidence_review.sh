@@ -216,11 +216,9 @@ Lifecycle index and review inventory:
     next recheck date or reason none is needed
     integrity result
   read-only inventory conditions:
-    orphan candidate: closeout-recorded, closeout:split,
-      closeout:follow-up-opened, follow-up-linked,
-      explicit-review-linked, closeout:repeated-stale, or repeated keep-open
-      is present but the linked target, owner, recheck, decision authority,
-      waiting reason, or close condition is missing
+    orphan candidate: use the canonical orphan-candidate bullets in
+      docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md rather than this checklist;
+      do not infer orphan status from a local summary here
     stale candidate: recheck date has passed, needs-recheck has no current
       result, keep-open date passed, or stale class lacks a hygiene decision
     unclear owner: owner is blank, generic, conflicting across records, or
