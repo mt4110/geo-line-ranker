@@ -70,7 +70,8 @@ as real-time railway data.
    - use [OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md) to classify
      the finding
    - use [POST_MVP_HARDENING.md](POST_MVP_HARDENING.md) when the finding needs
-     a blocker, accepted-risk, or follow-up decision record
+     a blocker, accepted risk, follow-up, optional evidence only, or explicit
+     review decision record
    - if the finding appears during release candidate validation, record the
      decision in the release readiness evidence bundle
    - keep the issue or PR scoped to one invariant and one root cause

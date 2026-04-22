@@ -6,7 +6,8 @@ During release candidate validation, the same findings should be summarized in
 [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) evidence
 before deciding whether they block the public MVP. After release, summarize the
 same classification in [POST_MVP_HARDENING.md](POST_MVP_HARDENING.md) evidence
-so recurring reviews can separate blockers, accepted risks, and follow-ups.
+so recurring reviews can separate blockers, accepted risks, follow-ups,
+optional evidence only, and explicit review decisions.
 
 ## Public MVP Boundary
 
@@ -64,6 +65,10 @@ Use the bundle to pick one primary lane before opening follow-up work:
 If more than one lane appears involved, open separate issues unless the same
 root cause clearly explains all of them.
 
+For recurring post-MVP review, map the lane to the decision vocabulary in
+[POST_MVP_HARDENING.md](POST_MVP_HARDENING.md): blocker, accepted risk,
+follow-up, optional evidence only, or explicit review required.
+
 ## Issue and PR Granularity
 
 Prefer small follow-up units:
@@ -114,6 +119,15 @@ Classify every nonzero `review_items` summary as one of:
 - Accepted risk: safe to carry temporarily with an owner and review date.
 - Follow-up: actionable, but not blocking the current public-MVP operating
   profile.
+- Optional evidence only: informative crawler or full-mode evidence that does
+  not change the fixed gate or require implementation.
+- Explicit review required: would change the public MVP profile, public API
+  shape, crawler maturity, full-mode/OpenSearch role, managed infrastructure,
+  or final-ranking ownership.
+
+Use the review item template in
+[POST_MVP_HARDENING.md](POST_MVP_HARDENING.md) when a `review_items` summary
+needs a durable owner, recheck date, issue, PR, or explicit review record.
 
 ## Closing the Loop
 
@@ -130,4 +144,5 @@ evidence checklist.
 
 When the finding came from a release candidate, also update the release
 readiness evidence with the final classification: blocker fixed, accepted
-residual risk, or optional crawler/full-mode note outside the MVP gate.
+residual risk, follow-up, optional crawler/full-mode note outside the MVP gate,
+or explicit review required.

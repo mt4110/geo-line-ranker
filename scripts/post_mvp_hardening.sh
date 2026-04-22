@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[post-mvp-hardening] command plan
+[post-mvp-hardening] evidence review loop command plan
 
 Repository:
   root: $ROOT_DIR
@@ -45,6 +45,13 @@ Evidence chain:
   docs/OPERATOR_FEEDBACK_LOOP.md
   docs/PHASE11_REGRESSION_EVIDENCE.md
 
+Evidence review loop:
+  1. capture the command output, SQL sample, response body, checksum, or note
+  2. classify into exactly one primary decision lane
+  3. route to no action, accepted risk record, issue, PR, or explicit review
+  4. verify with the same command/query plus local validation when files change
+  5. record the decision, owner, and recheck date
+
 Local validation and evidence:
   cargo fmt --all --check
   cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -62,11 +69,27 @@ Doctor classification:
     just mvp-acceptance is meaningful
   accepted risk: visible, bounded, owned, and safe to carry temporarily
   follow-up: actionable, but outside the current public-MVP operating gate
+  optional evidence only: informative crawler/full-mode evidence that does not
+    change the fixed gate or require implementation
+  explicit review required: would change public profile, API shape, crawler
+    maturity, full-mode/OpenSearch role, managed infra, or final-ranking owner
 
 Optional evidence outside the public MVP gate:
   crawler graduation: crawler doctor, dry-run, health, policy review, rollback path
   full-mode evaluation: SQL-only/full-mode comparison, projection sync, OpenSearch health
   managed infrastructure: explicit review only; not a fixed-gate requirement
+
+Doctor review item record:
+  source:
+  evidence command:
+  evidence excerpt or SQL row:
+  affected public-MVP boundary:
+  classification:
+  reason:
+  next action:
+  owner:
+  recheck date:
+  issue or PR:
 
 This script is read-only. It does not run validation or change local services.
 EOF

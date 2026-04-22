@@ -107,8 +107,8 @@ Without `just`:
 This command plan is read-only. It keeps local and CI validation aligned while
 making optional crawler graduation, full-mode evaluation, and managed
 infrastructure review visible outside the public-MVP gate. Classify doctor
-`review_items` as blocker, accepted risk, or follow-up before opening
-implementation work.
+`review_items` as blocker, accepted risk, follow-up, optional evidence only, or
+explicit review required before opening implementation work.
 
 ## Readiness checks
 

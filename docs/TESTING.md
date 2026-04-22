@@ -110,7 +110,8 @@ Without `just`:
 ```
 
 Use it before hardening reviews or follow-up PRs to keep the same validation
-set visible:
+set visible while the evidence review loop classifies findings as blocker,
+accepted risk, follow-up, optional evidence only, or explicit review required:
 
 ```bash
 cargo fmt --all --check
