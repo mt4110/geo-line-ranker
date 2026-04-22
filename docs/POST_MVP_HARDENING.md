@@ -29,8 +29,9 @@ snapshot".
 
 ## Evidence Flow
 
-Use one chain for post-MVP hardening evidence, Phase 14 evidence review, and
-Phase 15 optional evidence graduation:
+Use one chain for post-MVP hardening evidence, Phase 14 evidence review,
+Phase 15 optional evidence graduation, Phase 16 packet templates, and Phase 17
+intake workflow:
 
 1. Confirm the release baseline with
    [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md).
@@ -42,9 +43,13 @@ Phase 15 optional evidence graduation:
    [PHASE11_REGRESSION_EVIDENCE.md](PHASE11_REGRESSION_EVIDENCE.md) when a
    follow-up PR changes operator feedback, imports, snapshots, jobs, or data
    quality guardrails.
-5. Use [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md)
-   when crawler graduation, full-mode automation, or managed infrastructure
-   evidence needs a graduation, follow-up, or explicit-review decision.
+5. Start with
+   [OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) when crawler
+   graduation, full-mode automation, managed infrastructure, or strict doctor
+   evidence needs packet selection and lane selection. Confirm the lane with
+   [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), then
+   paste the matching packet from
+   [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md).
 6. Record the final decision in the review shape below before closing the
    hardening review, issue, or PR.
 
@@ -144,8 +149,8 @@ Without `just`:
 ./scripts/post_mvp_hardening.sh
 ```
 
-Print the optional evidence graduation checklist when a crawler, full-mode, or
-managed infrastructure packet needs routing:
+Print the optional evidence intake checklist when a crawler, full-mode,
+managed infrastructure, or doctor evidence packet needs routing:
 
 ```bash
 just optional-evidence-review
@@ -180,8 +185,12 @@ DATA_QUALITY_FAIL_ON_WARNING=true ./scripts/data_quality_doctor.sh
 
 Optional evidence is useful for deciding what to improve next, but it must stay
 outside the public MVP gate. Use
-[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) for the
-Phase 15 decision ladder and evidence packet details.
+[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) for the Phase 17
+intake workflow, confirm the decision lane in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), then use
+the Phase 16 templates in
+[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) for issue, PR, or
+review-note packet templates.
 
 At this level, route each optional packet to one of four outcomes:
 

@@ -38,7 +38,9 @@ Fixed public MVP boundary:
 
 Primary guides:
   docs/POST_MVP_HARDENING.md
-  docs/OPTIONAL_EVIDENCE_GRADUATION.md for crawler/full-mode/infra packets
+  docs/OPTIONAL_EVIDENCE_INTAKE.md for crawler/full-mode/infra/doctor intake
+  docs/OPTIONAL_EVIDENCE_GRADUATION.md for crawler/full-mode/infra decisions
+  docs/OPTIONAL_EVIDENCE_PACKETS.md for issue, PR, and review-note packets
 
 Evidence chain:
   docs/PUBLIC_MVP_RELEASE_READINESS.md
@@ -77,9 +79,11 @@ Doctor classification:
 
 Optional evidence outside the public MVP gate:
   command plan: just optional-evidence-review
+  intake workflow: docs/OPTIONAL_EVIDENCE_INTAKE.md
   crawler graduation: crawler doctor, dry-run, health, policy review, rollback path
   full-mode evaluation: SQL-only/full-mode comparison, projection sync, OpenSearch health
   managed infrastructure: explicit review only; not a fixed-gate requirement
+  packet templates: docs/OPTIONAL_EVIDENCE_PACKETS.md
 
 Doctor review item record:
   source:

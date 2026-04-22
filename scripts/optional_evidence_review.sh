@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[optional-evidence-review] graduation checklist
+[optional-evidence-review] intake workflow checklist
 
 Repository:
   root: $ROOT_DIR
@@ -38,8 +38,30 @@ Fixed public MVP boundary:
     OpenSearch, managed infrastructure
 
 Primary guides:
+  docs/OPTIONAL_EVIDENCE_INTAKE.md
   docs/POST_MVP_HARDENING.md
   docs/OPTIONAL_EVIDENCE_GRADUATION.md
+  docs/OPTIONAL_EVIDENCE_PACKETS.md
+
+Intake workflow:
+  1. capture the evidence source and confirm it is reproducible enough to route
+  2. confirm this evidence does not expand just mvp-acceptance
+  3. choose one evidence type and one packet or review record
+  4. paste the minimal intake header into the issue, PR, or review note
+  5. choose one decision lane before implementation starts
+  6. record owner, recheck date, public API shape status, and rollback path
+
+Packet selection:
+  strict data-quality doctor review item:
+    use docs/POST_MVP_HARDENING.md doctor review item unless it points to
+    crawler, full-mode, OpenSearch, or managed infrastructure evidence
+  crawler source, policy, robots, parser, dry-run, health, or maturity:
+    docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
+  SQL-only/full-mode comparison, projection sync, or OpenSearch health:
+    docs/OPTIONAL_EVIDENCE_PACKETS.md#full-mode-automation-candidate-packet
+  hosting, managed services, networking, secrets, observability, backup,
+  cost, or production IaC:
+    docs/OPTIONAL_EVIDENCE_PACKETS.md#managed-infrastructure-explicit-review-packet
 
 Decision ladder:
   1. confirm this evidence does not expand just mvp-acceptance
@@ -48,8 +70,16 @@ Decision ladder:
   4. open a follow-up for one reproducible improvement
   5. prepare crawler graduation only when the packet is complete and quiet
   6. request explicit review before changing public profile, API shape,
-     crawler maturity, full-mode/OpenSearch production role, managed infra,
-     or final-ranking owner
+     crawler maturity outside the crawler graduation lane, full-mode/OpenSearch
+     production role, managed infra, or final-ranking owner
+
+Packet templates to paste into issues, PRs, or review notes:
+  crawler graduation:
+    docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
+  full-mode automation candidate:
+    docs/OPTIONAL_EVIDENCE_PACKETS.md#full-mode-automation-candidate-packet
+  managed infrastructure explicit review:
+    docs/OPTIONAL_EVIDENCE_PACKETS.md#managed-infrastructure-explicit-review-packet
 
 Crawler graduation packet:
   manifest fields: source_id, source_maturity, parser_key, expected_shape,
@@ -67,6 +97,7 @@ Crawler graduation packet:
 Full-mode automation candidate packet:
   compare the same request payloads in sql_only and full mode
   capture projection sync state and OpenSearch index health
+  capture the automation reason and SQL-only rollback path
   command:
     cargo test -p compatibility-tests --test sql_only_vs_full
   required shape:
@@ -79,6 +110,13 @@ Managed infrastructure:
   explicit review only
   do not add hosting, managed databases, managed cache, managed OpenSearch,
   production IaC, or cloud resources to the fixed gate from a hardening PR
+  use the managed infrastructure explicit review packet for hosting, managed
+    DB, cache, OpenSearch, IaC, cost, and rollback evidence
+
+Minimal intake header:
+  docs/OPTIONAL_EVIDENCE_INTAKE.md#minimal-intake-header
+  fields: evidence type, source, packet used, decision lane, owner, recheck,
+    fixed public MVP boundary, public API shape, strict doctor evidence
 
 Local validation and evidence when files change:
   cargo fmt --all --check

@@ -258,8 +258,11 @@ cargo run -p cli -- projection sync
 Then compare against SQL-only outputs with the existing compatibility tests and
 operator spot checks. Keep any findings as comparison notes unless the public
 operating profile is explicitly changed. Use
-[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) before
-turning repeated full-mode comparison into an automation follow-up.
+[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) before turning
+repeated full-mode comparison into an automation follow-up, confirm the lane in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), then record
+the comparison with the packet template in
+[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md).
 
 ```bash
 cargo test -p compatibility-tests --test sql_only_vs_full
@@ -268,9 +271,11 @@ cargo test -p compatibility-tests --test sql_only_vs_full
 ## Crawler graduation checklist
 
 Crawling remains optional. Move a manifest to `source_maturity: live_ready` only
-after the evidence packet in
-[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md) is complete
-and all of these are true:
+after intake in [OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md), the
+evidence packet in [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md)
+satisfies the graduation criteria in
+[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), and all of
+these are true:
 
 - source policy and intended use are documented for the target domain
 - robots and terms checks are current and do not block the target path
