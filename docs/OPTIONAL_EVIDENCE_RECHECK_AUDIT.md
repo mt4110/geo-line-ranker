@@ -138,10 +138,15 @@ record fields for `close`, `keep-open`, `split`, `follow-up`, and
 - `closeout:follow-up-opened`
 - `closeout:explicit-review-linked`
 
-It also defines a repeat or escalation marker that can be recorded alongside the
-primary closeout status:
+It also defines repeat or escalation markers that can be recorded alongside the
+primary closeout status. Suggested label aid:
 
 - `closeout:repeated-stale`
+
+Body-recorded markers:
+
+- `repeated keep-open`
+- `final allowed keep-open`
 
 Labels are still record aids only. If labels are unavailable, write the
 primary closeout status and any repeat or escalation marker in the record body.

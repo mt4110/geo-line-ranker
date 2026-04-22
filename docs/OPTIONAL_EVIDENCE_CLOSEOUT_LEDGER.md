@@ -68,7 +68,7 @@ Suggested primary closeout statuses:
 - `closeout:follow-up-opened`
 - `closeout:explicit-review-linked`
 
-Suggested repeat or escalation marker:
+Suggested repeat or escalation label aid:
 
 - `closeout:repeated-stale`
 
@@ -76,6 +76,15 @@ Suggested repeat or escalation marker:
 not instead of it. It means the record has come back stale enough times that it
 must be routed to explicit review, split into smaller records, or moved into a
 scoped follow-up.
+
+Body-recorded repeat markers:
+
+- `repeated keep-open`
+- `final allowed keep-open`
+
+These body-recorded markers are not additional suggested GitHub labels unless a
+team explicitly chooses to create matching labels. When labels are not used,
+record them in the closeout body alongside the primary closeout status.
 
 ## Required Closeout Record Fields
 
@@ -96,7 +105,7 @@ Every closeout record must include these fields:
 | Label status | State that labels or written label equivalents are record aids only. |
 | Linked split, follow-up, or explicit review | Required for `split`, `follow-up`, and `explicit-review`; otherwise say none and why none is needed. |
 | Next recheck date or reason none is needed | Required for `keep-open`; for terminal records, explain why no recheck remains. |
-| Repeat or escalation marker | State none, `closeout:repeated-stale`, repeated keep-open, or final allowed keep-open. Record this alongside the primary closeout status. |
+| Repeat or escalation marker | State none, `closeout:repeated-stale`, `repeated keep-open`, or `final allowed keep-open`. Record this alongside the primary closeout status. |
 
 ## Stale Hygiene to Closeout Mapping
 

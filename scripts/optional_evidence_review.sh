@@ -128,8 +128,11 @@ Closeout ledger and decision history:
     closeout:split
     closeout:follow-up-opened
     closeout:explicit-review-linked
-  repeat or escalation aids, record alongside the primary closeout status:
+  repeat or escalation label aid, record alongside the primary closeout status:
     closeout:repeated-stale
+  body-recorded repeat markers, not suggested labels by default:
+    repeated keep-open
+    final allowed keep-open
   link requirements:
     split: link every split record before closing the original
     follow-up: link the issue or PR with one root cause, owner, validation plan,
@@ -273,7 +276,8 @@ Minimal intake header:
 Recheck result template:
   docs/OPTIONAL_EVIDENCE_TRIAGE.md#recheck-result-template
   fields: date, owner, labels, lane, recheck command or source, result,
-    fixed boundary, public API shape, next recheck date, issue or PR
+    fixed boundary, public API shape, next recheck date, issue or PR,
+    primary closeout status, repeat/escalation marker
 
 Recheck audit templates:
   docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md#audit-note-template

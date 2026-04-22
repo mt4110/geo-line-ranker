@@ -162,7 +162,8 @@ Optional evidence recheck:
 - Public API shape unchanged:
 - Next recheck date, if any:
 - Issue or PR:
-- Closeout ledger status:
+- Primary closeout status:
+- Repeat/escalation marker, if any:
 ```
 
 ## Close Checklist
