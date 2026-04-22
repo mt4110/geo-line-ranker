@@ -35,6 +35,19 @@ Without `just`:
 ./scripts/post_launch_doctor.sh
 ```
 
+When PostgreSQL is reachable, add the Phase 11 data quality pass and feed the
+result into [OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md):
+
+```bash
+just data-quality-doctor
+```
+
+Without `just`:
+
+```bash
+./scripts/data_quality_doctor.sh
+```
+
 ## Release readiness routine
 
 Use the fixed public-MVP gate before cutting a release candidate:

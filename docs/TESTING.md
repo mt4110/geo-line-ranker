@@ -45,6 +45,24 @@ cargo run -p cli -- seed example
 
 The manual smoke sections below are intentionally broader than the public-MVP release gate. For the fixed six-case acceptance flow that excludes live crawler and `full` mode, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md).
 
+For Phase 11 operator feedback changes, run the read-only data quality doctor
+against a bootstrapped PostgreSQL database:
+
+```bash
+just mvp-up
+just mvp-bootstrap
+just data-quality-doctor
+just mvp-down
+```
+
+The doctor prints review items for human classification and does not mutate
+PostgreSQL, Redis, OpenSearch, staged raw files, or crawler state.
+
+CI also runs this as a separate `data-quality-doctor` job. Keep it separate
+from `mvp-acceptance` so Phase 11 evidence improves operator review without
+expanding the public-MVP release gate. The CI job fails on doctor warnings,
+while review items stay as human-classified evidence.
+
 ## What gets covered
 
 - ranking unit tests:

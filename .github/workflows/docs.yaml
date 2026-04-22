@@ -23,3 +23,5 @@ jobs:
           test -f docs/ARCHITECTURE.md
           test -f docs/MVP_ACCEPTANCE.md
           test -f docs/OPERATIONS.md
+          test -f docs/OPERATOR_FEEDBACK_LOOP.md
+          test -f docs/PHASE11_REGRESSION_EVIDENCE.md

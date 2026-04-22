@@ -2,19 +2,20 @@
 
 ## Current
 
-- Phase 10: post-launch operator hardening
+- Phase 11: operator feedback loop and data quality guardrails
   - keep the public MVP fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
-  - add incident-friendly diagnosis and recovery guidance without expanding the MVP gate
-  - make snapshot refresh, job retry, cache invalidation, and event-csv replay easier to inspect under pressure
-  - evaluate optional full-mode retrieval only as an operator comparison path, not as launch acceptance
-  - clarify crawler manifest graduation criteria while keeping crawling optional
+  - turn post-launch doctor evidence into reproducible issue, PR, and recheck work
+  - add read-only data quality guardrails for event-csv, schools, stations, links, snapshots, and jobs
+  - keep optional full-mode retrieval and crawler graduation as evaluation evidence only
+  - preserve the narrow public-MVP gate while improving operator handoff quality
 
-## Phase 10 Exit Gates
+## Phase 11 Exit Gates
 
-- Post-launch runbook gives one-page guidance for sql_only incidents, event-csv replay, snapshot refresh, job retry, cache invalidation, and `/readyz`.
-- A read-only doctor command can collect environment, readiness, snapshot, queue, import, and crawl state without mutating PostgreSQL, Redis, OpenSearch, or staged raw files.
+- Operator feedback guidance documents the evidence bundle, incident classification, issue/PR granularity, and recheck loop after a post-launch finding.
+- A read-only data quality doctor surfaces review items across event-csv imports, school event coverage, station link coverage, snapshots, logical sources, and queue pressure without mutating PostgreSQL, Redis, OpenSearch, or staged raw files.
+- Regression evidence guidance explains how PRs show that operator quality did not regress.
 - Optional full-mode comparison remains documented as evaluation only and is not added to `just mvp-acceptance`.
-- Crawler manifest graduation is documented with explicit source-policy, robots/terms, parser-health, and rollback checks before `source_maturity = live_ready`.
+- Crawler manifest graduation remains an operator decision path; crawling is not made mandatory for launch or incident recovery.
 - `just mvp-acceptance` continues to pass locally and in CI against PostgreSQL/PostGIS and Redis only.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
@@ -22,6 +23,11 @@
 
 ## Recently Completed
 
+- Phase 10: post-launch operator hardening
+  - post-launch runbook gives one-page guidance for sql_only incidents, event-csv replay, snapshot refresh, job retry, cache invalidation, and `/readyz`
+  - read-only doctor command collects environment, readiness, snapshot, queue, import, and crawl state without mutating PostgreSQL, Redis, OpenSearch, or staged raw files
+  - optional full-mode comparison remains documented as evaluation only and is not added to `just mvp-acceptance`
+  - crawler manifest graduation is documented with explicit source-policy, robots/terms, parser-health, and rollback checks before `source_maturity = live_ready`
 - Phase 9: production-readiness hardening for the April 30 public MVP launch
   - SQL-only minimal mode is the public-MVP release baseline
   - OpenSearch/full-mode and allowlist crawler flows stay optional operator workflows
@@ -35,7 +41,7 @@
 
 ## Next
 
-- Later hardening after Phase 10
-  - promote additional crawler manifests only after Phase 10 graduation evidence is available
+- Later hardening after Phase 11
+  - promote additional crawler manifests only after Phase 11 feedback and graduation evidence is available
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review
