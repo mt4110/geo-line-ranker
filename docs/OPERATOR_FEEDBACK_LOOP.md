@@ -2,6 +2,9 @@
 
 This guide turns a post-launch finding into reproducible improvement work. It
 starts after the first read-only triage pass in [POST_LAUNCH_RUNBOOK.md](POST_LAUNCH_RUNBOOK.md).
+During release candidate validation, the same findings should be summarized in
+[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) evidence
+before deciding whether they block the public MVP.
 
 ## Public MVP Boundary
 
@@ -115,3 +118,7 @@ Before closing an incident or follow-up PR, capture:
 
 Use [PHASE11_REGRESSION_EVIDENCE.md](PHASE11_REGRESSION_EVIDENCE.md) for the PR
 evidence checklist.
+
+When the finding came from a release candidate, also update the release
+readiness evidence with the final classification: blocker fixed, accepted
+residual risk, or optional crawler/full-mode note outside the MVP gate.

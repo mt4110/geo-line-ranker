@@ -4,6 +4,12 @@ This runbook is the first stop when the public MVP is already deployed or being
 validated after release. Keep the operating profile narrow unless an explicit
 review changes it.
 
+For release candidate preparation and the evidence bundle used before launch,
+start with
+[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md). After
+release, use this runbook for first response and feed follow-up work into
+[OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md).
+
 ## Public MVP profile
 
 - Candidate retrieval: `sql_only`
@@ -11,6 +17,8 @@ review changes it.
 - Write store: PostgreSQL/PostGIS
 - Cache: Redis only
 - Optional workflows: OpenSearch full-mode comparison and allowlist crawling
+- Release readiness flow:
+  [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md)
 - Release gate: [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md)
 
 Do not add OpenSearch, live crawling, managed infrastructure, ML, embeddings, or
@@ -59,6 +67,8 @@ as real-time railway data.
 
    - use [OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md) to classify
      the finding
+   - if the finding appears during release candidate validation, record the
+     decision in the release readiness evidence bundle
    - keep the issue or PR scoped to one invariant and one root cause
    - use [PHASE11_REGRESSION_EVIDENCE.md](PHASE11_REGRESSION_EVIDENCE.md)
      for recheck evidence

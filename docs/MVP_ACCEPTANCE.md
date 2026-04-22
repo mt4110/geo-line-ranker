@@ -1,12 +1,17 @@
 # MVP Acceptance
 
 This document defines the fixed public-MVP launch gate for this repository.
+For release candidate evidence, use
+[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) as the
+top-level checklist.
 
 ## Decision Rule
 
 The public MVP is ready for release only when this gate passes on the release candidate branch and in CI.
 
-The gate is intentionally stable for the April 30 launch window. Prefer tightening implementation and operations around these checks over adding broader product surface to the gate.
+The gate is intentionally stable for the April 30, 2026 launch window. Prefer
+tightening implementation and operations around these checks over adding
+broader product surface to the gate.
 
 ## Scope
 
@@ -24,6 +29,9 @@ Why the exclusion is deliberate:
 - the launch gate should rely on the deterministic path we can operate today without policy ambiguity
 
 For the surrounding operator guidance, see [OPERATIONS.md](OPERATIONS.md) and [DATA_LICENSES.md](DATA_LICENSES.md).
+For the release candidate routine that combines this gate with CI evidence,
+data quality doctor output, release notes, and residual risk review, see
+[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md).
 
 Non-negotiable constraints:
 
@@ -65,10 +73,17 @@ Before marking the public MVP ready:
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes
 - `cargo test --workspace` passes
 - `just mvp-acceptance` passes
+- `just data-quality-doctor` evidence is captured and classified
+- `git diff --check` passes
 - CI is green for the release candidate branch
 - release notes describe `sql_only` as the public-MVP baseline
 - optional crawler and full-mode notes remain clearly outside the public-MVP gate
 - any public API change includes `schemas/openapi.json` and `API_SPEC.md` updates in the same change
+
+`just data-quality-doctor` remains supplementary release evidence. It does not
+change the six fixed cases in this document, and review items become blockers
+only when they affect the fixed `sql_only` + `event-csv` public-MVP behavior or
+hide whether this gate is meaningful.
 
 ## One-Shot Run
 
