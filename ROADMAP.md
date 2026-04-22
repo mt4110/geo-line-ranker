@@ -2,11 +2,12 @@
 
 ## Current
 
-- Phase 20: optional evidence recheck audit / stale hygiene
-  - make overdue optional evidence rechecks easy to find, classify, and route without widening the fixed public MVP gate
-  - add a recheck audit guide for stale recheck classes, owners, next actions, and close conditions
-  - connect optional evidence triage to the recheck audit path so stale records can return to a clear decision
-  - make `just optional-evidence-review` point to recheck audit and stale hygiene guidance while staying read-only
+- Phase 21: optional evidence closeout ledger / decision history
+  - record why optional evidence was closed, kept open, split, routed to follow-up, or routed to explicit review after recheck audit
+  - add a closeout ledger guide for required decision-history fields and closeout record templates
+  - connect recheck audit and triage guidance to the closeout ledger so stale hygiene decisions leave durable records
+  - make `just optional-evidence-review` point to closeout ledger and decision-history guidance while staying read-only
+  - keep `keep-open` from becoming an indefinite waiting state by defining repeated stale and repeated keep-open escalation
   - keep labels as record aids only, not required gates or repository setup prerequisites
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
@@ -16,12 +17,14 @@
   - keep managed infrastructure explicit review only
   - keep public API shape unchanged
 
-## Phase 20 Exit Gates
+## Phase 21 Exit Gates
 
-- `ROADMAP.md` names Phase 20 as current and moves Phase 19 into Recently Completed.
-- Optional evidence triage guidance leads to the recheck audit guide.
-- Stale recheck, overdue, blocked, split-needed, and closed classes are defined.
-- Recheck-overdue records have a named owner, next action, and close condition.
+- `ROADMAP.md` names Phase 21 as current and moves Phase 20 into Recently Completed.
+- Optional evidence recheck audit guidance leads to the closeout ledger guide.
+- Optional evidence triage guidance leads to recheck audit and closeout decision history when records are stale or ready to close.
+- Closeout record requirements are defined for `close`, `keep-open`, `split`, `follow-up`, and `explicit-review`.
+- Repeated stale and repeated keep-open records have a required next action instead of remaining open indefinitely.
+- `split`, `follow-up`, and `explicit-review` decisions cannot close without linked records.
 - Labels are documented as record aids only and are not required gates.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
@@ -37,6 +40,19 @@
 
 ## Recently Completed
 
+- Phase 20: optional evidence recheck audit / stale hygiene
+  - made overdue optional evidence rechecks easy to find, classify, and route without widening the fixed public MVP gate
+  - added a recheck audit guide for stale recheck classes, owners, next actions, and close conditions
+  - connected optional evidence triage to the recheck audit path so stale records can return to a clear decision
+  - made `just optional-evidence-review` point to recheck audit and stale hygiene guidance while staying read-only
+  - kept labels as record aids only, not required gates or repository setup prerequisites
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - kept crawler graduation outside the fixed gate even when its packet is complete
+  - kept full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
+  - kept managed infrastructure explicit review only
+  - kept public API shape unchanged
 - Phase 19: optional evidence triage / recheck loop
   - made optional evidence issues, PRs, and review notes easy to classify, recheck, and close after intake
   - added a triage guide for label aids, decision lanes, owners, recheck commands, and lane-specific close conditions
@@ -129,7 +145,7 @@
 
 ## Next
 
-- Later hardening after Phase 20
+- Later hardening after Phase 21
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

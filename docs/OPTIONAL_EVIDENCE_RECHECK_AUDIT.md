@@ -6,6 +6,11 @@ is to find records that are still open, classify their recheck state, and route
 them back to a close, keep-open, split, follow-up, or explicit-review decision
 without widening the fixed public MVP gate.
 
+After choosing the stale hygiene decision, write the decision history with
+[OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md).
+The closeout ledger records why the record closed, stayed open, split, opened a
+follow-up, or linked explicit review.
+
 This is a read-only audit and stale hygiene guide. It does not create GitHub
 labels, run validation by itself, change source maturity, enable full mode,
 require OpenSearch, provision managed infrastructure, or change public API
@@ -109,16 +114,38 @@ After classifying an overdue or blocked record, choose exactly one decision:
 
 | Decision | Use when | Required record |
 | --- | --- | --- |
-| `close` | Evidence is recorded, no action remains, and the lane close condition is met. | Closeout note with fixed boundary and public API shape unchanged. |
-| `keep-open` | The record is still waiting for a named date, source, or external decision. | Owner, next recheck date or condition, narrow recheck source, and reason it should remain open. |
-| `split` | The record mixes evidence, lanes, owners, commands, or close conditions. | Links to the split records and the reason the original is no longer the action holder. |
-| `follow-up` | A scoped implementation or documentation task is needed without changing the public MVP profile. | Linked issue or PR with one root cause, one owner, one validation plan, and one recheck command. |
-| `explicit-review` | The next action could change public profile, API shape, managed infrastructure, full-mode/OpenSearch production role, crawler maturity outside the graduation lane, or final-ranking ownership. | Explicit review record naming the decision authority, rollback path, cost or risk owner when relevant, and decision status. |
+| `close` | Evidence is recorded, no action remains, and the lane close condition is met. | Closeout ledger record with fixed boundary unchanged, public API shape unchanged, and a reason no next recheck is needed. |
+| `keep-open` | The record is still waiting for a named owner plus a dated evidence source or external decision. | Closeout ledger record with owner, next recheck date or condition, narrow recheck source, waiting reason, and repeat status. |
+| `split` | The record mixes evidence, lanes, owners, commands, or close conditions. | Closeout ledger record with links to every split record and the reason the original is no longer the action holder. |
+| `follow-up` | A scoped implementation or documentation task is needed without changing the public MVP profile. | Closeout ledger record with a linked issue or PR that has one root cause, one owner, one validation plan, and one recheck command. |
+| `explicit-review` | The next action could change public profile, API shape, managed infrastructure, full-mode/OpenSearch production role, crawler maturity outside the graduation lane, or final-ranking ownership. | Closeout ledger record with a linked explicit review naming the decision authority, rollback path, cost or risk owner when relevant, and decision status. |
 
 Crawler graduation can become packet-complete and still remain outside the
 fixed gate. Full-mode automation can become useful and still not add `full`
 mode or OpenSearch to `just mvp-acceptance`. Managed infrastructure always
 stays explicit review only.
+
+## Decision History
+
+Use [OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md)
+after every stale hygiene decision. The ledger defines the required closeout
+record fields for `close`, `keep-open`, `split`, `follow-up`, and
+`explicit-review`, plus optional closeout status aids:
+
+- `closeout:closed`
+- `closeout:kept-open`
+- `closeout:split`
+- `closeout:follow-up-opened`
+- `closeout:explicit-review-linked`
+- `closeout:repeated-stale`
+
+Labels are still record aids only. If labels are unavailable, write the
+closeout status in the record body.
+
+Do not close `split`, `follow-up`, or `explicit-review` decisions without the
+linked split records, linked issue or PR, or linked explicit review record.
+Repeated stale or repeated keep-open records must return to explicit review,
+split, or follow-up unless one final dated external wait is recorded.
 
 ## Lane-Specific Overdue Handling
 
@@ -172,20 +199,27 @@ Optional evidence recheck audit:
 
 ## Closeout Comment Template
 
-Paste this before closing an overdue or stale record:
+Paste this before closing or keeping an overdue or stale record open. The full
+ledger guidance lives in
+[OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md).
 
 ```text
-Optional evidence closeout:
-- Closing date:
+Optional evidence closeout ledger:
+- Closeout date:
 - Owner:
-- Final stale class:
-- Final decision:
-- Recheck result recorded:
-- Lane close condition satisfied:
+- Record:
+- Original evidence source:
+- Stale class: recheck:on-time / recheck:overdue / recheck:blocked / recheck:split-needed / recheck:closed
+- Stale hygiene decision: close / keep-open / split / follow-up / explicit-review
+- Closeout status: closeout:closed / closeout:kept-open / closeout:split / closeout:follow-up-opened / closeout:explicit-review-linked / closeout:repeated-stale
+- Final lane:
+- Result summary:
 - Fixed public MVP boundary unchanged:
 - Public API shape unchanged:
 - Labels or written label equivalents were record aids only:
-- Follow-up or explicit review link, if any:
+- Linked split, follow-up, or explicit review:
+- Next recheck date or reason none is needed:
+- Repeat status:
 ```
 
 ## Validation When Files Change
