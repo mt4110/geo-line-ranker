@@ -2,37 +2,51 @@
 
 ## Current
 
-- Phase 18: optional evidence issue and PR templates
-  - connect the Phase 17 optional evidence intake workflow to minimal GitHub issue and PR templates
-  - keep templates ready to paste as review aids, not new release gates
-  - make the intake header, packet template choice, decision lane, and fixed public MVP boundary visible in GitHub issues, PRs, and review notes
+- Phase 19: optional evidence triage / recheck loop
+  - make optional evidence issues, PRs, and review notes easy to classify, recheck, and close after intake
+  - add a triage guide for label aids, decision lanes, owners, recheck commands, and lane-specific close conditions
+  - keep labels as record aids only, not required gates or repository setup prerequisites
+  - connect optional evidence issue and PR templates to the triage loop
+  - make `just optional-evidence-review` point to intake, triage, packets, labels, recheck, and close guidance while staying read-only
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
   - keep strict data-quality doctor output as evidence, with `review_items` classified by humans
-  - make PRs confirm crawler graduation, full-mode automation candidates, OpenSearch, live crawler operation, and managed infrastructure stay outside the fixed gate
+  - keep crawler graduation outside the fixed gate even when its packet is complete
+  - keep full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
   - keep managed infrastructure explicit review only
-  - keep `just optional-evidence-review` read-only while pointing to the GitHub templates, intake workflow, and packet templates
+  - keep public API shape unchanged
 
-## Phase 18 Exit Gates
+## Phase 19 Exit Gates
 
-- `ROADMAP.md` names Phase 18 as current and moves Phase 17 into Recently Completed.
-- Phase 17 intake workflow leads clearly to the GitHub issue template, PR template, and packet templates.
-- Optional evidence issue and PR templates keep the intake header, packet choice, decision lane, owner, recheck date, and public API shape visible.
+- `ROADMAP.md` names Phase 19 as current and moves Phase 18 into Recently Completed.
+- Optional evidence issue and PR templates lead to the triage guide.
+- Decision lane, owner, recheck command, recheck date, and close condition are defined for each lane.
+- Labels are documented as record aids only and are not required gates.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
-- Issue and PR templates have fixed-boundary checks and do not become acceptance tests.
+- Recheck-date guidance identifies the exact command or evidence source to inspect before close.
 - Crawler graduation remains outside the fixed gate even when its packet is complete.
 - Full-mode automation candidates do not add `full` mode or OpenSearch to the fixed gate.
 - Managed infrastructure stays explicit review only and outside hardening gates.
 - OpenSearch, live crawler operation, and managed infrastructure are not added to fixed-gate requirements.
-- `just optional-evidence-review` points operators to the GitHub templates, intake workflow, and packet templates without running validation or changing services.
+- `just optional-evidence-review` points operators to the GitHub templates, intake workflow, triage loop, and packet templates without running validation or changing services.
 - CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
 
 ## Recently Completed
 
+- Phase 18: optional evidence issue and PR templates
+  - connected the Phase 17 optional evidence intake workflow to minimal GitHub issue and PR templates
+  - kept templates ready to paste as review aids, not new release gates
+  - made the intake header, packet template choice, decision lane, and fixed public MVP boundary visible in GitHub issues, PRs, and review notes
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - made PRs confirm crawler graduation, full-mode automation candidates, OpenSearch, live crawler operation, and managed infrastructure stay outside the fixed gate
+  - kept managed infrastructure explicit review only
+  - kept `just optional-evidence-review` read-only while pointing to the GitHub templates, intake workflow, and packet templates
 - Phase 17: optional evidence intake workflow
   - routed received crawler, full-mode, managed infrastructure, and doctor evidence to the right packet or review record
   - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
@@ -102,7 +116,7 @@
 
 ## Next
 
-- Later hardening after Phase 18
+- Later hardening after Phase 19
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

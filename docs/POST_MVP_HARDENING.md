@@ -31,7 +31,8 @@ snapshot".
 
 Use one chain for post-MVP hardening evidence, Phase 14 evidence review,
 Phase 15 optional evidence graduation, Phase 16 packet templates, Phase 17
-intake workflow, and Phase 18 GitHub issue and PR templates:
+intake workflow, Phase 18 GitHub issue and PR templates, and Phase 19 optional
+evidence triage:
 
 1. Confirm the release baseline with
    [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md).
@@ -52,7 +53,10 @@ intake workflow, and Phase 18 GitHub issue and PR templates:
    [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md).
 6. Use `.github/ISSUE_TEMPLATE/optional_evidence.md` for optional evidence
    issues and `.github/pull_request_template.md` for PR fixed-boundary checks.
-7. Record the final decision in the review shape below before closing the
+7. Use [OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md) after an
+   issue, PR, or review note exists to record labels, owner, recheck command,
+   and close condition.
+8. Record the final decision in the review shape below before closing the
    hardening review, issue, or PR.
 
 Strict data-quality doctor output remains required release and post-MVP
@@ -194,7 +198,10 @@ the Phase 16 templates in
 [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) for issue, PR, or
 review-note packet templates. For GitHub records, start from the Phase 18
 optional evidence issue template in `.github/ISSUE_TEMPLATE/optional_evidence.md`
-and keep the fixed-boundary checks in `.github/pull_request_template.md`.
+and keep the fixed-boundary checks in `.github/pull_request_template.md`. Once
+the GitHub or review-note record exists, use
+[OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md) to choose label
+aids, owner, recheck command, and lane-specific close condition.
 
 At this level, route each optional packet to one of four outcomes:
 

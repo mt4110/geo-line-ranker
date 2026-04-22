@@ -26,6 +26,9 @@ This PR template is a review aid, not a new acceptance gate.
 - [ ] Minimal intake header from
       [OPTIONAL_EVIDENCE_INTAKE.md](docs/OPTIONAL_EVIDENCE_INTAKE.md#minimal-intake-header)
       is pasted below or in the linked issue.
+- [ ] Triage lane, optional labels, owner, recheck command, and close condition
+      from [OPTIONAL_EVIDENCE_TRIAGE.md](docs/OPTIONAL_EVIDENCE_TRIAGE.md)
+      are recorded below or in the linked issue.
 - [ ] Matching packet from
       [OPTIONAL_EVIDENCE_PACKETS.md](docs/OPTIONAL_EVIDENCE_PACKETS.md)
       is pasted when the evidence type needs one.
@@ -38,6 +41,8 @@ Optional evidence intake:
 - Decision lane:
 - Owner:
 - Recheck date:
+- Recheck command:
+- Close condition:
 - Issue or PR:
 ```
 

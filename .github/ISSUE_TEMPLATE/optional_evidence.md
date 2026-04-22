@@ -11,6 +11,7 @@ OpenSearch, or managed infrastructure to the fixed public MVP gate.
 Use with:
 
 - [Optional evidence intake](docs/OPTIONAL_EVIDENCE_INTAKE.md)
+- [Optional evidence triage](docs/OPTIONAL_EVIDENCE_TRIAGE.md)
 - [Optional evidence packets](docs/OPTIONAL_EVIDENCE_PACKETS.md)
 
 ## Minimal Intake Header
@@ -57,6 +58,23 @@ Strict doctor evidence:
       split into one primary evidence type and one decision lane before
       implementation starts
 
+## Triage And Recheck
+
+- [ ] Triage lane, owner, recheck date, and close condition are recorded in
+      [Optional evidence triage](docs/OPTIONAL_EVIDENCE_TRIAGE.md) terms.
+- [ ] Labels are applied or written below as record aids only, not gates.
+- [ ] Recheck command or evidence source is recorded.
+- [ ] `needs-recheck` is used only when the record must be revisited later.
+
+Suggested labels:
+
+```text
+optional-evidence
+lane:follow-up / lane:crawler-graduation / lane:explicit-review / lane:optional-only
+source:doctor / source:crawler / source:full-mode / source:managed-infra
+needs-recheck
+```
+
 ## Fixed Boundary Check
 
 - [ ] `sql_only` remains the public MVP candidate retrieval path.
@@ -79,4 +97,5 @@ Strict doctor evidence:
 - Recheck command or evidence source:
 - Owner:
 - Recheck date:
+- Close condition:
 - Rollback path, if relevant:

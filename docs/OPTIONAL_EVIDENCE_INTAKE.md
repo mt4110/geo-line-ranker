@@ -10,6 +10,10 @@ Intake answers three questions:
 - Which decision lane should own the next step?
 - Has this evidence stayed outside the fixed public MVP gate?
 
+After the evidence has an issue, PR, or review note, use
+[OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md) to record labels,
+owner, recheck command, and close condition.
+
 This workflow is read-only. It does not run validation, change source
 maturity, enable full mode, require OpenSearch, provision managed
 infrastructure, or change public API shape.
@@ -68,12 +72,14 @@ PR:
 
 - Issue template: `.github/ISSUE_TEMPLATE/optional_evidence.md`
 - PR template: `.github/pull_request_template.md`
+- Triage guide: [OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md)
 
 The templates are record aids, not acceptance tests. They make the intake
-header, packet choice, decision lane, fixed public MVP boundary, strict doctor
-classification, and public API shape status visible in GitHub. They do not add
-crawler graduation, live crawler operation, `full` mode, OpenSearch, or managed
-infrastructure to `just mvp-acceptance`.
+header, packet choice, decision lane, triage owner, recheck command, close
+condition, fixed public MVP boundary, strict doctor classification, and public
+API shape status visible in GitHub. They do not add crawler graduation, live
+crawler operation, `full` mode, OpenSearch, or managed infrastructure to
+`just mvp-acceptance`.
 
 When opening an optional evidence issue, start with the optional evidence issue
 template and paste the matching packet from
@@ -82,6 +88,11 @@ template and paste the matching packet from
 When opening a PR, keep the fixed-boundary checks in the PR template checked or
 explained, link the optional evidence issue when one exists, and paste the
 minimal intake header in the PR body or linked issue.
+
+After opening the issue or PR, use
+[OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md) to choose labels,
+record the owner and recheck date, and decide the lane-specific close
+condition.
 
 ## Evidence Type To Packet
 
@@ -158,8 +169,9 @@ Without `just`:
 ./scripts/optional_evidence_review.sh
 ```
 
-The output points back to this workflow, the decision ladder in
-[OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), and the
+The output points back to this workflow, the triage and recheck loop in
+[OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md), the decision ladder
+in [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), and the
 packet templates in [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md),
 plus the GitHub issue and PR templates above. It remains read-only and does not
 run validation or change local services.
