@@ -39,8 +39,8 @@ by humans before issue or PR work starts.
 
 Public API changes should not be introduced by recheck audit. If a stale record
 would change public API shape, route it to explicit review required and update
-`schemas/openapi.json` plus `API_SPEC.md` only in the approved implementation
-change.
+`schemas/openapi.json` plus create or update `API_SPEC.md` only if that
+document is part of the approved implementation change.
 
 ## Audit Inputs
 
