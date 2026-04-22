@@ -2,21 +2,24 @@
 
 ## Current
 
-- Phase 13: post-MVP hardening
-  - move from "can we publish?" to "can we keep improving safely after publishing?"
-  - connect release readiness evidence to post-launch triage, data quality review, and follow-up decisions
+- Phase 14: evidence review loop
+  - connect post-MVP hardening evidence to repeatable improvement decisions, issue scope, and PR verification
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - treat strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - classify every doctor, post-launch, and optional evidence result as blocker, accepted risk, follow-up, optional evidence only, or explicit review required
   - keep crawler graduation, full-mode evaluation, and managed infrastructure outside the fixed gate as optional evidence or explicit review paths
-  - make doctor `review_items` easy to classify as blocker, accepted risk, or follow-up
 
-## Phase 13 Exit Gates
+## Phase 14 Exit Gates
 
-- `ROADMAP.md` names Phase 13 as current and moves Phase 12 into Recently Completed.
-- Phase 12 readiness docs point clearly into post-MVP hardening, post-launch triage, and the operator feedback loop.
+- `ROADMAP.md` names Phase 14 as current and moves Phase 13 into Recently Completed.
+- Phase 13 post-MVP hardening docs lead clearly into the evidence review loop.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
-- `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans as blocker, accepted risk, or follow-up.
-- Crawler graduation evidence and full-mode evaluation are documented outside the public MVP gate.
+- `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
+- Blocker, accepted risk, follow-up, optional evidence only, and explicit review required criteria are documented.
+- Optional evidence has clear conditions for opening an issue, preparing a PR, or requesting explicit review.
+- Crawler graduation and full-mode evaluation remain optional evidence outside the public MVP gate.
 - Managed infrastructure, OpenSearch, live crawler operation, ML/embeddings/vector search, and frontend final-ranking changes are not fixed-gate requirements.
 - CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
@@ -24,6 +27,12 @@
 
 ## Recently Completed
 
+- Phase 13: post-MVP hardening
+  - moved from "can we publish?" to "can we keep improving safely after publishing?"
+  - connected release readiness evidence to post-launch triage, data quality review, and follow-up decisions
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept crawler graduation, full-mode evaluation, and managed infrastructure outside the fixed gate as optional evidence or explicit review paths
+  - made doctor `review_items` easy to classify as blocker, accepted risk, or follow-up
 - Phase 12: public MVP release readiness
   - release readiness guidance keeps the April 30, 2026 public MVP release gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - release candidate evidence is repeatable across CI results, local validation, strict data quality doctor output, and residual risk review
@@ -54,7 +63,7 @@
 
 ## Next
 
-- Later hardening after Phase 13
+- Later hardening after Phase 14
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review
