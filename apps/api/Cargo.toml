@@ -11,6 +11,7 @@ axum.workspace = true
 cache = { path = "../../crates/cache" }
 clap.workspace = true
 config = { path = "../../crates/config" }
+context = { path = "../../crates/context" }
 domain = { path = "../../crates/domain" }
 observability = { path = "../../crates/observability" }
 openapi = { path = "../../crates/openapi" }

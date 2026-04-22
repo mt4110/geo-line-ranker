@@ -7,7 +7,9 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 csv.workspace = true
+context = { path = "../context" }
 domain = { path = "../domain" }
 generic-csv = { path = "../connectors/generic-csv" }
 jp-postal = { path = "../connectors/jp-postal" }
@@ -15,6 +17,7 @@ jp-rail = { path = "../connectors/jp-rail" }
 jp-school = { path = "../connectors/jp-school" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 storage = { path = "../storage" }
 tokio.workspace = true
 tokio-postgres.workspace = true

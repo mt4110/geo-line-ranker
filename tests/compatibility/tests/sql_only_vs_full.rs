@@ -50,6 +50,7 @@ fn query(target_station_id: &str) -> RankingQuery {
         user_id: None,
         placement: PlacementKind::Search,
         debug: false,
+        context: None,
     }
 }
 
@@ -92,7 +93,14 @@ async fn assert_sql_only_and_full_match(target_station_id: &str) -> Result<()> {
             profiles.placement(PlacementKind::Search).neighbor_max_hops,
         )
         .await?;
-    let sql_only_result = engine.recommend(&dataset, &query(target_station_id))?;
+    let mut sql_dataset = dataset.clone();
+    sql_dataset.school_station_links = collect_sql_only_candidate_links(
+        &dataset,
+        &target_station,
+        profiles.fallback.neighbor_distance_cap_meters,
+        profiles.placement(PlacementKind::Search).neighbor_max_hops,
+    );
+    let sql_only_result = engine.recommend(&sql_dataset, &query(target_station_id))?;
 
     let mut full_dataset = dataset.clone();
     full_dataset.school_station_links = candidate_links;
@@ -100,6 +108,51 @@ async fn assert_sql_only_and_full_match(target_station_id: &str) -> Result<()> {
 
     assert_eq!(full_mode_result, sql_only_result);
     Ok(())
+}
+
+fn collect_sql_only_candidate_links(
+    dataset: &RankingDataset,
+    target_station: &Station,
+    neighbor_distance_cap_meters: f64,
+    neighbor_max_hops: u8,
+) -> Vec<domain::SchoolStationLink> {
+    let stations_by_id: HashMap<&str, &Station> = dataset
+        .stations
+        .iter()
+        .map(|station| (station.id.as_str(), station))
+        .collect();
+    let mut links = dataset
+        .school_station_links
+        .iter()
+        .filter(|link| {
+            if link.station_id == target_station.id {
+                return true;
+            }
+            let Some(candidate_station) = stations_by_id.get(link.station_id.as_str()) else {
+                return false;
+            };
+            link.line_name == target_station.line_name
+                && link.hop_distance <= neighbor_max_hops
+                && haversine_meters(
+                    target_station.latitude,
+                    target_station.longitude,
+                    candidate_station.latitude,
+                    candidate_station.longitude,
+                ) <= neighbor_distance_cap_meters
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    links.sort_by(|left, right| {
+        let left_is_not_direct = left.station_id != target_station.id;
+        let right_is_not_direct = right.station_id != target_station.id;
+        left_is_not_direct
+            .cmp(&right_is_not_direct)
+            .then_with(|| left.distance_meters.cmp(&right.distance_meters))
+            .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
+            .then_with(|| left.school_id.cmp(&right.school_id))
+            .then_with(|| left.station_id.cmp(&right.station_id))
+    });
+    links
 }
 
 fn build_projection_documents(dataset: &RankingDataset) -> Vec<ProjectionDocument> {

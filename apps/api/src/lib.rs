@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Result;
 
@@ -135,7 +138,6 @@ async fn recommend(
     State(state): State<AppState>,
     Json(request): Json<RecommendationRequest>,
 ) -> impl IntoResponse {
-    let query: domain::RankingQuery = request.clone().into();
     let cache_key = if request.cacheable() {
         match state.cache.build_key(
             &state.profile_version,
@@ -174,7 +176,10 @@ async fn recommend(
                         backend: state.candidate_backend.backend_name(),
                         candidate_count: 0,
                         duration_ms: 0,
-                        target_station_id: &request.target_station_id,
+                        target_station_id: request
+                            .target_station_id
+                            .as_deref()
+                            .unwrap_or("unresolved_context"),
                         candidate_limit: state.candidate_retrieval_limit,
                         neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
                     }),
@@ -187,30 +192,55 @@ async fn recommend(
         }
     }
 
+    let request_id = request
+        .request_id
+        .clone()
+        .unwrap_or_else(generate_request_id);
+    let context_input = request.context_input();
+    let resolved_context = match state
+        .repository
+        .resolve_context(&request_id, request.user_id.as_deref(), &context_input)
+        .await
+    {
+        Ok(context) => context,
+        Err(error) => {
+            let error_message = error.to_string();
+            let message = request
+                .target_station_id
+                .as_deref()
+                .filter(|_| error_message.contains("unknown station"))
+                .map(|station_id| format!("unknown target_station_id: {station_id}"))
+                .unwrap_or(error_message);
+            return error_response(StatusCode::BAD_REQUEST, message);
+        }
+    };
     let target_station = match state
         .repository
-        .load_station(&query.target_station_id)
+        .load_station_for_context(&resolved_context)
         .await
     {
         Ok(Some(station)) => station,
         Ok(None) => {
             return error_response(
                 StatusCode::BAD_REQUEST,
-                format!("unknown target_station_id: {}", query.target_station_id),
+                "context could not be mapped to a station".to_string(),
             );
         }
         Err(error) => {
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
         }
     };
+    let query = request.with_resolved_context(target_station.id.clone(), resolved_context.clone());
 
     let retrieval_started = Instant::now();
     let neighbor_max_hops = state.engine.neighbor_max_hops(query.placement);
+    let mut actual_candidate_backend = state.candidate_backend.backend_name();
     let candidate_links = match &state.candidate_backend {
         CandidateBackend::SqlOnly => match state
             .repository
-            .load_candidate_links(
+            .load_context_candidate_links(
                 &target_station,
+                &resolved_context,
                 state.candidate_retrieval_limit,
                 state.neighbor_distance_cap_meters,
                 neighbor_max_hops,
@@ -222,7 +252,7 @@ async fn recommend(
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
             }
         },
-        CandidateBackend::Full(store) => match store
+        CandidateBackend::Full(store) if resolved_context.station_id().is_some() => match store
             .search_candidate_links(
                 &target_station,
                 state.neighbor_distance_cap_meters,
@@ -236,11 +266,30 @@ async fn recommend(
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
             }
         },
+        CandidateBackend::Full(_) => {
+            actual_candidate_backend = "postgresql";
+            match state
+                .repository
+                .load_context_candidate_links(
+                    &target_station,
+                    &resolved_context,
+                    state.candidate_retrieval_limit,
+                    state.neighbor_distance_cap_meters,
+                    neighbor_max_hops,
+                )
+                .await
+            {
+                Ok(candidate_links) => candidate_links,
+                Err(error) => {
+                    return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+                }
+            }
+        }
     };
     let retrieval_duration_ms = retrieval_started.elapsed().as_millis();
     candidate_retrieval_completed(
         state.candidate_retrieval_mode.as_str(),
-        state.candidate_backend.backend_name(),
+        actual_candidate_backend,
         candidate_links.len(),
         retrieval_duration_ms,
     );
@@ -266,7 +315,8 @@ async fn recommend(
         }
     };
 
-    let response: RecommendationResponse = result.into();
+    let mut response: RecommendationResponse = result.into();
+    response.request_id = Some(request_id.clone());
     record_trace_best_effort(
         &state.repository,
         &request,
@@ -275,7 +325,7 @@ async fn recommend(
         build_trace_payload(TracePayloadInput {
             response_source: "fresh",
             mode: state.candidate_retrieval_mode,
-            backend: state.candidate_backend.backend_name(),
+            backend: actual_candidate_backend,
             candidate_count: candidate_links.len(),
             duration_ms: retrieval_duration_ms,
             target_station_id: &target_station.id,
@@ -467,6 +517,14 @@ fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
             "neighbor_distance_cap_meters": input.neighbor_distance_cap_meters
         }
     })
+}
+
+fn generate_request_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("req_{nanos}")
 }
 
 #[cfg(test)]

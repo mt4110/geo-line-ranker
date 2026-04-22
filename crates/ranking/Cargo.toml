@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 config = { path = "../config" }
+context = { path = "../context" }
 domain = { path = "../domain" }
 geo = { path = "../geo" }
 serde_json.workspace = true

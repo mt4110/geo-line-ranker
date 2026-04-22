@@ -1,4 +1,5 @@
 {
+  "request_id": "req_demo_area_1",
   "items": [
     {
       "content_kind": "event",
@@ -11,27 +12,28 @@
       "primary_station_name": "Tamachi",
       "line_name": "JR Yamanote Line",
       "score": 6.41,
-      "explanation": "直結条件 と 注目イベント が効き、直結条件のイベント候補として上位になりました。",
+      "explanation": "沿線一致 と 注目イベント が効き、同一路線のイベント候補として上位になりました。",
       "score_breakdown": [
         {
-          "feature": "direct_station_bonus",
-          "value": 3.0,
-          "reason": "Tamachi に直結しています。"
+          "feature": "line_match_bonus",
+          "value": 1.25,
+          "reason": "JR Yamanote Line 沿線の候補です。"
         },
         {
           "feature": "featured_event_bonus",
           "value": 0.45,
           "reason": "注目イベントとして運用上の優先度を反映しています。"
         }
-      ]
+      ],
+      "fallback_stage": "same_line"
     }
   ],
-  "explanation": "ホームでは Tamachi 直結の候補群 を母集団にし、直結条件 と 注目イベント を効かせて決定論的に順位付けしました。 多様性上限で同一学校1件を抑制し、3件の表示枠に整えています。",
+  "explanation": "ホームでは JR Yamanote Line 沿線の候補群 を母集団にし、沿線一致 と 注目イベント を効かせて決定論的に順位付けしました。 多様性上限で同一学校1件を抑制し、3件の表示枠に整えています。",
   "score_breakdown": [
     {
-      "feature": "direct_station_bonus",
-      "value": 3.0,
-      "reason": "Tamachi に直結しています。"
+      "feature": "line_match_bonus",
+      "value": 1.25,
+      "reason": "JR Yamanote Line 沿線の候補です。"
     },
     {
       "feature": "featured_event_bonus",
@@ -39,7 +41,21 @@
       "reason": "注目イベントとして運用上の優先度を反映しています。"
     }
   ],
-  "fallback_stage": "strict",
+  "fallback_stage": "same_line",
+  "candidate_counts": {
+    "strict_station": 0,
+    "same_line": 5,
+    "same_city": 2,
+    "same_prefecture": 0,
+    "neighbor_area": 3,
+    "safe_global_popular": 7
+  },
+  "context": {
+    "context_source": "request_line",
+    "confidence": 0.95,
+    "privacy_level": "coarse_area",
+    "warnings": []
+  },
   "profile_version": "phase5-profile-version",
   "algorithm_version": "phase8-policy-diversity-v1"
 }

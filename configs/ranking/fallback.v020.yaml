@@ -1,0 +1,18 @@
+min_results: 2
+neighbor_penalty: 0.8
+neighbor_distance_cap_meters: 2500.0
+fallback_ladder:
+  - strict_station
+  - same_line
+  - same_city
+  - same_prefecture
+  - neighbor_area
+  - safe_global_popular
+safe_global_popular:
+  enabled: true
+  max_items_ratio: 0.3
+  same_region_preferred: true
+  distance_penalty:
+    enabled: true
+    scale_km: 120
+    max_penalty: 2.5

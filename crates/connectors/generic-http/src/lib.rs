@@ -4,9 +4,14 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use reqwest::header::USER_AGENT;
+use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION, USER_AGENT};
 use sha2::{Digest, Sha256};
 use url::Url;
+
+const DEFAULT_MAX_REDIRECTS: usize = 3;
+const DEFAULT_MAX_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
+const DEFAULT_ALLOWED_CONTENT_TYPES: [&str; 4] =
+    ["text/html", "text/csv", "application/json", "text/json"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpFetchRequest<'a> {
@@ -14,6 +19,7 @@ pub struct HttpFetchRequest<'a> {
     pub logical_name: &'a str,
     pub url: &'a str,
     pub user_agent: &'a str,
+    pub allowed_domains: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +60,17 @@ pub fn ensure_allowed_url(raw_url: &str, allowed_domains: &[String]) -> Result<U
         host == domain || host.ends_with(&format!(".{domain}"))
     });
     ensure!(is_allowed, "host {} is outside the crawler allowlist", host);
+    ensure!(
+        !is_private_or_local_host(&host)
+            || allowed_domains.iter().any(|domain| {
+                domain
+                    .trim()
+                    .trim_start_matches('.')
+                    .eq_ignore_ascii_case(&host)
+            }),
+        "host {} is private or local and must be explicitly allowed",
+        host
+    );
 
     Ok(url)
 }
@@ -131,12 +148,7 @@ pub async fn fetch_to_raw(
     request: &HttpFetchRequest<'_>,
     raw_root: impl AsRef<Path>,
 ) -> Result<PreparedHttpFetch> {
-    let response = client
-        .get(request.url)
-        .header(USER_AGENT, request.user_agent)
-        .send()
-        .await
-        .with_context(|| format!("failed to fetch {}", request.url))?;
+    let (response, final_url) = fetch_with_manual_redirects(client, request).await?;
     ensure!(
         response.status().is_success(),
         "fetch returned HTTP {} for {}",
@@ -145,16 +157,37 @@ pub async fn fetch_to_raw(
     );
 
     let status_code = response.status().as_u16();
-    let final_url = response.url().to_string();
     let content_type = response
         .headers()
-        .get(reqwest::header::CONTENT_TYPE)
+        .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
+    ensure_allowed_content_type(content_type.as_deref())?;
+    if let Some(content_length) = response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        ensure!(
+            content_length <= DEFAULT_MAX_RESPONSE_BYTES,
+            "response Content-Length {} exceeds max_response_bytes {} for {}",
+            content_length,
+            DEFAULT_MAX_RESPONSE_BYTES,
+            request.url
+        );
+    }
     let bytes = response
         .bytes()
         .await
         .with_context(|| format!("failed to read response body from {}", request.url))?;
+    ensure!(
+        bytes.len() as u64 <= DEFAULT_MAX_RESPONSE_BYTES,
+        "response body {} bytes exceeds max_response_bytes {} for {}",
+        bytes.len(),
+        DEFAULT_MAX_RESPONSE_BYTES,
+        request.url
+    );
     let checksum_sha256 = format!("{:x}", Sha256::digest(&bytes));
     let size_bytes = bytes.len() as u64;
 
@@ -164,7 +197,8 @@ pub async fn fetch_to_raw(
         .join(&checksum_sha256[..12]);
     fs::create_dir_all(&staged_dir)
         .with_context(|| format!("failed to create {}", staged_dir.display()))?;
-    let staged_extension = infer_staged_extension(content_type.as_deref(), &final_url, request.url);
+    let staged_extension =
+        infer_staged_extension(content_type.as_deref(), final_url.as_str(), request.url);
     let staged_path = staged_dir.join(format!(
         "{}.{}",
         sanitize_name(request.logical_name),
@@ -181,7 +215,7 @@ pub async fn fetch_to_raw(
     Ok(PreparedHttpFetch {
         logical_name: request.logical_name.to_string(),
         target_url: request.url.to_string(),
-        final_url,
+        final_url: final_url.to_string(),
         staged_path,
         staged_was_created,
         checksum_sha256,
@@ -189,6 +223,76 @@ pub async fn fetch_to_raw(
         status_code,
         content_type,
     })
+}
+
+async fn fetch_with_manual_redirects<'a>(
+    client: &reqwest::Client,
+    request: &HttpFetchRequest<'a>,
+) -> Result<(reqwest::Response, Url)> {
+    let mut current_url = ensure_allowed_url(request.url, request.allowed_domains)?;
+    for redirect_count in 0..=DEFAULT_MAX_REDIRECTS {
+        let response = client
+            .get(current_url.clone())
+            .header(USER_AGENT, request.user_agent)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch {}", current_url))?;
+
+        if !response.status().is_redirection() {
+            return Ok((response, current_url));
+        }
+
+        ensure!(
+            redirect_count < DEFAULT_MAX_REDIRECTS,
+            "redirect count exceeded max_redirects {} for {}",
+            DEFAULT_MAX_REDIRECTS,
+            request.url
+        );
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .with_context(|| format!("redirect response missing Location for {}", current_url))?;
+        let next_url = current_url
+            .join(location)
+            .with_context(|| format!("failed to resolve redirect Location {location}"))?;
+        current_url = ensure_allowed_url(next_url.as_str(), request.allowed_domains)?;
+    }
+
+    unreachable!("redirect loop returns or errors before exceeding max_redirects")
+}
+
+fn ensure_allowed_content_type(content_type: Option<&str>) -> Result<()> {
+    let mime = content_type
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .with_context(|| "response content-type is missing and default policy denies it")?
+        .to_ascii_lowercase();
+    let allowed = DEFAULT_ALLOWED_CONTENT_TYPES
+        .iter()
+        .any(|allowed| mime == *allowed || (allowed.ends_with("/json") && mime.ends_with("+json")));
+    ensure!(
+        allowed,
+        "response content-type {} is outside the crawler allowlist",
+        mime
+    );
+    Ok(())
+}
+
+fn is_private_or_local_host(host: &str) -> bool {
+    if matches!(host, "localhost" | "0.0.0.0") || host.ends_with(".localhost") {
+        return true;
+    }
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+        }
+        std::net::IpAddr::V6(ip) => ip.is_loopback() || ip.is_unspecified(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,6 +478,17 @@ mod tests {
         .expect_err("outside domain");
 
         assert!(error.to_string().contains("outside the crawler allowlist"));
+    }
+
+    #[test]
+    fn allowlist_accepts_explicit_local_dev_host() {
+        let url = ensure_allowed_url(
+            "http://127.0.0.1:3000/open-campus",
+            &[String::from("127.0.0.1")],
+        )
+        .expect("explicit local dev host");
+
+        assert_eq!(url.host_str(), Some("127.0.0.1"));
     }
 
     #[test]

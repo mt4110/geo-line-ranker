@@ -27,7 +27,7 @@ impl RecommendationCache {
     }
 
     pub fn enabled(&self) -> bool {
-        self.redis_url.is_some()
+        self.redis_url.is_some() && self.ttl_secs > 0
     }
 
     pub fn build_key<T: Serialize>(
@@ -71,6 +71,9 @@ impl RecommendationCache {
     }
 
     pub async fn set_json<T: Serialize>(&self, key: &str, value: &T) -> Result<()> {
+        if self.ttl_secs == 0 {
+            return Ok(());
+        }
         let Some(mut connection) = self.connection().await? else {
             return Ok(());
         };
@@ -172,6 +175,9 @@ impl RecommendationCache {
         let Some(redis_url) = self.redis_url.as_deref() else {
             return Ok(None);
         };
+        if self.ttl_secs == 0 {
+            return Ok(None);
+        }
 
         {
             let shared_connection = self.redis_connection.lock().await;

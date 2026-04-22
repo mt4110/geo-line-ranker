@@ -910,6 +910,7 @@ pub async fn run_fetch_command(
                     logical_name: &target.logical_name,
                     url: &target.url,
                     user_agent: &manifest.allowlist.user_agent,
+                    allowed_domains: &manifest.allowlist.allowed_domains,
                 },
                 &settings.raw_storage_dir,
             )
@@ -1036,6 +1037,15 @@ pub async fn run_fetch_command(
                 }
                 Err(error) => {
                     report_count += 1;
+                    let error_message = error.to_string();
+                    let fetch_status = if error_message.contains("outside the crawler allowlist")
+                        || error_message.contains("private or local")
+                        || error_message.contains("unsupported URL scheme")
+                    {
+                        "blocked_policy"
+                    } else {
+                        "fetch_failed"
+                    };
                     record_crawl_fetch_log(
                         &settings.database_url,
                         &CrawlFetchLogEntry {
@@ -1047,10 +1057,10 @@ pub async fn run_fetch_command(
                             checksum_sha256: None,
                             size_bytes: None,
                             staged_path: None,
-                            fetch_status: "fetch_failed".to_string(),
+                            fetch_status: fetch_status.to_string(),
                             content_changed: None,
                             details: json!({
-                                "error": error.to_string(),
+                                "error": error_message,
                                 "robots_txt_url": manifest.allowlist.robots_txt_url,
                                 "terms_url": manifest.allowlist.terms_url,
                                 "terms_note": manifest.allowlist.terms_note,
@@ -1387,12 +1397,14 @@ pub async fn run_doctor_command(
         &client,
         &manifest.allowlist.robots_txt_url,
         &manifest.allowlist.user_agent,
+        &manifest.allowlist.allowed_domains,
     )
     .await;
     let terms = probe_url(
         &client,
         &manifest.allowlist.terms_url,
         &manifest.allowlist.user_agent,
+        &manifest.allowlist.allowed_domains,
     )
     .await;
 
@@ -2336,7 +2348,7 @@ struct TargetBodyProbe {
 
 fn build_http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(20))
         .build()
         .context("failed to build crawler HTTP client")
@@ -2349,21 +2361,82 @@ async fn probe_target_body(
     allowed_domains: &[String],
     robots_body: &str,
 ) -> TargetBodyProbe {
-    match client
-        .get(url)
-        .header(reqwest::header::USER_AGENT, user_agent)
-        .send()
-        .await
-    {
+    let mut current_url = match ensure_allowed_url(url, allowed_domains) {
+        Ok(url) => url,
+        Err(error) => {
+            return TargetBodyProbe {
+                body: String::new(),
+                content_type: None,
+                error: Some(error.to_string()),
+            };
+        }
+    };
+    let mut response_result = None;
+    for redirect_count in 0..=3 {
+        match client
+            .get(current_url.clone())
+            .header(reqwest::header::USER_AGENT, user_agent)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_redirection() => {
+                if redirect_count >= 3 {
+                    return TargetBodyProbe {
+                        body: String::new(),
+                        content_type: None,
+                        error: Some("redirect count exceeded max_redirects 3".to_string()),
+                    };
+                }
+                let Some(location) = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                else {
+                    return TargetBodyProbe {
+                        body: String::new(),
+                        content_type: None,
+                        error: Some("redirect response missing Location".to_string()),
+                    };
+                };
+                let next_url = match current_url.join(location) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        return TargetBodyProbe {
+                            body: String::new(),
+                            content_type: None,
+                            error: Some(format!("failed to resolve redirect Location: {error}")),
+                        };
+                    }
+                };
+                current_url = match ensure_allowed_url(next_url.as_str(), allowed_domains) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        return TargetBodyProbe {
+                            body: String::new(),
+                            content_type: None,
+                            error: Some(format!(
+                                "resolved final_url violated crawler allowlist: {error}"
+                            )),
+                        };
+                    }
+                };
+            }
+            result => {
+                response_result = Some(result);
+                break;
+            }
+        }
+    }
+
+    match response_result.expect("target probe loop should return a response result") {
         Ok(response) => {
             let status = response.status();
-            let final_url = response.url().to_string();
             let content_type = response
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_string);
-            let parsed_final_url = match ensure_allowed_url(&final_url, allowed_domains) {
+            let parsed_final_url = match ensure_allowed_url(current_url.as_str(), allowed_domains) {
                 Ok(url) => url,
                 Err(error) => {
                     return TargetBodyProbe {
@@ -2776,7 +2849,12 @@ fn normalize_reason_for_total(reason: &str) -> Option<String> {
     }
 }
 
-async fn probe_url(client: &reqwest::Client, url: &str, user_agent: &str) -> UrlProbeSummary {
+async fn probe_url(
+    client: &reqwest::Client,
+    url: &str,
+    user_agent: &str,
+    allowed_domains: &[String],
+) -> UrlProbeSummary {
     let mut summary = UrlProbeSummary {
         requested_url: url.to_string(),
         final_url: None,
@@ -2787,14 +2865,64 @@ async fn probe_url(client: &reqwest::Client, url: &str, user_agent: &str) -> Url
         body_preview: None,
     };
 
-    match client
-        .get(url)
-        .header(reqwest::header::USER_AGENT, user_agent)
-        .send()
-        .await
-    {
+    let mut current_url = match ensure_allowed_url(url, allowed_domains) {
+        Ok(url) => url,
+        Err(error) => {
+            summary.error = Some(error.to_string());
+            return summary;
+        }
+    };
+
+    let mut response_result = None;
+    for redirect_count in 0..=3 {
+        match client
+            .get(current_url.clone())
+            .header(reqwest::header::USER_AGENT, user_agent)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_redirection() => {
+                if redirect_count >= 3 {
+                    summary.error = Some("redirect count exceeded max_redirects 3".to_string());
+                    return summary;
+                }
+                let Some(location) = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                else {
+                    summary.error = Some("redirect response missing Location".to_string());
+                    return summary;
+                };
+                let next_url = match current_url.join(location) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        summary.error =
+                            Some(format!("failed to resolve redirect Location: {error}"));
+                        return summary;
+                    }
+                };
+                current_url = match ensure_allowed_url(next_url.as_str(), allowed_domains) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        summary.final_url = Some(next_url.to_string());
+                        summary.error = Some(format!(
+                            "resolved final_url violated crawler allowlist: {error}"
+                        ));
+                        return summary;
+                    }
+                };
+            }
+            result => {
+                response_result = Some(result);
+                break;
+            }
+        }
+    }
+
+    match response_result.expect("probe loop should return a response result") {
         Ok(response) => {
-            summary.final_url = Some(response.url().to_string());
+            summary.final_url = Some(current_url.to_string());
             summary.http_status = Some(response.status().as_u16());
             summary.content_type = response
                 .headers()
@@ -4042,7 +4170,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_shibaura_it_junior'
@@ -4145,7 +4273,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_nihon_university_junior'
@@ -4251,7 +4379,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_aoyama_gakuin_junior'
@@ -5087,7 +5215,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_keio'
@@ -5360,7 +5488,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_hachioji_gakuen_junior'

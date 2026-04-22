@@ -1,0 +1,12 @@
+{
+  "request_id": "req_school_event_area",
+  "context": {
+    "area": {
+      "prefecture_name": "Tokyo",
+      "city_name": "Minato"
+    }
+  },
+  "placement": "search",
+  "limit": 5,
+  "debug": false
+}

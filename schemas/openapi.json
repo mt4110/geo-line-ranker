@@ -122,11 +122,116 @@
   },
   "components": {
     "schemas": {
+      "AreaContext": {
+        "type": "object",
+        "properties": {
+          "city_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "city_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "country": {
+            "type": "string"
+          },
+          "prefecture_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "prefecture_name": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "AreaContextInput": {
+        "type": "object",
+        "properties": {
+          "city_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "city_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "country": {
+            "type": "string",
+            "nullable": true
+          },
+          "prefecture_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "prefecture_name": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ContextInput": {
+        "type": "object",
+        "properties": {
+          "area": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AreaContextInput"
+              }
+            ],
+            "nullable": true
+          },
+          "line_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "line_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "station_id": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ContextSource": {
+        "type": "string",
+        "enum": [
+          "request_station",
+          "request_line",
+          "request_area",
+          "user_profile_area",
+          "recent_search_context",
+          "recent_behavior_context",
+          "default_safe_context"
+        ]
+      },
+      "ContextWarning": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "FallbackStageDto": {
         "type": "string",
         "enum": [
-          "strict",
-          "neighbor"
+          "strict_station",
+          "same_line",
+          "same_city",
+          "same_prefecture",
+          "neighbor_area",
+          "safe_global_popular"
         ]
       },
       "HealthResponse": {
@@ -137,6 +242,89 @@
         "properties": {
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "LineContext": {
+        "type": "object",
+        "required": [
+          "line_name"
+        ],
+        "properties": {
+          "line_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "line_name": {
+            "type": "string"
+          },
+          "operator_name": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "PrivacyLevel": {
+        "type": "string",
+        "enum": [
+          "coarse_area"
+        ]
+      },
+      "RankingContext": {
+        "type": "object",
+        "required": [
+          "context_source",
+          "confidence",
+          "privacy_level",
+          "fallback_policy",
+          "gate_policy"
+        ],
+        "properties": {
+          "area": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AreaContext"
+              }
+            ],
+            "nullable": true
+          },
+          "confidence": {
+            "type": "number",
+            "format": "double"
+          },
+          "context_source": {
+            "$ref": "#/components/schemas/ContextSource"
+          },
+          "fallback_policy": {
+            "type": "string"
+          },
+          "gate_policy": {
+            "type": "string"
+          },
+          "line": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LineContext"
+              }
+            ],
+            "nullable": true
+          },
+          "privacy_level": {
+            "$ref": "#/components/schemas/PrivacyLevel"
+          },
+          "station": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StationContext"
+              }
+            ],
+            "nullable": true
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextWarning"
+            }
           }
         }
       },
@@ -160,6 +348,32 @@
           },
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "RecommendationContextDto": {
+        "type": "object",
+        "required": [
+          "context_source",
+          "confidence",
+          "privacy_level"
+        ],
+        "properties": {
+          "confidence": {
+            "type": "number",
+            "format": "double"
+          },
+          "context_source": {
+            "type": "string"
+          },
+          "privacy_level": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/context.ContextWarning"
+            }
           }
         }
       },
@@ -195,6 +409,10 @@
           "explanation": {
             "type": "string"
           },
+          "fallback_stage": {
+            "type": "string",
+            "nullable": true
+          },
           "line_name": {
             "type": "string"
           },
@@ -224,10 +442,15 @@
       },
       "RecommendationRequest": {
         "type": "object",
-        "required": [
-          "target_station_id"
-        ],
         "properties": {
+          "context": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ContextInput"
+              }
+            ],
+            "nullable": true
+          },
           "debug": {
             "type": "boolean"
           },
@@ -240,8 +463,13 @@
           "placement": {
             "type": "string"
           },
+          "request_id": {
+            "type": "string",
+            "nullable": true
+          },
           "target_station_id": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "user_id": {
             "type": "string",
@@ -256,12 +484,28 @@
           "explanation",
           "score_breakdown",
           "fallback_stage",
+          "candidate_counts",
           "profile_version",
           "algorithm_version"
         ],
         "properties": {
           "algorithm_version": {
             "type": "string"
+          },
+          "candidate_counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "context": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RecommendationContextDto"
+              }
+            ],
+            "nullable": true
           },
           "explanation": {
             "type": "string"
@@ -277,6 +521,10 @@
           },
           "profile_version": {
             "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "nullable": true
           },
           "score_breakdown": {
             "type": "array",
@@ -310,6 +558,21 @@
           }
         }
       },
+      "StationContext": {
+        "type": "object",
+        "required": [
+          "station_id",
+          "station_name"
+        ],
+        "properties": {
+          "station_id": {
+            "type": "string"
+          },
+          "station_name": {
+            "type": "string"
+          }
+        }
+      },
       "TrackRequest": {
         "type": "object",
         "required": [
@@ -317,12 +580,24 @@
           "event_kind"
         ],
         "properties": {
+          "context": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ContextInput"
+              }
+            ],
+            "nullable": true
+          },
           "event_id": {
             "type": "string",
             "nullable": true
           },
           "event_kind": {
             "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "nullable": true
           },
           "occurred_at": {
             "type": "string",

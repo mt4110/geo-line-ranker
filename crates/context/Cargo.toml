@@ -1,13 +1,9 @@
 [package]
-name = "api-contracts"
+name = "context"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
 
 [dependencies]
-chrono.workspace = true
-context = { path = "../context" }
-domain = { path = "../domain" }
 serde.workspace = true
-serde_json.workspace = true
 utoipa.workspace = true
