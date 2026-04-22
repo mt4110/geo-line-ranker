@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[optional-evidence-review] intake, triage, recheck audit, closeout ledger, integrity, and stale hygiene checklist
+[optional-evidence-review] intake, triage, recheck audit, closeout ledger, integrity, lifecycle index, and stale hygiene checklist
 
 Repository:
   root: $ROOT_DIR
@@ -43,6 +43,7 @@ Primary guides:
   docs/OPTIONAL_EVIDENCE_RECHECK_AUDIT.md
   docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md
   docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md
+  docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md
   docs/POST_MVP_HARDENING.md
   docs/OPTIONAL_EVIDENCE_GRADUATION.md
   docs/OPTIONAL_EVIDENCE_PACKETS.md
@@ -185,6 +186,45 @@ Closeout integrity and orphan prevention:
       body lacks status, owner, evidence, link, next action, boundary, or API
       answers
 
+Lifecycle index and review inventory:
+  guide: docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md
+  use when optional evidence records need a read-only shelf view across intake,
+    triage, recheck audit, closeout ledger, and closeout integrity
+  this is exploration and review support only; it is not an acceptance gate,
+    release gate, required label setup, or replacement source of truth
+  lifecycle states:
+    intake-recorded
+    triaged
+    recheck-scheduled
+    recheck-overdue
+    closeout-recorded
+    integrity-complete
+    follow-up-linked
+    explicit-review-linked
+    closed
+  minimum inventory fields:
+    record link
+    owner
+    lane
+    source type
+    stale class
+    stale hygiene decision
+    primary closeout status
+    repeat or escalation marker
+    linked split, follow-up, or explicit review
+    next recheck date or reason none is needed
+    integrity result
+  read-only inventory conditions:
+    orphan candidate: closed, split, follow-up, explicit-review, repeated-stale,
+      or keep-open marker is present but the linked target, owner, recheck,
+      decision authority, waiting reason, or close condition is missing
+    stale candidate: recheck date has passed, needs-recheck has no current
+      result, keep-open date passed, or stale class lacks a hygiene decision
+    unclear owner: owner is blank, generic, conflicting across records, or
+      missing decision authority, cost owner, or risk owner where required
+  labels:
+    labels and written label equivalents are record aids only, not gates
+
 Suggested label aids, not gates:
   optional-evidence
   lane:follow-up
@@ -248,6 +288,8 @@ Packet templates to paste into issues, PRs, or review notes:
     docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md
   closeout integrity and orphan prevention:
     docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md
+  lifecycle index and review inventory:
+    docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md
   crawler graduation:
     docs/OPTIONAL_EVIDENCE_PACKETS.md#crawler-graduation-packet
   full-mode automation candidate:
@@ -337,6 +379,14 @@ Closeout integrity template:
     follow-up, and explicit-review link reachability, original action holder,
     repeated stale or repeated keep-open next action, fixed boundary, public
     API shape, label-aid status, and integrity result
+
+Lifecycle index row template:
+  docs/OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md#row-template
+  fields: record, lifecycle state, owner, lane, source type, stale class,
+    stale hygiene decision, primary closeout status, repeat/escalation marker,
+    linked split/follow-up/explicit review, next recheck date or reason none,
+    integrity result, inventory finding, fixed boundary, public API shape, and
+    label-aid status
 
 Local validation and evidence when files change:
   cargo fmt --all --check

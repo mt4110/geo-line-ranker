@@ -7,6 +7,11 @@ open, split, routed to follow-up, or routed to explicit review. Its job is to
 check that the record is complete, reachable, and not orphaned from the action
 it names.
 
+After this pass, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
+when records need a read-only lifecycle index or review inventory across
+intake, triage, recheck audit, closeout ledger, and closeout integrity.
+
 This is an integrity and orphan-prevention pass, not a new acceptance gate. It
 does not create GitHub labels, run validation by itself, change source maturity,
 enable full mode, require OpenSearch, provision managed infrastructure, or
@@ -56,6 +61,8 @@ Run a closeout integrity pass when:
   appears in the record body or label aids
 - a reviewer cannot tell which issue, PR, review note, packet, command, or
   decision authority now owns the action
+- a lifecycle index row needs an `integrity-complete`, `follow-up-linked`,
+  `explicit-review-linked`, or `closed` state before inventory review
 
 The pass is read-only unless it finds missing record text. If work is missing,
 edit the closeout record or linked record before changing code, services, source
@@ -237,3 +244,5 @@ Before accepting a closeout record as complete, confirm:
    approves a separate implementation change.
 10. Strict doctor `review_items` are human-classified before implementation
     work starts.
+11. The lifecycle index can point to this integrity result as review inventory
+    only; it does not become a gate or replace the source records.

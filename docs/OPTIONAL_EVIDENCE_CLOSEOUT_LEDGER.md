@@ -10,6 +10,10 @@ After writing or editing a closeout record, use
 to confirm that required fields are complete, split/follow-up/explicit-review
 links are reachable, and repeated stale or repeated keep-open markers have not
 become orphaned next actions.
+After integrity is complete, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
+when reviewers need a read-only inventory of lifecycle state, owner, lane,
+stale status, linked actions, and integrity result.
 
 The ledger is a record format, not a new acceptance gate. It does not create
 GitHub labels, run validation by itself, change source maturity, enable full
@@ -271,3 +275,8 @@ Before closing or keeping an optional evidence record open, confirm:
     [OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md)
     can verify required-field completeness, link reachability, repeat marker
     routing, and primary-status consistency.
+12. The lifecycle index in
+    [OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
+    can show the record as `closeout-recorded`, `integrity-complete`,
+    `follow-up-linked`, `explicit-review-linked`, or `closed` without becoming
+    a gate.

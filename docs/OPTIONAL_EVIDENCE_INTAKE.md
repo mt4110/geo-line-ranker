@@ -13,6 +13,10 @@ Intake answers three questions:
 After the evidence has an issue, PR, or review note, use
 [OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md) to record labels,
 owner, recheck command, and close condition.
+When several records need review inventory, use
+[OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md)
+to list their lifecycle state, owner, lane, stale status, linked actions, and
+integrity result without replacing the source records.
 
 This workflow is read-only. It does not run validation, change source
 maturity, enable full mode, require OpenSearch, provision managed
@@ -173,6 +177,8 @@ The output points back to this workflow, the triage and recheck loop in
 [OPTIONAL_EVIDENCE_TRIAGE.md](OPTIONAL_EVIDENCE_TRIAGE.md), closeout decision
 history in
 [OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md](OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md),
+the lifecycle index and review inventory in
+[OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md](OPTIONAL_EVIDENCE_LIFECYCLE_INDEX.md),
 the decision ladder in
 [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md), and the
 packet templates in [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md),

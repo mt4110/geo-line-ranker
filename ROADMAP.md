@@ -2,14 +2,13 @@
 
 ## Current
 
-- Phase 22: optional evidence closeout integrity / orphan prevention
-  - check that closeout ledger records are complete, reachable, and not contradicted by stale hygiene state
-  - add an integrity guide for closeout record completeness, link checks, repeat marker routing, and orphan prevention
-  - connect the closeout ledger, recheck audit, and triage guidance to the integrity pass so decision history does not drift or break links
-  - make `just optional-evidence-review` point to closeout integrity and orphan-prevention guidance while staying read-only
-  - require `split`, `follow-up`, and `explicit-review` records to have reachable linked targets before the original record stops carrying action
-  - keep repeated stale and repeated keep-open from becoming orphan markers by requiring an explicit next action or final dated external wait
-  - keep primary closeout status separate from repeat or escalation markers and define their consistency rules
+- Phase 23: optional evidence lifecycle index / review inventory
+  - turn optional evidence intake, triage, recheck audit, closeout ledger, and closeout integrity records into a read-only lifecycle index operators can review
+  - add a lifecycle index guide for record states, minimum inventory fields, and review conditions for orphan, stale, and unclear-owner records
+  - connect intake, triage, recheck audit, closeout ledger, and closeout integrity guidance to the lifecycle index without replacing their source records
+  - make `just optional-evidence-review` point to lifecycle index and review inventory guidance while staying read-only
+  - define lifecycle states from `intake-recorded` through `closed`, including recheck, closeout, integrity, follow-up, and explicit-review states
+  - keep the lifecycle index as exploration, inventory, and review support only, not an acceptance or release gate
   - keep labels as record aids only, not required gates or repository setup prerequisites
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
@@ -19,15 +18,16 @@
   - keep managed infrastructure explicit review only
   - keep public API shape unchanged
 
-## Phase 22 Exit Gates
+## Phase 23 Exit Gates
 
-- `ROADMAP.md` names Phase 22 as current and moves Phase 21 into Recently Completed.
-- Optional evidence closeout ledger guidance leads to the closeout integrity guide.
-- Optional evidence recheck audit and triage guidance lead to closeout integrity when records are ready to close, stay open, split, open follow-up, or link explicit review.
-- Closeout record required-field completeness is defined for integrity checks.
-- `split`, `follow-up`, and `explicit-review` decisions define reachable link conditions before the original record stops carrying action.
-- Repeated stale and repeated keep-open records have orphan-prevention next-action checks instead of remaining as markers only.
-- Primary closeout status and repeat or escalation marker consistency is defined.
+- `ROADMAP.md` names Phase 23 as current and moves Phase 22 into Recently Completed.
+- Optional evidence lifecycle index guidance is added.
+- Optional evidence closeout integrity guidance leads to the lifecycle index.
+- Intake, triage, recheck audit, closeout ledger, and closeout integrity flow is organized into lifecycle states.
+- Lifecycle states include `intake-recorded`, `triaged`, `recheck-scheduled`, `recheck-overdue`, `closeout-recorded`, `integrity-complete`, `follow-up-linked`, `explicit-review-linked`, and `closed`.
+- Lifecycle index minimum fields are defined for record link, owner, lane, source type, stale class, stale hygiene decision, primary closeout status, repeat or escalation marker, linked split/follow-up/explicit review, next recheck date or reason none, and integrity result.
+- Read-only inventory conditions are defined for finding orphan, stale, and unclear-owner records.
+- The lifecycle index is review inventory, not an acceptance gate, release gate, required label setup, or replacement source of truth.
 - Labels are documented as record aids only and are not required gates.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
@@ -43,6 +43,22 @@
 
 ## Recently Completed
 
+- Phase 22: optional evidence closeout integrity / orphan prevention
+  - checked that closeout ledger records are complete, reachable, and not contradicted by stale hygiene state
+  - added an integrity guide for closeout record completeness, link checks, repeat marker routing, and orphan prevention
+  - connected the closeout ledger, recheck audit, and triage guidance to the integrity pass so decision history does not drift or break links
+  - made `just optional-evidence-review` point to closeout integrity and orphan-prevention guidance while staying read-only
+  - required `split`, `follow-up`, and `explicit-review` records to have reachable linked targets before the original record stops carrying action
+  - kept repeated stale and repeated keep-open from becoming orphan markers by requiring an explicit next action or final dated external wait
+  - kept primary closeout status separate from repeat or escalation markers and defined their consistency rules
+  - kept labels as record aids only, not required gates or repository setup prerequisites
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - kept crawler graduation outside the fixed gate even when its packet is complete
+  - kept full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
+  - kept managed infrastructure explicit review only
+  - kept public API shape unchanged
 - Phase 21: optional evidence closeout ledger / decision history
   - recorded why optional evidence was closed, kept open, split, routed to follow-up, or routed to explicit review after recheck audit
   - added a closeout ledger guide for required decision-history fields and closeout record templates
@@ -162,7 +178,7 @@
 
 ## Next
 
-- Later hardening after Phase 22
+- Later hardening after Phase 23
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review
