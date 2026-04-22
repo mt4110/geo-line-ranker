@@ -10,6 +10,9 @@ evidence may have gone stale, use
 next action. After a stale hygiene decision is chosen, use
 `docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md` to record why the record closed,
 stayed open, split, opened a follow-up, or linked explicit review.
+After the closeout record exists, use
+`docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md` to check required fields, link
+reachability, repeated-stale routing, and primary status consistency.
 
 This guide is a triage loop, not an acceptance test. It does not create GitHub
 labels, run validation by itself, change source maturity, require OpenSearch,
@@ -60,7 +63,9 @@ Use this loop for every optional evidence issue, PR, or review note:
 7. Record the stale hygiene decision in
    `docs/OPTIONAL_EVIDENCE_CLOSEOUT_LEDGER.md` before closing, keeping open,
    splitting, opening follow-up, or linking explicit review.
-8. Close only when the lane close condition below is satisfied.
+8. Check `docs/OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md` so closeout records do
+   not leave orphaned links or marker-only next actions.
+9. Close only when the lane close condition below is satisfied.
 
 If one record needs multiple lanes, split it before implementation starts.
 When more than one lane seems plausible, choose the stricter lane.
@@ -144,7 +149,10 @@ After choosing one of those decisions, use
 record the decision history. Split, follow-up, and explicit-review decisions
 must link their new records before the original record closes. Repeated stale
 or repeated keep-open records must route to explicit review, split, or
-follow-up unless one final dated external wait is recorded.
+follow-up unless one final dated external wait is recorded. Then use
+[OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md)
+to confirm required-field completeness, link reachability, orphan prevention,
+and primary closeout status consistency.
 
 ## Recheck Result Template
 
@@ -175,6 +183,8 @@ Before closing an optional evidence issue, PR, or review note, confirm:
 - owner and recheck date are recorded, or the record says no recheck is needed
 - the lane-specific close condition is satisfied
 - the closeout ledger record explains the decision history
+- the closeout integrity check confirms required fields, linked records,
+  repeated-stale routing, and status/marker consistency
 - labels or written label equivalents are recorded as aids only
 - `just mvp-acceptance` remains the fixed six-case gate
 - crawler graduation remains outside the fixed gate even when packet complete

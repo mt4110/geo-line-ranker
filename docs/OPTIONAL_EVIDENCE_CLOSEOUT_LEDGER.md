@@ -5,6 +5,12 @@ record to a decision. Its job is to leave decision history that can be read
 later without guessing why the record was closed, kept open, split, routed to a
 follow-up, or routed to explicit review.
 
+After writing or editing a closeout record, use
+[OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md)
+to confirm that required fields are complete, split/follow-up/explicit-review
+links are reachable, and repeated stale or repeated keep-open markers have not
+become orphaned next actions.
+
 The ledger is a record format, not a new acceptance gate. It does not create
 GitHub labels, run validation by itself, change source maturity, enable full
 mode, require OpenSearch, provision managed infrastructure, or change public API
@@ -261,3 +267,7 @@ Before closing or keeping an optional evidence record open, confirm:
    follow-up unless one final dated external wait is recorded.
 10. Crawler graduation, full mode, OpenSearch, managed infrastructure, and
     public API changes remain outside the fixed public MVP gate.
+11. The closeout integrity pass in
+    [OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md](OPTIONAL_EVIDENCE_CLOSEOUT_INTEGRITY.md)
+    can verify required-field completeness, link reachability, repeat marker
+    routing, and primary-status consistency.
