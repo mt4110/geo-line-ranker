@@ -876,12 +876,14 @@ pub async fn run_fetch_command(
     let mut report_count = 0_usize;
 
     let result: Result<()> = async {
-        let robots_txt = fetch_robots_txt(
-            &client,
-            &manifest.allowlist.robots_txt_url,
-            &manifest.allowlist.user_agent,
-        )
-        .await?;
+        let robots_request = HttpFetchRequest {
+            source_id: &manifest.source_id,
+            logical_name: "robots_txt",
+            url: &manifest.allowlist.robots_txt_url,
+            user_agent: &manifest.allowlist.user_agent,
+            allowed_domains: &manifest.allowlist.allowed_domains,
+        };
+        let robots_txt = fetch_robots_txt(&client, &robots_request).await?;
 
         for (index, target) in targets.iter().enumerate() {
             if index > 0 && manifest.allowlist.min_fetch_interval_ms > 0 {

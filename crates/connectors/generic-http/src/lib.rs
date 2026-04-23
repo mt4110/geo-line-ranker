@@ -77,25 +77,19 @@ pub fn ensure_allowed_url(raw_url: &str, allowed_domains: &[String]) -> Result<U
 
 pub async fn fetch_robots_txt(
     client: &reqwest::Client,
-    robots_txt_url: &str,
-    user_agent: &str,
+    request: &HttpFetchRequest<'_>,
 ) -> Result<String> {
-    let response = client
-        .get(robots_txt_url)
-        .header(USER_AGENT, user_agent)
-        .send()
-        .await
-        .with_context(|| format!("failed to fetch robots.txt from {robots_txt_url}"))?;
+    let (response, final_url) = fetch_with_manual_redirects(client, request).await?;
     ensure!(
         response.status().is_success(),
         "robots.txt returned HTTP {} from {}",
         response.status(),
-        robots_txt_url
+        final_url
     );
     response
         .text()
         .await
-        .with_context(|| format!("failed to read robots.txt body from {robots_txt_url}"))
+        .with_context(|| format!("failed to read robots.txt body from {final_url}"))
 }
 
 pub fn evaluate_robots(robots_txt: &str, user_agent: &str, target_path: &str) -> RobotsDecision {
@@ -467,8 +461,8 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::{
-        ensure_allowed_url, evaluate_robots, fetch_with_manual_redirects, infer_staged_extension,
-        is_private_or_local_host, HttpFetchRequest,
+        ensure_allowed_url, evaluate_robots, fetch_robots_txt, fetch_with_manual_redirects,
+        infer_staged_extension, is_private_or_local_host, HttpFetchRequest,
     };
 
     #[test]
@@ -626,6 +620,42 @@ Allow: /
             .await
             .expect_err("redirect to disallowed auto-followed host should fail");
         assert!(error.to_string().contains("outside the crawler allowlist"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_robots_txt_follows_allowed_redirects() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let app = Router::new()
+            .route(
+                "/robots.txt",
+                get(|| async { Redirect::temporary("/canonical/robots.txt") }),
+            )
+            .route(
+                "/canonical/robots.txt",
+                get(|| async { "User-agent: *\nAllow: /\n" }),
+            );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let robots_url = format!("http://127.0.0.1:{}/robots.txt", address.port());
+        let allowed_domains = vec![String::from("127.0.0.1")];
+        let request = HttpFetchRequest {
+            source_id: "test-source",
+            logical_name: "robots-txt",
+            url: &robots_url,
+            user_agent: "geo-line-ranker-test/0.1",
+            allowed_domains: &allowed_domains,
+        };
+
+        let robots_txt = fetch_robots_txt(&client, &request).await?;
+        assert!(robots_txt.contains("Allow: /"));
 
         Ok(())
     }
