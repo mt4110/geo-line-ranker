@@ -298,6 +298,43 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             Some("line_jr_yamanote_line".to_string())
         );
 
+        client
+            .execute(
+                "INSERT INTO user_profile_contexts (
+                    user_id,
+                    area_id,
+                    line_id,
+                    station_id,
+                    context_source,
+                    confidence,
+                    consent_scope
+                ) VALUES ($1, NULL, NULL, NULL, 'user_profile_area', 0.7, 'coarse_area')
+                ON CONFLICT (user_id) DO UPDATE
+                SET area_id = EXCLUDED.area_id,
+                    line_id = EXCLUDED.line_id,
+                    station_id = EXCLUDED.station_id,
+                    context_source = EXCLUDED.context_source,
+                    confidence = EXCLUDED.confidence,
+                    consent_scope = EXCLUDED.consent_scope",
+                &[&"empty-profile-user"],
+            )
+            .await?;
+
+        let empty_profile_context = repo
+            .resolve_context(
+                "req-context-empty-profile",
+                Some("empty-profile-user"),
+                &ContextInput::default(),
+            )
+            .await?;
+        assert_eq!(
+            empty_profile_context.context_source,
+            ContextSource::DefaultSafeContext
+        );
+        assert!(empty_profile_context.area.is_none());
+        assert!(empty_profile_context.line.is_none());
+        assert!(empty_profile_context.station.is_none());
+
         Ok(())
     }
     .await;

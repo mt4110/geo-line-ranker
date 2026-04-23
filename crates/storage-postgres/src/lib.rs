@@ -652,10 +652,8 @@ impl PgRepository {
             )
             .await?;
 
-        Ok(row.map(|row| RankingContext {
-            context_source: ContextSource::UserProfileArea,
-            confidence: row.get("confidence"),
-            area: row
+        Ok(row.and_then(|row| {
+            let area = row
                 .get::<_, Option<String>>("country_code")
                 .map(|country| AreaContext {
                     country,
@@ -663,24 +661,32 @@ impl PgRepository {
                     prefecture_name: row.get("prefecture_name"),
                     city_code: row.get("city_code"),
                     city_name: row.get("city_name"),
-                }),
-            line: row
+                });
+            let line = row
                 .get::<_, Option<String>>("line_name")
                 .map(|line_name| LineContext {
                     line_id: row.get("line_id"),
                     line_name,
                     operator_name: row.get("operator_name"),
-                }),
-            station: row
+                });
+            let station = row
                 .get::<_, Option<String>>("station_id")
                 .map(|station_id| StationContext {
                     station_id,
                     station_name: row.get("station_name"),
-                }),
-            privacy_level: PrivacyLevel::CoarseArea,
-            fallback_policy: "school_event_jp_default".to_string(),
-            gate_policy: "geo_line_default".to_string(),
-            warnings: Vec::new(),
+                });
+
+            (area.is_some() || line.is_some() || station.is_some()).then(|| RankingContext {
+                context_source: ContextSource::UserProfileArea,
+                confidence: row.get("confidence"),
+                area,
+                line,
+                station,
+                privacy_level: PrivacyLevel::CoarseArea,
+                fallback_policy: "school_event_jp_default".to_string(),
+                gate_policy: "geo_line_default".to_string(),
+                warnings: Vec::new(),
+            })
         }))
     }
 

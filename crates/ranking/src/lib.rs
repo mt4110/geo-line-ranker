@@ -325,7 +325,8 @@ impl RankingEngine {
                             candidate_station.latitude,
                             candidate_station.longitude,
                         );
-                        link.line_name == line_name
+                        line_context_is_explicit
+                            && link.line_name == line_name
                             && link.hop_distance <= placement_profile.neighbor_max_hops
                             && station_distance
                                 <= self.profiles.fallback.neighbor_distance_cap_meters
@@ -1212,6 +1213,26 @@ mod tests {
 
         assert_eq!(result.candidate_counts.get("same_city"), Some(&0));
         assert_eq!(result.candidate_counts.get("same_prefecture"), Some(&0));
+    }
+
+    #[test]
+    fn default_safe_context_skips_neighbor_area_stage() {
+        let dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-context-test");
+        let mut query = query("st_tamachi", PlacementKind::Search);
+        query.context = Some(RankingContext::default_safe());
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("strict_station"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_city"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_prefecture"), Some(&0));
+        assert_eq!(result.candidate_counts.get("neighbor_area"), Some(&0));
+        assert_eq!(result.fallback_stage, FallbackStage::SafeGlobalPopular);
     }
 
     #[test]
