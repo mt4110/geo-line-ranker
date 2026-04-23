@@ -217,7 +217,16 @@ impl PgRepository {
     ) -> Result<Option<Station>> {
         let client = self.connect().await?;
         if let Some(station_id) = context.station_id() {
-            return self.load_station(station_id).await;
+            return client
+                .query_opt(
+                    "SELECT id, name, line_name, latitude, longitude
+                     FROM stations
+                     WHERE id = $1",
+                    &[&station_id],
+                )
+                .await
+                .map(|row| row.map(station_from_row))
+                .with_context(|| format!("failed to load station {station_id}"));
         }
 
         if let Some(line_name) = context.line_name() {
@@ -291,9 +300,14 @@ impl PgRepository {
             .map(station_from_row)
             .with_context(|| format!("unknown station: {station_id}"))?;
 
+        let mut area = input.area.clone().map(AreaContext::from);
         let mut warnings = Vec::new();
-        if let Some(area) = input.area.as_ref() {
-            if let Some(city_name) = area.city_name.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(area_input) = input.area.as_ref() {
+            if let Some(city_name) = area_input
+                .city_name
+                .as_deref()
+                .filter(|value| !value.is_empty())
+            {
                 let matches = client
                     .query_one(
                         "SELECT EXISTS (
@@ -314,6 +328,7 @@ impl PgRepository {
                         message: "station context was used and conflicting area hint was ignored"
                             .to_string(),
                     });
+                    area = None;
                 }
             }
         }
@@ -321,7 +336,7 @@ impl PgRepository {
         Ok(RankingContext {
             context_source: ContextSource::RequestStation,
             confidence: 1.0,
-            area: input.area.clone().map(AreaContext::from),
+            area,
             line: Some(LineContext {
                 line_id: input.line_id.clone(),
                 line_name: station.line_name.clone(),
@@ -477,18 +492,11 @@ impl PgRepository {
         context: &RankingContext,
     ) -> Result<()> {
         let user_id_hash = user_id.map(hash_user_id);
-        let area_id = context.area.as_ref().and_then(|area| {
-            area.city_code
-                .clone()
-                .or_else(|| area.prefecture_code.clone())
-                .or_else(|| area.city_name.clone())
-                .or_else(|| area.prefecture_name.clone())
-        });
-        let line_id = context
-            .line
-            .as_ref()
-            .and_then(|line| line.line_id.clone())
-            .or_else(|| context.line.as_ref().map(|line| line.line_name.clone()));
+        let area_id = match context.area.as_ref() {
+            Some(area) => self.resolve_trace_area_id(client, area).await?,
+            None => None,
+        };
+        let line_id = context.line.as_ref().and_then(|line| line.line_id.clone());
         let station_id = context
             .station
             .as_ref()
@@ -519,6 +527,49 @@ impl PgRepository {
             )
             .await?;
         Ok(())
+    }
+
+    async fn resolve_trace_area_id(
+        &self,
+        client: &Client,
+        area: &AreaContext,
+    ) -> Result<Option<String>> {
+        let city_code = area.city_code.as_deref();
+        let prefecture_code = area.prefecture_code.as_deref();
+        let city_name = area.city_name.as_deref();
+        let prefecture_name = area.prefecture_name.as_deref();
+        client
+            .query_opt(
+                "SELECT area_id
+                 FROM areas
+                 WHERE country_code = $5
+                   AND (
+                       ($1::TEXT IS NOT NULL AND city_code = $1)
+                       OR ($2::TEXT IS NOT NULL AND prefecture_code = $2)
+                       OR ($3::TEXT IS NOT NULL AND lower(city_name) = lower($3))
+                       OR ($4::TEXT IS NOT NULL AND lower(prefecture_name) = lower($4))
+                   )
+                 ORDER BY
+                    CASE
+                        WHEN $1::TEXT IS NOT NULL AND city_code = $1 THEN 0
+                        WHEN $3::TEXT IS NOT NULL AND lower(city_name) = lower($3) THEN 1
+                        WHEN $2::TEXT IS NOT NULL AND prefecture_code = $2 THEN 2
+                        WHEN $4::TEXT IS NOT NULL AND lower(prefecture_name) = lower($4) THEN 3
+                        ELSE 4
+                    END,
+                    area_id ASC
+                 LIMIT 1",
+                &[
+                    &city_code,
+                    &prefecture_code,
+                    &city_name,
+                    &prefecture_name,
+                    &area.country,
+                ],
+            )
+            .await
+            .map(|row| row.map(|row| row.get("area_id")))
+            .context("failed to resolve trace area_id")
     }
 
     async fn load_station_for_school_area(
@@ -795,9 +846,8 @@ impl PgRepository {
         neighbor_max_hops: u8,
     ) -> Result<Vec<SchoolStationLink>> {
         let client = self.connect().await?;
-        let line_name = context
-            .line_name()
-            .unwrap_or(target_station.line_name.as_str());
+        let station_id = context.station_id().map(str::to_string);
+        let line_name = context.line_name().map(str::to_string);
         let city_name = context.city_name().map(str::to_string);
         let prefecture_name = context.prefecture_name().map(str::to_string);
         let allow_global = matches!(context.context_source, ContextSource::DefaultSafeContext);
@@ -815,11 +865,13 @@ impl PgRepository {
                    ON candidate_station.id = link.station_id
                  INNER JOIN schools AS school
                    ON school.id = link.school_id
-                 WHERE link.station_id = $1
-                    OR link.line_name = $2
+                 WHERE ($1::TEXT IS NOT NULL AND link.station_id = $1)
+                    OR ($2::TEXT IS NOT NULL AND link.line_name = $2)
                     OR ($3::TEXT IS NOT NULL AND lower(school.area) = lower($3))
                     OR ($4::TEXT IS NOT NULL AND lower(school.area) = lower($4))
                     OR (
+                        $2::TEXT IS NOT NULL
+                        AND
                         link.line_name = $2
                         AND link.hop_distance <= $7
                         AND ST_DWithin(
@@ -831,8 +883,8 @@ impl PgRepository {
                     OR $9
                  ORDER BY
                     CASE
-                        WHEN link.station_id = $1 THEN 0
-                        WHEN link.line_name = $2 THEN 1
+                        WHEN $1::TEXT IS NOT NULL AND link.station_id = $1 THEN 0
+                        WHEN $2::TEXT IS NOT NULL AND link.line_name = $2 THEN 1
                         WHEN $3::TEXT IS NOT NULL AND lower(school.area) = lower($3) THEN 2
                         WHEN $4::TEXT IS NOT NULL AND lower(school.area) = lower($4) THEN 3
                         ELSE 4
@@ -841,9 +893,9 @@ impl PgRepository {
                     link.walking_minutes ASC,
                     link.school_id ASC,
                     link.station_id ASC
-                 LIMIT $10",
+                LIMIT $10",
                 &[
-                    &target_station.id,
+                    &station_id,
                     &line_name,
                     &city_name,
                     &prefecture_name,

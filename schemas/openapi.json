@@ -372,7 +372,7 @@
           "warnings": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/context.ContextWarning"
+              "$ref": "#/components/schemas/ContextWarning"
             }
           }
         }

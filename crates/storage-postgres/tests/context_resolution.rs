@@ -40,7 +40,36 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         assert_eq!(context.context_source, ContextSource::RequestArea);
         assert_eq!(context.city_name(), Some("Minato"));
         assert!(context.station.is_none());
-        assert!(repo.load_station_for_context(&context).await?.is_some());
+        let target_station = repo
+            .load_station_for_context(&context)
+            .await?
+            .expect("representative station");
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 20, 5_000.0, 2)
+            .await?;
+        assert!(candidate_links
+            .iter()
+            .all(|link| link.school_id != "school_creative"));
+
+        let conflicted_context = repo
+            .resolve_context(
+                "req-context-station-conflict",
+                None,
+                &ContextInput {
+                    station_id: Some("st_tamachi".to_string()),
+                    area: Some(AreaContextInput {
+                        city_name: Some("Shibuya".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert!(conflicted_context.area.is_none());
+        assert!(conflicted_context
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "station_area_conflict"));
 
         let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
         tokio::spawn(async move {
@@ -48,7 +77,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         });
         let row = client
             .query_one(
-                "SELECT user_id_hash, context_source, station_id
+                "SELECT user_id_hash, context_source, area_id, line_id, station_id
                  FROM context_resolution_traces
                  WHERE request_id = 'req-context-area'",
                 &[],
@@ -62,6 +91,11 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             row.get::<_, String>("context_source"),
             "request_area".to_string()
         );
+        assert_eq!(
+            row.get::<_, Option<String>>("area_id"),
+            Some("area_minato".to_string())
+        );
+        assert_eq!(row.get::<_, Option<String>>("line_id"), None);
         assert_eq!(row.get::<_, Option<String>>("station_id"), None);
 
         Ok(())

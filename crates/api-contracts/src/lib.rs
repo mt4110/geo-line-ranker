@@ -1,4 +1,7 @@
-use context::{build_request_context, ContextInput, RankingContext};
+use context::{
+    build_request_context, ContextInput, ContextSource, ContextWarning, PrivacyLevel,
+    RankingContext,
+};
 use domain::{
     ContentKind, EventKind, PlacementKind, RecommendationResult, ScoreComponent, UserEvent,
 };
@@ -119,12 +122,12 @@ pub struct RecommendationResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RecommendationContextDto {
     #[schema(value_type = String)]
-    pub context_source: context::ContextSource,
+    pub context_source: ContextSource,
     pub confidence: f64,
     #[schema(value_type = String)]
-    pub privacy_level: context::PrivacyLevel,
+    pub privacy_level: PrivacyLevel,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<context::ContextWarning>,
+    pub warnings: Vec<ContextWarning>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -191,9 +194,8 @@ impl TrackRequest {
                 .target_station_id
                 .as_deref()
                 .is_none_or(|value| value.trim().is_empty())
-            && self.context.as_ref().is_none_or(ContextInput::is_empty)
         {
-            return Err("target_station_id or context is required for search_execute".to_string());
+            return Err("target_station_id is required for search_execute".to_string());
         }
         if matches!(self.event_kind, EventKind::EventView)
             && self
@@ -386,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn search_execute_accepts_area_context_without_station() {
+    fn search_execute_rejects_context_without_station_until_persisted() {
         let request = TrackRequest {
             idempotency_key: None,
             user_id: "demo-user".to_string(),
@@ -405,6 +407,7 @@ mod tests {
             payload: None,
         };
 
-        request.validate().expect("area context is enough");
+        let error = request.validate().expect_err("target station required");
+        assert_eq!(error, "target_station_id is required for search_execute");
     }
 }

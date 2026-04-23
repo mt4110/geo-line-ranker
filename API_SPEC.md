@@ -43,6 +43,6 @@ Fallback stages are:
 2026-04-22T03:00:00Z
 ```
 
-`search_execute` accepts either `target_station_id` or a non-empty `context`.
+`search_execute` requires `target_station_id` until context-derived tracking is persisted end-to-end.
 
 Raw addresses and raw external profile payloads are outside this API boundary.

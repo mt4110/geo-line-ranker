@@ -1,5 +1,8 @@
 use std::{
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -27,6 +30,8 @@ use storage_postgres::{
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa_swagger_ui::SwaggerUi;
+
+static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 pub enum CandidateBackend {
@@ -138,6 +143,12 @@ async fn recommend(
     State(state): State<AppState>,
     Json(request): Json<RecommendationRequest>,
 ) -> impl IntoResponse {
+    let request_id = request
+        .request_id
+        .clone()
+        .unwrap_or_else(generate_request_id);
+    let mut cache_request = request.clone();
+    cache_request.request_id = None;
     let cache_key = if request.cacheable() {
         match state.cache.build_key(
             &state.profile_version,
@@ -145,7 +156,7 @@ async fn recommend(
             state.candidate_retrieval_mode.as_str(),
             state.candidate_retrieval_limit,
             state.neighbor_distance_cap_meters,
-            &request,
+            &cache_request,
         ) {
             Ok(key) => Some(key),
             Err(error) => {
@@ -163,7 +174,8 @@ async fn recommend(
             .get_json::<RecommendationResponse>(cache_key)
             .await
         {
-            Ok(Some(response)) => {
+            Ok(Some(mut response)) => {
+                response.request_id = Some(request_id.clone());
                 cache_hit(cache_key);
                 record_trace_best_effort(
                     &state.repository,
@@ -192,10 +204,6 @@ async fn recommend(
         }
     }
 
-    let request_id = request
-        .request_id
-        .clone()
-        .unwrap_or_else(generate_request_id);
     let context_input = request.context_input();
     let resolved_context = match state
         .repository
@@ -336,7 +344,9 @@ async fn recommend(
     .await;
 
     if let Some(cache_key) = cache_key {
-        if let Err(error) = state.cache.set_json(&cache_key, &response).await {
+        let mut cached_response = response.clone();
+        cached_response.request_id = None;
+        if let Err(error) = state.cache.set_json(&cache_key, &cached_response).await {
             tracing::warn!(cache_key, %error, "failed to write recommendation cache");
         } else {
             cache_write(&cache_key);
@@ -524,7 +534,8 @@ fn generate_request_id() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    format!("req_{nanos}")
+    let counter = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("req_{nanos}_{counter}")
 }
 
 #[cfg(test)]

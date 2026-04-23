@@ -1330,6 +1330,10 @@ async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Resu
             .as_array()
             .expect("items array")
             .is_empty());
+        let first_request_id = first_payload["request_id"]
+            .as_str()
+            .expect("first request_id")
+            .to_string();
 
         let second_response = app
             .oneshot(
@@ -1349,6 +1353,10 @@ async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Resu
             .as_array()
             .expect("items array")
             .is_empty());
+        let second_request_id = second_payload["request_id"]
+            .as_str()
+            .expect("second request_id");
+        assert_ne!(first_request_id, second_request_id);
 
         Ok(())
     }
