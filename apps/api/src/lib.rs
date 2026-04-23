@@ -15,6 +15,7 @@ use axum::{
 };
 use cache::RecommendationCache;
 use config::CandidateRetrievalMode;
+use domain::RankingQuery;
 use observability::{cache_hit, cache_miss, cache_write, candidate_retrieval_completed};
 use ranking::{RankingEngine, RankingError};
 use storage::{JobType, NewJob, RecommendationRepository, RecommendationTrace};
@@ -139,62 +140,6 @@ async fn recommend(
         .request_id
         .clone()
         .unwrap_or_else(generate_request_id);
-    let mut cache_request = request.clone();
-    cache_request.request_id = None;
-    let cache_key = if request.cacheable() {
-        match state.cache.build_key(
-            &state.profile_version,
-            &state.algorithm_version,
-            state.candidate_retrieval_mode.as_str(),
-            state.candidate_retrieval_limit,
-            state.neighbor_distance_cap_meters,
-            &cache_request,
-        ) {
-            Ok(key) => Some(key),
-            Err(error) => {
-                tracing::warn!(%error, "failed to build recommendation cache key");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    if let Some(cache_key) = cache_key.as_deref() {
-        match state
-            .cache
-            .get_json::<RecommendationResponse>(cache_key)
-            .await
-        {
-            Ok(Some(mut response)) => {
-                response.request_id = Some(request_id.clone());
-                cache_hit(cache_key);
-                record_trace_best_effort(
-                    &state.repository,
-                    &request,
-                    &response,
-                    "cache",
-                    build_trace_payload(TracePayloadInput {
-                        response_source: "cache",
-                        mode: state.candidate_retrieval_mode,
-                        backend: state.candidate_backend.backend_name(),
-                        candidate_count: 0,
-                        duration_ms: 0,
-                        target_station_id: request
-                            .target_station_id
-                            .as_deref()
-                            .unwrap_or("unresolved_context"),
-                        candidate_limit: state.candidate_retrieval_limit,
-                        neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
-                    }),
-                )
-                .await;
-                return (StatusCode::OK, Json(response)).into_response();
-            }
-            Ok(None) => cache_miss(cache_key),
-            Err(error) => tracing::warn!(cache_key, %error, "failed to read recommendation cache"),
-        }
-    }
 
     let context_input = request.context_input();
     let resolved_context = match state
@@ -232,6 +177,50 @@ async fn recommend(
         }
     };
     let query = request.with_resolved_context(target_station.id.clone(), resolved_context.clone());
+    let cache_key = if request.cacheable() {
+        match build_recommendation_cache_key(&state, &query) {
+            Ok(key) => Some(key),
+            Err(error) => {
+                tracing::warn!(%error, "failed to build recommendation cache key");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(cache_key) = cache_key.as_deref() {
+        match state
+            .cache
+            .get_json::<RecommendationResponse>(cache_key)
+            .await
+        {
+            Ok(Some(mut response)) => {
+                response.request_id = Some(request_id.clone());
+                cache_hit(cache_key);
+                record_trace_best_effort(
+                    &state.repository,
+                    &request,
+                    &response,
+                    "cache",
+                    build_trace_payload(TracePayloadInput {
+                        response_source: "cache",
+                        mode: state.candidate_retrieval_mode,
+                        backend: state.candidate_backend.backend_name(),
+                        candidate_count: 0,
+                        duration_ms: 0,
+                        target_station_id: &target_station.id,
+                        candidate_limit: state.candidate_retrieval_limit,
+                        neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
+                    }),
+                )
+                .await;
+                return (StatusCode::OK, Json(response)).into_response();
+            }
+            Ok(None) => cache_miss(cache_key),
+            Err(error) => tracing::warn!(cache_key, %error, "failed to read recommendation cache"),
+        }
+    }
 
     let retrieval_started = Instant::now();
     let neighbor_max_hops = state.engine.neighbor_max_hops(query.placement);
@@ -536,6 +525,17 @@ fn should_use_opensearch_candidate_retrieval(context: &context::RankingContext) 
     context.station_id().is_some() && context.area.is_none()
 }
 
+fn build_recommendation_cache_key(state: &AppState, query: &RankingQuery) -> Result<String> {
+    state.cache.build_key(
+        &state.profile_version,
+        &state.algorithm_version,
+        state.candidate_retrieval_mode.as_str(),
+        state.candidate_retrieval_limit,
+        state.neighbor_distance_cap_meters,
+        query,
+    )
+}
+
 fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
     serde_json::json!({
         "response_source": input.response_source,
@@ -560,7 +560,7 @@ mod tests {
     use std::path::PathBuf;
 
     use config::RankingProfiles;
-    use domain::{EventKind, UserEvent};
+    use domain::{EventKind, PlacementKind, UserEvent};
 
     use super::*;
 
@@ -659,5 +659,50 @@ mod tests {
             city_name: Some("Minato".to_string()),
         });
         assert!(!should_use_opensearch_candidate_retrieval(&context));
+    }
+
+    #[test]
+    fn resolved_context_changes_recommendation_cache_key() {
+        let state = test_state(false, CandidateRetrievalMode::SqlOnly);
+        let request = RecommendationRequest {
+            request_id: Some("req-client-supplied".to_string()),
+            target_station_id: None,
+            context: None,
+            limit: Some(3),
+            user_id: Some("demo-user".to_string()),
+            placement: PlacementKind::Search,
+            debug: false,
+        };
+        let minato_query =
+            request.with_resolved_context("st_tamachi".to_string(), area_context("Minato"));
+        let shibuya_query =
+            request.with_resolved_context("st_tamachi".to_string(), area_context("Shibuya"));
+
+        let minato_key =
+            build_recommendation_cache_key(&state, &minato_query).expect("minato cache key");
+        let shibuya_key =
+            build_recommendation_cache_key(&state, &shibuya_query).expect("shibuya cache key");
+
+        assert_ne!(minato_key, shibuya_key);
+    }
+
+    fn area_context(city_name: &str) -> context::RankingContext {
+        context::RankingContext {
+            context_source: context::ContextSource::UserProfileArea,
+            confidence: 0.8,
+            area: Some(context::AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: Some("Tokyo".to_string()),
+                city_code: None,
+                city_name: Some(city_name.to_string()),
+            }),
+            line: None,
+            station: None,
+            privacy_level: context::PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        }
     }
 }

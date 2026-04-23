@@ -976,11 +976,8 @@ impl PgRepository {
                    ON school.id = link.school_id
                  WHERE ($1::TEXT IS NOT NULL AND link.station_id = $1)
                     OR (
-                        $1::TEXT IS NULL
-                        AND (
-                            ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                            OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
-                        )
+                        ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
+                        OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
                     )
                     OR ($3::TEXT IS NOT NULL AND lower(school.area) = lower($3))
                     OR ($4::TEXT IS NOT NULL AND lower(school.area) = lower($4))
@@ -1001,11 +998,8 @@ impl PgRepository {
                     CASE
                         WHEN $1::TEXT IS NOT NULL AND link.station_id = $1 THEN 0
                         WHEN
-                            $1::TEXT IS NULL
-                            AND (
-                                ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                                OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
-                            )
+                            ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
+                            OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
                             THEN 1
                         WHEN $3::TEXT IS NOT NULL AND lower(school.area) = lower($3) THEN 2
                         WHEN $4::TEXT IS NOT NULL AND lower(school.area) = lower($4) THEN 3

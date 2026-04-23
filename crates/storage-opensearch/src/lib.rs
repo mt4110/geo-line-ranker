@@ -216,9 +216,9 @@ impl OpenSearchStore {
     pub async fn search_candidate_links(
         &self,
         target_station: &Station,
-        neighbor_distance_cap_meters: f64,
+        _neighbor_distance_cap_meters: f64,
         candidate_limit: usize,
-        neighbor_max_hops: u8,
+        _neighbor_max_hops: u8,
     ) -> Result<Vec<SchoolStationLink>> {
         self.ensure_index().await?;
 
@@ -243,7 +243,7 @@ impl OpenSearchStore {
                                         }
                                     }
                                 },
-                                "boost": 2.0
+                                "boost": 3.0
                             }
                         },
                         {
@@ -264,22 +264,6 @@ impl OpenSearchStore {
                                                 "term": {
                                                     "line_name": {
                                                         "value": target_station.line_name.as_str()
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                "range": {
-                                                    "hop_distance": {
-                                                        "lte": neighbor_max_hops
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                "geo_distance": {
-                                                    "distance": format!("{}m", neighbor_distance_cap_meters.ceil() as i64),
-                                                    "station_location": {
-                                                        "lat": target_station.latitude,
-                                                        "lon": target_station.longitude
                                                     }
                                                 }
                                             }

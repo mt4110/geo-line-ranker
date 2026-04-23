@@ -1,4 +1,4 @@
-use context::{ContextSource, LineContext, PrivacyLevel, RankingContext};
+use context::{ContextSource, LineContext, PrivacyLevel, RankingContext, StationContext};
 use domain::Station;
 use storage_postgres::{run_migrations, PgRepository};
 use tokio_postgres::NoTls;
@@ -156,6 +156,85 @@ async fn context_candidate_links_use_line_id_when_available() -> anyhow::Result<
                 .collect::<Vec<_>>(),
             vec!["school_target"]
         );
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn station_context_candidate_links_include_full_same_line_fallback() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_station_same_line").await
+    else {
+        eprintln!(
+            "skipping storage-postgres station same-line link test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO lines (line_id, line_name, country_code) VALUES
+                    ('line_target', 'Same Line', 'JP');
+
+                 INSERT INTO schools (id, name, area, school_type, group_id) VALUES
+                    ('school_far_same_line', 'Far Same Line', 'Minato', 'high_school', 'group_far_same_line');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id) VALUES
+                    ('st_target', 'Target', 'Same Line', 35.0, 139.0, 'line_target'),
+                    ('st_far_same_line', 'Far Same Line Station', 'Same Line', 36.0, 140.0, 'line_target');
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_far_same_line', 'st_far_same_line', 20, 120000, 9, 'Same Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Same Line".to_string(),
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestStation,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Same Line".to_string(),
+                operator_name: None,
+            }),
+            station: Some(StationContext {
+                station_id: "st_target".to_string(),
+                station_name: "Target".to_string(),
+            }),
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 50.0, 1)
+            .await?;
+
+        assert_eq!(candidate_links.len(), 1);
+        assert_eq!(candidate_links[0].school_id, "school_far_same_line");
 
         Ok(())
     }
