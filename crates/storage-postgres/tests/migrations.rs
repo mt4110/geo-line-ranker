@@ -177,7 +177,9 @@ async fn v020_migration_preserves_date_only_starts_at_as_utc_midnight() -> anyho
                  VALUES ('school_legacy', 'Legacy School', 'Minato', 'high_school', 'group_legacy');
 
                  INSERT INTO events (id, school_id, title, starts_at)
-                 VALUES ('event_legacy_date', 'school_legacy', 'Legacy Open Day', '2026-04-22');
+                 VALUES
+                    ('event_legacy_date', 'school_legacy', 'Legacy Open Day', '2026-04-22'),
+                    ('event_legacy_invalid', 'school_legacy', 'Legacy Broken Date', 'not-a-time');
 
                  INSERT INTO user_events (user_id, school_id, event_type, occurred_at)
                  VALUES
@@ -202,6 +204,15 @@ async fn v020_migration_preserves_date_only_starts_at_as_utc_midnight() -> anyho
             )
             .await?;
         assert_eq!(row.get::<_, String>("utc_start"), "2026-04-22 00:00:00");
+        let invalid_event_row = client
+            .query_one(
+                "SELECT starts_at IS NULL AS starts_at_is_null
+                 FROM events
+                 WHERE id = 'event_legacy_invalid'",
+                &[],
+            )
+            .await?;
+        assert!(invalid_event_row.get::<_, bool>("starts_at_is_null"));
         let user_event_rows = client
             .query(
                 "SELECT user_id, to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS utc_occurred

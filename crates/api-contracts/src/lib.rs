@@ -75,7 +75,6 @@ pub struct RecommendationItemDto {
     pub score: f64,
     pub explanation: String,
     pub score_breakdown: Vec<ScoreComponentDto>,
-    #[schema(value_type = Option<String>)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_stage: Option<FallbackStageDto>,
 }

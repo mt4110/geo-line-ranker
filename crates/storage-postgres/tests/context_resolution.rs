@@ -23,6 +23,33 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
 
         let repo = PgRepository::new(&database_url);
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client
+            .batch_execute(
+                "UPDATE areas
+                 SET prefecture_code = '13',
+                     prefecture_name = 'Tokyo',
+                     city_code = '13103'
+                 WHERE area_id = 'area_minato';
+
+                 INSERT INTO areas (
+                    area_id,
+                    country_code,
+                    prefecture_code,
+                    prefecture_name,
+                    area_level
+                 )
+                 VALUES ('area_tokyo', 'JP', '13', 'Tokyo', 'prefecture')
+                 ON CONFLICT (area_id) DO UPDATE
+                 SET prefecture_code = EXCLUDED.prefecture_code,
+                     prefecture_name = EXCLUDED.prefecture_name,
+                     area_level = EXCLUDED.area_level;",
+            )
+            .await?;
+
         let context = repo
             .resolve_context(
                 "req-context-area",
@@ -114,11 +141,52 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
                 .and_then(|line| line.line_id.as_deref()),
             Some("line_jr_yamanote_line")
         );
+        let coded_area_context = repo
+            .resolve_context(
+                "req-context-area-code",
+                None,
+                &ContextInput {
+                    area: Some(AreaContextInput {
+                        city_code: Some("13103".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(
+            coded_area_context.context_source,
+            ContextSource::RequestArea
+        );
+        assert_eq!(coded_area_context.city_name(), Some("Minato"));
+        assert_eq!(coded_area_context.prefecture_name(), Some("Tokyo"));
+        let coded_station = repo
+            .load_station_for_context(&coded_area_context)
+            .await?
+            .expect("representative station from city code");
+        let coded_links = repo
+            .load_context_candidate_links(&coded_station, &coded_area_context, 20, 5_000.0, 2)
+            .await?;
+        assert!(!coded_links.is_empty());
+        let mismatched_area_context = repo
+            .resolve_context(
+                "req-context-area-mismatch",
+                None,
+                &ContextInput {
+                    area: Some(AreaContextInput {
+                        city_name: Some("Minato".to_string()),
+                        prefecture_name: Some("Osaka".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(
+            mismatched_area_context.context_source,
+            ContextSource::RequestArea
+        );
 
-        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
         let row = client
             .query_one(
                 "SELECT user_id_hash, context_source, area_id, line_id, station_id
@@ -141,6 +209,30 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         );
         assert_eq!(row.get::<_, Option<String>>("line_id"), None);
         assert_eq!(row.get::<_, Option<String>>("station_id"), None);
+        let coded_area_row = client
+            .query_one(
+                "SELECT area_id
+                 FROM context_resolution_traces
+                 WHERE request_id = 'req-context-area-code'",
+                &[],
+            )
+            .await?;
+        assert_eq!(
+            coded_area_row.get::<_, Option<String>>("area_id"),
+            Some("area_minato".to_string())
+        );
+        let mismatched_area_row = client
+            .query_one(
+                "SELECT area_id
+                 FROM context_resolution_traces
+                 WHERE request_id = 'req-context-area-mismatch'",
+                &[],
+            )
+            .await?;
+        assert_eq!(
+            mismatched_area_row.get::<_, Option<String>>("area_id"),
+            None
+        );
         let station_row = client
             .query_one(
                 "SELECT line_id

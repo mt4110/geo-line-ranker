@@ -66,12 +66,34 @@ struct StationAreaColumns {
     city_name: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct AreaLookupRow {
+    area_id: String,
+    country_code: String,
+    prefecture_code: Option<String>,
+    prefecture_name: Option<String>,
+    city_code: Option<String>,
+    city_name: Option<String>,
+}
+
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn matches_ignore_ascii(actual: Option<&str>, expected: &str) -> bool {
     actual.is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+}
+
+fn normalized_area_context(area_input: &AreaContextInput) -> AreaContext {
+    AreaContext {
+        country: non_empty(area_input.country.as_deref())
+            .unwrap_or("JP")
+            .to_string(),
+        prefecture_code: non_empty(area_input.prefecture_code.as_deref()).map(str::to_string),
+        prefecture_name: non_empty(area_input.prefecture_name.as_deref()).map(str::to_string),
+        city_code: non_empty(area_input.city_code.as_deref()).map(str::to_string),
+        city_name: non_empty(area_input.city_name.as_deref()).map(str::to_string),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -201,10 +223,14 @@ impl PgRepository {
         } else if input.has_line() {
             self.resolve_line_context(&client, input).await?
         } else if input.area.as_ref().is_some_and(|area| !area.is_empty()) {
+            let area = match input.area.as_ref() {
+                Some(area_input) => self.resolve_area_context(&client, area_input).await?,
+                None => None,
+            };
             RankingContext {
                 context_source: ContextSource::RequestArea,
                 confidence: 0.95,
-                area: input.area.clone().map(AreaContext::from),
+                area,
                 line: None,
                 station: None,
                 privacy_level: PrivacyLevel::CoarseArea,
@@ -220,11 +246,11 @@ impl PgRepository {
             RankingContext::default_safe()
         };
 
-        self.record_context_trace(&client, request_id, user_id, &context)
-            .await?;
         context
             .warnings
             .sort_by(|left, right| left.code.cmp(&right.code));
+        self.record_context_trace(&client, request_id, user_id, &context)
+            .await?;
         Ok(context)
     }
 
@@ -256,8 +282,14 @@ impl PgRepository {
                     "SELECT id, name, line_name, latitude, longitude
                      FROM stations
                      WHERE ($1::TEXT IS NOT NULL AND line_id = $1)
-                        OR ($1::TEXT IS NULL AND line_name = $2)
-                     ORDER BY id
+                        OR ($2::TEXT IS NOT NULL AND line_name = $2)
+                     ORDER BY
+                        CASE
+                            WHEN $1::TEXT IS NOT NULL AND line_id = $1 THEN 0
+                            WHEN $2::TEXT IS NOT NULL AND line_name = $2 THEN 1
+                            ELSE 2
+                        END,
+                        id
                      LIMIT 1",
                     &[&line_id, &line_name],
                 )
@@ -353,7 +385,10 @@ impl PgRepository {
             city_name: station_row.get("station_city_name"),
         };
 
-        let mut area = input.area.clone().map(AreaContext::from);
+        let mut area = match input.area.as_ref().filter(|area| !area.is_empty()) {
+            Some(area_input) => self.resolve_area_context(client, area_input).await?,
+            None => None,
+        };
         let mut warnings = Vec::new();
         if let Some(area_input) = input.area.as_ref().filter(|area| !area.is_empty()) {
             let matches = self
@@ -514,11 +549,15 @@ impl PgRepository {
                 operator_name: None,
             })
         };
+        let area = match input.area.as_ref().filter(|area| !area.is_empty()) {
+            Some(area_input) => self.resolve_area_context(client, area_input).await?,
+            None => None,
+        };
 
         Ok(RankingContext {
             context_source: ContextSource::RequestLine,
             confidence: 0.95,
-            area: input.area.clone().map(AreaContext::from),
+            area,
             line: Some(line),
             station: None,
             privacy_level: PrivacyLevel::CoarseArea,
@@ -592,6 +631,38 @@ impl PgRepository {
         }))
     }
 
+    async fn resolve_area_context(
+        &self,
+        client: &Client,
+        area_input: &AreaContextInput,
+    ) -> Result<Option<AreaContext>> {
+        if area_input.is_empty() {
+            return Ok(None);
+        }
+
+        let fallback_area = normalized_area_context(area_input);
+        let area = self
+            .lookup_area_row(
+                client,
+                &fallback_area.country,
+                fallback_area.prefecture_code.as_deref(),
+                fallback_area.prefecture_name.as_deref(),
+                fallback_area.city_code.as_deref(),
+                fallback_area.city_name.as_deref(),
+            )
+            .await?
+            .map(|area| AreaContext {
+                country: area.country_code,
+                prefecture_code: area.prefecture_code,
+                prefecture_name: area.prefecture_name,
+                city_code: area.city_code,
+                city_name: area.city_name,
+            })
+            .unwrap_or(fallback_area);
+
+        Ok(Some(area))
+    }
+
     async fn record_context_trace(
         &self,
         client: &Client,
@@ -599,7 +670,7 @@ impl PgRepository {
         user_id: Option<&str>,
         context: &RankingContext,
     ) -> Result<()> {
-        let user_id_hash = user_id.map(hash_user_id);
+        let user_id_hash = user_id.map(|user_id| self.hash_user_id(user_id));
         let area_id = match context.area.as_ref() {
             Some(area) => self.resolve_trace_area_id(client, area).await?,
             None => None,
@@ -637,33 +708,43 @@ impl PgRepository {
         Ok(())
     }
 
-    async fn resolve_trace_area_id(
+    async fn lookup_area_row(
         &self,
         client: &Client,
-        area: &AreaContext,
-    ) -> Result<Option<String>> {
-        let city_code = area.city_code.as_deref();
-        let prefecture_code = area.prefecture_code.as_deref();
-        let city_name = area.city_name.as_deref();
-        let prefecture_name = area.prefecture_name.as_deref();
+        country: &str,
+        prefecture_code: Option<&str>,
+        prefecture_name: Option<&str>,
+        city_code: Option<&str>,
+        city_name: Option<&str>,
+    ) -> Result<Option<AreaLookupRow>> {
+        if city_code.is_none()
+            && prefecture_code.is_none()
+            && city_name.is_none()
+            && prefecture_name.is_none()
+        {
+            return Ok(None);
+        }
+
         client
             .query_opt(
-                "SELECT area_id
+                "SELECT
+                    area_id,
+                    country_code,
+                    prefecture_code,
+                    prefecture_name,
+                    city_code,
+                    city_name
                  FROM areas
                  WHERE country_code = $5
-                   AND (
-                       ($1::TEXT IS NOT NULL AND city_code = $1)
-                       OR ($2::TEXT IS NOT NULL AND prefecture_code = $2)
-                       OR ($3::TEXT IS NOT NULL AND lower(city_name) = lower($3))
-                       OR ($4::TEXT IS NOT NULL AND lower(prefecture_name) = lower($4))
-                   )
+                   AND ($1::TEXT IS NULL OR city_code = $1)
+                   AND ($2::TEXT IS NULL OR prefecture_code = $2)
+                   AND ($3::TEXT IS NULL OR lower(city_name) = lower($3))
+                   AND ($4::TEXT IS NULL OR lower(prefecture_name) = lower($4))
                  ORDER BY
                     CASE
-                        WHEN $1::TEXT IS NOT NULL AND city_code = $1 THEN 0
-                        WHEN $3::TEXT IS NOT NULL AND lower(city_name) = lower($3) THEN 1
-                        WHEN $2::TEXT IS NOT NULL AND prefecture_code = $2 THEN 2
-                        WHEN $4::TEXT IS NOT NULL AND lower(prefecture_name) = lower($4) THEN 3
-                        ELSE 4
+                        WHEN ($1::TEXT IS NOT NULL OR $3::TEXT IS NOT NULL) AND area_level = 'city' THEN 0
+                        WHEN ($2::TEXT IS NOT NULL OR $4::TEXT IS NOT NULL) AND area_level = 'prefecture' THEN 0
+                        ELSE 1
                     END,
                     area_id ASC
                  LIMIT 1",
@@ -672,12 +753,38 @@ impl PgRepository {
                     &prefecture_code,
                     &city_name,
                     &prefecture_name,
-                    &area.country,
+                    &country,
                 ],
             )
             .await
-            .map(|row| row.map(|row| row.get("area_id")))
-            .context("failed to resolve trace area_id")
+            .map(|row| {
+                row.map(|row| AreaLookupRow {
+                    area_id: row.get("area_id"),
+                    country_code: row.get("country_code"),
+                    prefecture_code: row.get("prefecture_code"),
+                    prefecture_name: row.get("prefecture_name"),
+                    city_code: row.get("city_code"),
+                    city_name: row.get("city_name"),
+                })
+            })
+            .context("failed to resolve area context")
+    }
+
+    async fn resolve_trace_area_id(
+        &self,
+        client: &Client,
+        area: &AreaContext,
+    ) -> Result<Option<String>> {
+        self.lookup_area_row(
+            client,
+            &area.country,
+            area.prefecture_code.as_deref(),
+            area.prefecture_name.as_deref(),
+            area.city_code.as_deref(),
+            area.city_name.as_deref(),
+        )
+        .await
+        .map(|row| row.map(|row| row.area_id))
     }
 
     async fn load_station_for_school_area(
@@ -701,6 +808,16 @@ impl PgRepository {
             .await
             .map(|row| row.map(station_from_row))
             .context("failed to load representative station for area")
+    }
+
+    // Salt trace hashes with deployment-local configuration so trace tables do not
+    // expose a reusable raw-user-id digest on their own.
+    fn hash_user_id(&self, user_id: &str) -> String {
+        let mut digest = Sha256::new();
+        digest.update(self.database_url.as_bytes());
+        digest.update(b"\0");
+        digest.update(user_id.as_bytes());
+        format!("{:x}", digest.finalize())
     }
 
     pub async fn list_jobs(&self, limit: i64) -> Result<JobQueueSnapshot> {
@@ -1455,10 +1572,6 @@ fn station_from_row(row: Row) -> Station {
         latitude: row.get("latitude"),
         longitude: row.get("longitude"),
     }
-}
-
-fn hash_user_id(user_id: &str) -> String {
-    format!("{:x}", Sha256::digest(user_id.as_bytes()))
 }
 
 fn stable_id(prefix: &str, value: &str) -> String {

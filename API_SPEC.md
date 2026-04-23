@@ -24,6 +24,7 @@ The response includes:
 - `context.warnings`
 - `fallback_stage`
 - `candidate_counts`
+- `items[].fallback_stage`
 
 Fallback stages are:
 
@@ -33,6 +34,8 @@ Fallback stages are:
 - `same_prefecture`
 - `neighbor_area`
 - `safe_global_popular`
+
+`items[].fallback_stage` uses the same enum values as the top-level `fallback_stage`.
 
 ## `POST /v1/track`
 

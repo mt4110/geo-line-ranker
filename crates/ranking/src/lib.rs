@@ -305,12 +305,6 @@ impl RankingEngine {
                 let Some(school) = lookups.schools_by_id.get(link.school_id.as_str()) else {
                     return false;
                 };
-                let station_distance = haversine_meters(
-                    target_station.latitude,
-                    target_station.longitude,
-                    candidate_station.latitude,
-                    candidate_station.longitude,
-                );
 
                 match stage {
                     FallbackStage::StrictStation => {
@@ -325,6 +319,12 @@ impl RankingEngine {
                     FallbackStage::SamePrefecture => prefecture_name
                         .is_some_and(|prefecture| school.area.eq_ignore_ascii_case(prefecture)),
                     FallbackStage::NeighborArea => {
+                        let station_distance = haversine_meters(
+                            target_station.latitude,
+                            target_station.longitude,
+                            candidate_station.latitude,
+                            candidate_station.longitude,
+                        );
                         link.line_name == line_name
                             && link.hop_distance <= placement_profile.neighbor_max_hops
                             && station_distance

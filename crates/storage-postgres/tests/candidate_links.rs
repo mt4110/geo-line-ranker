@@ -243,3 +243,65 @@ async fn station_context_candidate_links_include_full_same_line_fallback() -> an
     drop_database(&admin_database_url, &database_name).await?;
     test_result
 }
+
+#[tokio::test]
+async fn line_context_station_lookup_falls_back_to_line_name_when_station_line_id_is_null(
+) -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_line_station_fallback").await
+    else {
+        eprintln!(
+            "skipping storage-postgres line fallback station test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO lines (line_id, line_name, country_code)
+                 VALUES ('line_target', 'Fallback Line', 'JP');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id)
+                 VALUES ('st_line_name_only', 'Fallback Station', 'Fallback Line', 35.0, 139.0, NULL);",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let context = RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Fallback Line".to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let station = repo
+            .load_station_for_context(&context)
+            .await?
+            .expect("representative station");
+
+        assert_eq!(station.id, "st_line_name_only");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}

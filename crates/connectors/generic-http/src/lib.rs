@@ -291,7 +291,13 @@ fn is_private_or_local_host(host: &str) -> bool {
         std::net::IpAddr::V4(ip) => {
             ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
         }
-        std::net::IpAddr::V6(ip) => ip.is_loopback() || ip.is_unspecified(),
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || ip.is_multicast()
+        }
     }
 }
 
@@ -456,7 +462,9 @@ fn sanitize_name(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_allowed_url, evaluate_robots, infer_staged_extension};
+    use super::{
+        ensure_allowed_url, evaluate_robots, infer_staged_extension, is_private_or_local_host,
+    };
 
     #[test]
     fn allowlist_accepts_matching_subdomain() {
@@ -489,6 +497,13 @@ mod tests {
         .expect("explicit local dev host");
 
         assert_eq!(url.host_str(), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn private_host_detection_blocks_ipv6_local_ranges() {
+        assert!(is_private_or_local_host("fc00::1"));
+        assert!(is_private_or_local_host("fe80::1"));
+        assert!(is_private_or_local_host("ff02::1"));
     }
 
     #[test]

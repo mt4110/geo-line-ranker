@@ -410,7 +410,11 @@
             "type": "string"
           },
           "fallback_stage": {
-            "type": "string",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FallbackStageDto"
+              }
+            ],
             "nullable": true
           },
           "line_name": {

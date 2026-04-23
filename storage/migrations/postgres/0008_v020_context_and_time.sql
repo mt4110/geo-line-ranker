@@ -38,7 +38,9 @@ BEGIN
                 WHEN NULLIF(starts_at::TEXT, '') IS NULL THEN NULL
                 WHEN NULLIF(starts_at::TEXT, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?)?$'
                     THEN NULLIF(starts_at::TEXT, '')::TIMESTAMP AT TIME ZONE 'UTC'
-                ELSE NULLIF(starts_at::TEXT, '')::TIMESTAMPTZ
+                WHEN NULLIF(starts_at::TEXT, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+                    THEN NULLIF(starts_at::TEXT, '')::TIMESTAMPTZ
+                ELSE NULL
             END;
     END IF;
 END
