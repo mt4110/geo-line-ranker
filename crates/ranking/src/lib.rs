@@ -252,8 +252,20 @@ impl RankingEngine {
         let line_name = context
             .and_then(|context| context.line_name())
             .unwrap_or(target_station.line_name.as_str());
-        let city_name = context.and_then(|context| context.city_name());
-        let prefecture_name = context.and_then(|context| context.prefecture_name());
+        let area_hint_was_ignored = context
+            .map(|context| {
+                context
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.code == "station_area_conflict")
+            })
+            .unwrap_or(false);
+        let city_name = context
+            .filter(|_| !area_hint_was_ignored)
+            .and_then(|context| context.city_name());
+        let prefecture_name = context
+            .filter(|_| !area_hint_was_ignored)
+            .and_then(|context| context.prefecture_name());
         let station_context_is_explicit = context
             .map(|context| context.station_id().is_some())
             .unwrap_or(true);
@@ -1042,7 +1054,10 @@ mod tests {
     use std::path::PathBuf;
 
     use config::RankingProfiles;
-    use context::{AreaContext, ContextSource, PrivacyLevel, RankingContext};
+    use context::{
+        AreaContext, ContextSource, ContextWarning, LineContext, PrivacyLevel, RankingContext,
+        StationContext,
+    };
     use domain::{
         ContentKind, PlacementKind, PopularitySnapshot, RankingDataset, RankingQuery,
         RecommendationItem, School, SchoolStationLink, Station, UserAffinitySnapshot,
@@ -1144,6 +1159,37 @@ mod tests {
             .candidate_counts
             .get("same_city")
             .is_some_and(|count| *count >= 2));
+    }
+
+    #[test]
+    fn station_area_conflict_warning_suppresses_area_fallback() {
+        let dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-context-test");
+        let mut query = query("st_tamachi", PlacementKind::Search);
+        let mut context = request_area_context(Some("Shibuya"), Some("Tokyo"));
+        context.context_source = ContextSource::RequestStation;
+        context.station = Some(StationContext {
+            station_id: "st_tamachi".to_string(),
+            station_name: "Tamachi".to_string(),
+        });
+        context.line = Some(LineContext {
+            line_id: None,
+            line_name: "JR Yamanote Line".to_string(),
+            operator_name: None,
+        });
+        context.warnings.push(ContextWarning {
+            code: "station_area_conflict".to_string(),
+            message: "station context was used and conflicting area hint was ignored".to_string(),
+        });
+        query.context = Some(context);
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("same_city"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_prefecture"), Some(&0));
     }
 
     #[test]

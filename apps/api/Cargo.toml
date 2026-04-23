@@ -25,6 +25,7 @@ tower-http.workspace = true
 tracing.workspace = true
 utoipa.workspace = true
 utoipa-swagger-ui.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 test-support = { path = "../../crates/test-support" }

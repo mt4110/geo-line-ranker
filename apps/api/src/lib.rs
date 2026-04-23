@@ -1,10 +1,4 @@
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{sync::Arc, time::Instant};
 
 use anyhow::Result;
 
@@ -30,8 +24,6 @@ use storage_postgres::{
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa_swagger_ui::SwaggerUi;
-
-static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 pub enum CandidateBackend {
@@ -530,12 +522,7 @@ fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
 }
 
 fn generate_request_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let counter = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("req_{nanos}_{counter}")
+    format!("req_{}", uuid::Uuid::new_v4().simple())
 }
 
 #[cfg(test)]
