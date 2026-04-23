@@ -177,7 +177,12 @@ async fn v020_migration_preserves_date_only_starts_at_as_utc_midnight() -> anyho
                  VALUES ('school_legacy', 'Legacy School', 'Minato', 'high_school', 'group_legacy');
 
                  INSERT INTO events (id, school_id, title, starts_at)
-                 VALUES ('event_legacy_date', 'school_legacy', 'Legacy Open Day', '2026-04-22');",
+                 VALUES ('event_legacy_date', 'school_legacy', 'Legacy Open Day', '2026-04-22');
+
+                 INSERT INTO user_events (user_id, school_id, event_type, occurred_at)
+                 VALUES
+                    ('user_date', 'school_legacy', 'school_view', '2026-04-22'),
+                    ('user_invalid', 'school_legacy', 'school_view', 'not-a-time');",
             )
             .await?;
         drop(client);
@@ -197,6 +202,37 @@ async fn v020_migration_preserves_date_only_starts_at_as_utc_midnight() -> anyho
             )
             .await?;
         assert_eq!(row.get::<_, String>("utc_start"), "2026-04-22 00:00:00");
+        let user_event_rows = client
+            .query(
+                "SELECT user_id, to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS utc_occurred
+                 FROM user_events
+                 WHERE user_id IN ('user_date', 'user_invalid')
+                 ORDER BY user_id",
+                &[],
+            )
+            .await?;
+        let occurred = user_event_rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>("user_id"),
+                    row.get::<_, String>("utc_occurred"),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            occurred,
+            vec![
+                (
+                    "user_date".to_string(),
+                    "2026-04-22 00:00:00".to_string()
+                ),
+                (
+                    "user_invalid".to_string(),
+                    "1970-01-01 00:00:00".to_string()
+                ),
+            ]
+        );
 
         Ok(())
     }

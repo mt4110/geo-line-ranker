@@ -15,20 +15,28 @@ pub struct ContextInput {
 
 impl ContextInput {
     pub fn is_empty(&self) -> bool {
-        self.station_id.as_deref().is_none_or(str::is_empty)
-            && self.line_id.as_deref().is_none_or(str::is_empty)
-            && self.line_name.as_deref().is_none_or(str::is_empty)
+        self.station_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .line_id
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .line_name
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
             && self.area.as_ref().is_none_or(AreaContextInput::is_empty)
     }
 
     pub fn has_line(&self) -> bool {
         self.line_id
             .as_deref()
-            .is_some_and(|value| !value.is_empty())
+            .is_some_and(|value| !value.trim().is_empty())
             || self
                 .line_name
                 .as_deref()
-                .is_some_and(|value| !value.is_empty())
+                .is_some_and(|value| !value.trim().is_empty())
     }
 }
 
@@ -203,7 +211,11 @@ pub fn build_request_context(
     context: Option<&ContextInput>,
 ) -> ContextInput {
     let mut input = context.cloned().unwrap_or_default();
-    if input.station_id.as_deref().is_none_or(str::is_empty) {
+    if input
+        .station_id
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
         input.station_id = target_station_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -251,5 +263,33 @@ mod tests {
         };
 
         assert!(!input.is_empty());
+    }
+
+    #[test]
+    fn blank_line_id_does_not_count_as_line_context() {
+        let input = ContextInput {
+            line_id: Some("   ".to_string()),
+            area: Some(AreaContextInput {
+                city_name: Some("Minato".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert!(!input.has_line());
+        assert!(!input.is_empty());
+    }
+
+    #[test]
+    fn blank_context_station_does_not_override_target_station() {
+        let input = build_request_context(
+            Some("st_tamachi"),
+            Some(&ContextInput {
+                station_id: Some("   ".to_string()),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(input.station_id.as_deref(), Some("st_tamachi"));
     }
 }

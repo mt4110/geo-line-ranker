@@ -247,14 +247,19 @@ impl PgRepository {
         }
 
         if let Some(line_name) = context.line_name() {
+            let line_id = context
+                .line
+                .as_ref()
+                .and_then(|line| line.line_id.as_deref());
             return client
                 .query_opt(
                     "SELECT id, name, line_name, latitude, longitude
                      FROM stations
-                     WHERE line_name = $1
+                     WHERE ($1::TEXT IS NOT NULL AND line_id = $1)
+                        OR ($1::TEXT IS NULL AND line_name = $2)
                      ORDER BY id
                      LIMIT 1",
-                    &[&line_name],
+                    &[&line_id, &line_name],
                 )
                 .await
                 .map(|row| row.map(station_from_row))

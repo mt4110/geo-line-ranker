@@ -10,7 +10,14 @@ BEGIN
     ) THEN
         ALTER TABLE user_events
             ALTER COLUMN occurred_at TYPE TIMESTAMPTZ
-            USING occurred_at::timestamptz;
+            USING CASE
+                WHEN NULLIF(occurred_at::TEXT, '') IS NULL THEN '1970-01-01 00:00:00+00'::TIMESTAMPTZ
+                WHEN NULLIF(occurred_at::TEXT, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?)?$'
+                    THEN NULLIF(occurred_at::TEXT, '')::TIMESTAMP AT TIME ZONE 'UTC'
+                WHEN NULLIF(occurred_at::TEXT, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+                    THEN NULLIF(occurred_at::TEXT, '')::TIMESTAMPTZ
+                ELSE '1970-01-01 00:00:00+00'::TIMESTAMPTZ
+            END;
     END IF;
 END
 $$;

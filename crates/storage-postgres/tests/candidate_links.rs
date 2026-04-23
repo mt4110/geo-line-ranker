@@ -118,30 +118,31 @@ async fn context_candidate_links_use_line_id_when_available() -> anyhow::Result<
             .await?;
 
         let repo = PgRepository::new(&database_url);
+        let context = RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Shared Line".to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+        let representative_station = repo
+            .load_station_for_context(&context)
+            .await?
+            .expect("line representative station");
+        assert_eq!(representative_station.id, "st_target");
+
         let candidate_links = repo
             .load_context_candidate_links(
-                &Station {
-                    id: "st_target".to_string(),
-                    name: "Target".to_string(),
-                    line_name: "Shared Line".to_string(),
-                    latitude: 35.0,
-                    longitude: 139.0,
-                },
-                &RankingContext {
-                    context_source: ContextSource::RequestLine,
-                    confidence: 0.95,
-                    area: None,
-                    line: Some(LineContext {
-                        line_id: Some("line_target".to_string()),
-                        line_name: "Shared Line".to_string(),
-                        operator_name: None,
-                    }),
-                    station: None,
-                    privacy_level: PrivacyLevel::CoarseArea,
-                    fallback_policy: "school_event_jp_default".to_string(),
-                    gate_policy: "geo_line_default".to_string(),
-                    warnings: Vec::new(),
-                },
+                &representative_station,
+                &context,
                 10,
                 1_000.0,
                 2,
