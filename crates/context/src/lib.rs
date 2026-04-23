@@ -56,11 +56,25 @@ pub struct AreaContextInput {
 
 impl AreaContextInput {
     pub fn is_empty(&self) -> bool {
-        self.country.as_deref().is_none_or(str::is_empty)
-            && self.prefecture_code.as_deref().is_none_or(str::is_empty)
-            && self.prefecture_name.as_deref().is_none_or(str::is_empty)
-            && self.city_code.as_deref().is_none_or(str::is_empty)
-            && self.city_name.as_deref().is_none_or(str::is_empty)
+        self.country
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .prefecture_code
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .prefecture_name
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .city_code
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .city_name
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
     }
 }
 
@@ -291,5 +305,21 @@ mod tests {
         );
 
         assert_eq!(input.station_id.as_deref(), Some("st_tamachi"));
+    }
+
+    #[test]
+    fn blank_area_fields_do_not_count_as_context() {
+        let input = ContextInput {
+            area: Some(AreaContextInput {
+                country: Some("   ".to_string()),
+                prefecture_code: Some("\t".to_string()),
+                prefecture_name: Some(" ".to_string()),
+                city_code: Some("\n".to_string()),
+                city_name: Some("   ".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        assert!(input.is_empty());
     }
 }
