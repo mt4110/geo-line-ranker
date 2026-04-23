@@ -136,10 +136,10 @@ async fn recommend(
     State(state): State<AppState>,
     Json(request): Json<RecommendationRequest>,
 ) -> impl IntoResponse {
-    let request_id = request
-        .request_id
-        .clone()
-        .unwrap_or_else(generate_request_id);
+    let request_id = match resolve_request_id(request.request_id.as_deref()) {
+        Ok(request_id) => request_id,
+        Err(message) => return error_response(StatusCode::BAD_REQUEST, message.to_string()),
+    };
 
     let context_input = request.context_input();
     let resolved_context = match state
@@ -551,6 +551,26 @@ fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
     })
 }
 
+fn resolve_request_id(request_id: Option<&str>) -> Result<String, &'static str> {
+    const MAX_REQUEST_ID_LEN: usize = 128;
+
+    match request_id.map(str::trim) {
+        None => Ok(generate_request_id()),
+        Some("") => Err("request_id must not be empty when provided"),
+        Some(request_id) if request_id.len() > MAX_REQUEST_ID_LEN => {
+            Err("request_id must be at most 128 characters")
+        }
+        Some(request_id)
+            if !request_id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')) =>
+        {
+            Err("request_id may contain only ASCII letters, digits, '_' or '-'")
+        }
+        Some(request_id) => Ok(request_id.to_string()),
+    }
+}
+
 fn generate_request_id() -> String {
     format!("req_{}", uuid::Uuid::new_v4().simple())
 }
@@ -704,5 +724,28 @@ mod tests {
             gate_policy: "geo_line_default".to_string(),
             warnings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn resolve_request_id_accepts_trimmed_client_value() {
+        let request_id = resolve_request_id(Some("  req_client_123  ")).expect("request id");
+        assert_eq!(request_id, "req_client_123");
+    }
+
+    #[test]
+    fn resolve_request_id_rejects_invalid_characters() {
+        assert_eq!(
+            resolve_request_id(Some("req:bad")).unwrap_err(),
+            "request_id may contain only ASCII letters, digits, '_' or '-'"
+        );
+    }
+
+    #[test]
+    fn resolve_request_id_rejects_oversized_values() {
+        let oversized = "r".repeat(129);
+        assert_eq!(
+            resolve_request_id(Some(&oversized)).unwrap_err(),
+            "request_id must be at most 128 characters"
+        );
     }
 }
