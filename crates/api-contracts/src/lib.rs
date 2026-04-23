@@ -121,10 +121,8 @@ pub struct RecommendationResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RecommendationContextDto {
-    #[schema(value_type = String)]
     pub context_source: ContextSource,
     pub confidence: f64,
-    #[schema(value_type = String)]
     pub privacy_level: PrivacyLevel,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ContextWarning>,

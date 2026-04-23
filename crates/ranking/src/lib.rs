@@ -33,6 +33,28 @@ struct ScoredCandidate {
     item: RecommendationItem,
 }
 
+struct RankingLookups<'a> {
+    stations_by_id: HashMap<&'a str, &'a Station>,
+    schools_by_id: HashMap<&'a str, &'a School>,
+}
+
+impl<'a> RankingLookups<'a> {
+    fn new(dataset: &'a RankingDataset) -> Self {
+        Self {
+            stations_by_id: dataset
+                .stations
+                .iter()
+                .map(|station| (station.id.as_str(), station))
+                .collect(),
+            schools_by_id: dataset
+                .schools
+                .iter()
+                .map(|school| (school.id.as_str(), school))
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct DiversitySelectionSummary {
     selected_count: usize,
@@ -166,6 +188,8 @@ impl RankingEngine {
         target_station: &Station,
         placement_profile: &PlacementProfile,
     ) -> Vec<(FallbackStage, Vec<SchoolStationLink>)> {
+        let lookups = RankingLookups::new(dataset);
+
         vec![
             (
                 FallbackStage::StrictStation,
@@ -175,6 +199,7 @@ impl RankingEngine {
                     target_station,
                     placement_profile,
                     &FallbackStage::StrictStation,
+                    &lookups,
                 ),
             ),
             (
@@ -185,6 +210,7 @@ impl RankingEngine {
                     target_station,
                     placement_profile,
                     &FallbackStage::SameLine,
+                    &lookups,
                 ),
             ),
             (
@@ -195,6 +221,7 @@ impl RankingEngine {
                     target_station,
                     placement_profile,
                     &FallbackStage::SameCity,
+                    &lookups,
                 ),
             ),
             (
@@ -205,6 +232,7 @@ impl RankingEngine {
                     target_station,
                     placement_profile,
                     &FallbackStage::SamePrefecture,
+                    &lookups,
                 ),
             ),
             (
@@ -215,6 +243,7 @@ impl RankingEngine {
                     target_station,
                     placement_profile,
                     &FallbackStage::NeighborArea,
+                    &lookups,
                 ),
             ),
             (
@@ -225,6 +254,7 @@ impl RankingEngine {
                     target_station,
                     placement_profile,
                     &FallbackStage::SafeGlobalPopular,
+                    &lookups,
                 ),
             ),
         ]
@@ -237,17 +267,8 @@ impl RankingEngine {
         target_station: &Station,
         placement_profile: &PlacementProfile,
         stage: &FallbackStage,
+        lookups: &RankingLookups<'_>,
     ) -> Vec<SchoolStationLink> {
-        let stations_by_id: HashMap<&str, &Station> = dataset
-            .stations
-            .iter()
-            .map(|station| (station.id.as_str(), station))
-            .collect();
-        let schools_by_id: HashMap<&str, &School> = dataset
-            .schools
-            .iter()
-            .map(|school| (school.id.as_str(), school))
-            .collect();
         let context = query.context.as_ref();
         let line_name = context
             .and_then(|context| context.line_name())
@@ -277,10 +298,11 @@ impl RankingEngine {
             .school_station_links
             .iter()
             .filter(|link| {
-                let Some(candidate_station) = stations_by_id.get(link.station_id.as_str()) else {
+                let Some(candidate_station) = lookups.stations_by_id.get(link.station_id.as_str())
+                else {
                     return false;
                 };
-                let Some(school) = schools_by_id.get(link.school_id.as_str()) else {
+                let Some(school) = lookups.schools_by_id.get(link.school_id.as_str()) else {
                     return false;
                 };
                 let station_distance = haversine_meters(

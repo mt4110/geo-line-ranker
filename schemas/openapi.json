@@ -364,10 +364,10 @@
             "format": "double"
           },
           "context_source": {
-            "type": "string"
+            "$ref": "#/components/schemas/ContextSource"
           },
           "privacy_level": {
-            "type": "string"
+            "$ref": "#/components/schemas/PrivacyLevel"
           },
           "warnings": {
             "type": "array",

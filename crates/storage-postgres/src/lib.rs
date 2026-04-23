@@ -289,16 +289,33 @@ impl PgRepository {
         station_id: &str,
         input: &ContextInput,
     ) -> Result<RankingContext> {
-        let station = client
+        let station_row = client
             .query_opt(
-                "SELECT id, name, line_name, latitude, longitude
-                 FROM stations
-                 WHERE id = $1",
+                "SELECT
+                    station.id,
+                    station.name,
+                    station.line_name,
+                    station.latitude,
+                    station.longitude,
+                    station.line_id,
+                    line.operator_name
+                 FROM stations AS station
+                 LEFT JOIN lines AS line
+                   ON line.line_id = station.line_id
+                 WHERE station.id = $1",
                 &[&station_id],
             )
             .await?
-            .map(station_from_row)
             .with_context(|| format!("unknown station: {station_id}"))?;
+        let station = Station {
+            id: station_row.get("id"),
+            name: station_row.get("name"),
+            line_name: station_row.get("line_name"),
+            latitude: station_row.get("latitude"),
+            longitude: station_row.get("longitude"),
+        };
+        let station_line_id = station_row.get::<_, Option<String>>("line_id");
+        let station_operator_name = station_row.get::<_, Option<String>>("operator_name");
 
         let mut area = input.area.clone().map(AreaContext::from);
         let mut warnings = Vec::new();
@@ -338,9 +355,9 @@ impl PgRepository {
             confidence: 1.0,
             area,
             line: Some(LineContext {
-                line_id: input.line_id.clone(),
+                line_id: station_line_id,
                 line_name: station.line_name.clone(),
-                operator_name: None,
+                operator_name: station_operator_name,
             }),
             station: Some(StationContext {
                 station_id: station.id,
@@ -866,7 +883,7 @@ impl PgRepository {
                  INNER JOIN schools AS school
                    ON school.id = link.school_id
                  WHERE ($1::TEXT IS NOT NULL AND link.station_id = $1)
-                    OR ($2::TEXT IS NOT NULL AND link.line_name = $2)
+                    OR ($1::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
                     OR ($3::TEXT IS NOT NULL AND lower(school.area) = lower($3))
                     OR ($4::TEXT IS NOT NULL AND lower(school.area) = lower($4))
                     OR (
@@ -884,7 +901,7 @@ impl PgRepository {
                  ORDER BY
                     CASE
                         WHEN $1::TEXT IS NOT NULL AND link.station_id = $1 THEN 0
-                        WHEN $2::TEXT IS NOT NULL AND link.line_name = $2 THEN 1
+                        WHEN $1::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2 THEN 1
                         WHEN $3::TEXT IS NOT NULL AND lower(school.area) = lower($3) THEN 2
                         WHEN $4::TEXT IS NOT NULL AND lower(school.area) = lower($4) THEN 3
                         ELSE 4

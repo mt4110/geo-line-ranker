@@ -66,6 +66,13 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             )
             .await?;
         assert!(conflicted_context.area.is_none());
+        assert_eq!(
+            conflicted_context
+                .line
+                .as_ref()
+                .and_then(|line| line.line_id.as_deref()),
+            Some("line_jr_yamanote_line")
+        );
         assert!(conflicted_context
             .warnings
             .iter()
@@ -97,6 +104,18 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         );
         assert_eq!(row.get::<_, Option<String>>("line_id"), None);
         assert_eq!(row.get::<_, Option<String>>("station_id"), None);
+        let station_row = client
+            .query_one(
+                "SELECT line_id
+                 FROM context_resolution_traces
+                 WHERE request_id = 'req-context-station-conflict'",
+                &[],
+            )
+            .await?;
+        assert_eq!(
+            station_row.get::<_, Option<String>>("line_id"),
+            Some("line_jr_yamanote_line".to_string())
+        );
 
         Ok(())
     }
