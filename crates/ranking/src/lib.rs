@@ -265,7 +265,7 @@ impl RankingEngine {
         dataset: &RankingDataset,
         query: &RankingQuery,
         target_station: &Station,
-        placement_profile: &PlacementProfile,
+        _placement_profile: &PlacementProfile,
         stage: &FallbackStage,
         lookups: &RankingLookups<'_>,
     ) -> Vec<SchoolStationLink> {
@@ -305,19 +305,19 @@ impl RankingEngine {
                 let Some(school) = lookups.schools_by_id.get(link.school_id.as_str()) else {
                     return false;
                 };
+                let is_same_line = link.line_name == line_name;
+                let is_same_city =
+                    city_name.is_some_and(|city| school.area.eq_ignore_ascii_case(city));
+                let is_same_prefecture = prefecture_name
+                    .is_some_and(|prefecture| school.area.eq_ignore_ascii_case(prefecture));
 
                 match stage {
                     FallbackStage::StrictStation => {
                         station_context_is_explicit && link.station_id == target_station.id
                     }
-                    FallbackStage::SameLine => {
-                        line_context_is_explicit && link.line_name == line_name
-                    }
-                    FallbackStage::SameCity => {
-                        city_name.is_some_and(|city| school.area.eq_ignore_ascii_case(city))
-                    }
-                    FallbackStage::SamePrefecture => prefecture_name
-                        .is_some_and(|prefecture| school.area.eq_ignore_ascii_case(prefecture)),
+                    FallbackStage::SameLine => line_context_is_explicit && is_same_line,
+                    FallbackStage::SameCity => is_same_city,
+                    FallbackStage::SamePrefecture => is_same_prefecture,
                     FallbackStage::NeighborArea => {
                         let station_distance = haversine_meters(
                             target_station.latitude,
@@ -325,9 +325,11 @@ impl RankingEngine {
                             candidate_station.latitude,
                             candidate_station.longitude,
                         );
-                        line_context_is_explicit
-                            && link.line_name == line_name
-                            && link.hop_distance <= placement_profile.neighbor_max_hops
+                        station_context_is_explicit
+                            && link.station_id != target_station.id
+                            && !is_same_line
+                            && !is_same_city
+                            && !is_same_prefecture
                             && station_distance
                                 <= self.profiles.fallback.neighbor_distance_cap_meters
                     }
@@ -1233,6 +1235,103 @@ mod tests {
         assert_eq!(result.candidate_counts.get("same_prefecture"), Some(&0));
         assert_eq!(result.candidate_counts.get("neighbor_area"), Some(&0));
         assert_eq!(result.fallback_stage, FallbackStage::SafeGlobalPopular);
+    }
+
+    #[test]
+    fn neighbor_area_can_expand_beyond_same_line_candidates() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_neighbor_a".to_string(),
+                    name: "Neighbor A".to_string(),
+                    area: "Neighbor Ward".to_string(),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_neighbor_a".to_string(),
+                },
+                School {
+                    id: "school_neighbor_b".to_string(),
+                    name: "Neighbor B".to_string(),
+                    area: "Neighbor Ward".to_string(),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_neighbor_b".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_neighbor_a".to_string(),
+                    name: "Neighbor A Station".to_string(),
+                    line_name: "Other Line".to_string(),
+                    latitude: 35.0005,
+                    longitude: 139.0005,
+                },
+                Station {
+                    id: "st_neighbor_b".to_string(),
+                    name: "Neighbor B Station".to_string(),
+                    line_name: "Another Line".to_string(),
+                    latitude: 35.0007,
+                    longitude: 139.0007,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_neighbor_a".to_string(),
+                    station_id: "st_neighbor_a".to_string(),
+                    walking_minutes: 8,
+                    distance_meters: 650,
+                    hop_distance: 0,
+                    line_name: "Other Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_neighbor_b".to_string(),
+                    station_id: "st_neighbor_b".to_string(),
+                    walking_minutes: 9,
+                    distance_meters: 780,
+                    hop_distance: 0,
+                    line_name: "Another Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-context-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.context = Some(RankingContext {
+            context_source: ContextSource::RequestStation,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: None,
+                line_name: "Target Line".to_string(),
+                operator_name: None,
+            }),
+            station: Some(StationContext {
+                station_id: "st_target".to_string(),
+                station_name: "Target".to_string(),
+            }),
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("strict_station"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&0));
+        assert_eq!(result.candidate_counts.get("neighbor_area"), Some(&2));
+        assert_eq!(result.fallback_stage, FallbackStage::NeighborArea);
     }
 
     #[test]

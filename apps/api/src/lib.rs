@@ -240,7 +240,6 @@ async fn recommend(
                     &target_station,
                     state.neighbor_distance_cap_meters,
                     state.candidate_retrieval_limit,
-                    neighbor_max_hops,
                 )
                 .await
             {

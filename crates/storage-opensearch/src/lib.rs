@@ -216,9 +216,8 @@ impl OpenSearchStore {
     pub async fn search_candidate_links(
         &self,
         target_station: &Station,
-        _neighbor_distance_cap_meters: f64,
+        neighbor_distance_cap_meters: f64,
         candidate_limit: usize,
-        _neighbor_max_hops: u8,
     ) -> Result<Vec<SchoolStationLink>> {
         self.ensure_index().await?;
 
@@ -271,6 +270,42 @@ impl OpenSearchStore {
                                     }
                                 },
                                 "boost": 1.0
+                            }
+                        },
+                        {
+                            "constant_score": {
+                                "filter": {
+                                    "bool": {
+                                        "must_not": [
+                                            {
+                                                "term": {
+                                                    "station_id": {
+                                                        "value": target_station.id.as_str()
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                "term": {
+                                                    "line_name": {
+                                                        "value": target_station.line_name.as_str()
+                                                    }
+                                                }
+                                            }
+                                        ],
+                                        "filter": [
+                                            {
+                                                "geo_distance": {
+                                                    "distance": format!("{neighbor_distance_cap_meters}m"),
+                                                    "station_location": {
+                                                        "lat": target_station.latitude,
+                                                        "lon": target_station.longitude
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                },
+                                "boost": 0.5
                             }
                         }
                     ],

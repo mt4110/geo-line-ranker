@@ -28,6 +28,7 @@ use storage::{
     SnapshotRefreshStats, SnapshotTuning,
 };
 use tokio_postgres::{Client, GenericClient, NoTls, Row};
+use uuid::Uuid;
 
 const REQUIRED_READY_TABLES: [&str; 14] = [
     "areas",
@@ -154,8 +155,7 @@ impl PgRepository {
     pub fn new(database_url: impl Into<String>) -> Self {
         let database_url = database_url.into();
         Self {
-            trace_hash_salt: std::env::var("GEO_LINE_RANKER_TRACE_HASH_SALT")
-                .unwrap_or_else(|_| "geo-line-ranker-dev-trace-salt".to_string()),
+            trace_hash_salt: load_trace_hash_salt(),
             database_url,
         }
     }
@@ -1151,6 +1151,7 @@ impl PgRepository {
         let line_name = context.line_name().map(str::to_string);
         let city_name = context.city_name().map(str::to_string);
         let prefecture_name = context.prefecture_name().map(str::to_string);
+        let station_context_is_explicit = context.station.is_some();
         let allow_global = matches!(context.context_source, ContextSource::DefaultSafeContext);
         let rows = client
             .query(
@@ -1177,6 +1178,25 @@ impl PgRepository {
                     )
                     OR ($3::TEXT IS NOT NULL AND lower(school.area) = lower($3))
                     OR ($4::TEXT IS NOT NULL AND lower(school.area) = lower($4))
+                    OR (
+                        $12
+                        AND link.station_id <> $13
+                        AND NOT (
+                            ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
+                            OR (
+                                $2::TEXT IS NOT NULL
+                                AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
+                                AND link.line_name = $2
+                            )
+                        )
+                        AND ($3::TEXT IS NULL OR lower(school.area) <> lower($3))
+                        AND ($4::TEXT IS NULL OR lower(school.area) <> lower($4))
+                        AND ST_DWithin(
+                            candidate_station.geom,
+                            ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                            $8
+                        )
+                    )
                     OR (
                         (
                             ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
@@ -1205,7 +1225,26 @@ impl PgRepository {
                             THEN 2
                         WHEN $3::TEXT IS NOT NULL AND lower(school.area) = lower($3) THEN 3
                         WHEN $4::TEXT IS NOT NULL AND lower(school.area) = lower($4) THEN 4
-                        ELSE 5
+                        WHEN
+                            $12
+                            AND link.station_id <> $13
+                            AND NOT (
+                                ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
+                                OR (
+                                    $2::TEXT IS NOT NULL
+                                    AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
+                                    AND link.line_name = $2
+                                )
+                            )
+                            AND ($3::TEXT IS NULL OR lower(school.area) <> lower($3))
+                            AND ($4::TEXT IS NULL OR lower(school.area) <> lower($4))
+                            AND ST_DWithin(
+                                candidate_station.geom,
+                                ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                                $8
+                            )
+                            THEN 5
+                        ELSE 6
                     END,
                     link.distance_meters ASC,
                     link.walking_minutes ASC,
@@ -1224,6 +1263,8 @@ impl PgRepository {
                     &allow_global,
                     &((candidate_limit.clamp(1, 10_000)) as i64),
                     &line_id,
+                    &station_context_is_explicit,
+                    &target_station.id,
                 ],
             )
             .await?;
@@ -1458,6 +1499,19 @@ impl PgRepository {
             .query_opt("SELECT school_id FROM events WHERE id = $1", &[&event_id])
             .await
             .map(|row| row.map(|row| row.get("school_id")))?)
+    }
+}
+
+fn load_trace_hash_salt() -> String {
+    match std::env::var("GEO_LINE_RANKER_TRACE_HASH_SALT") {
+        Ok(value) if !value.trim().is_empty() => value,
+        Ok(_) | Err(_) => {
+            let generated = Uuid::new_v4().to_string();
+            tracing::warn!(
+                "GEO_LINE_RANKER_TRACE_HASH_SALT is unset; generated an ephemeral trace hash salt for this process"
+            );
+            generated
+        }
     }
 }
 

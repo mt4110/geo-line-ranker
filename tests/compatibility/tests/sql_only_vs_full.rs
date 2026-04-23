@@ -18,6 +18,7 @@ use axum::{
 };
 use config::{OpenSearchSettings, RankingProfiles};
 use domain::{PlacementKind, RankingDataset, RankingQuery, School, Station};
+use geo::haversine_meters;
 use ranking::RankingEngine;
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -89,7 +90,6 @@ async fn assert_sql_only_and_full_match(target_station_id: &str) -> Result<()> {
             &target_station,
             profiles.fallback.neighbor_distance_cap_meters,
             256,
-            profiles.placement(PlacementKind::Search).neighbor_max_hops,
         )
         .await?;
     let mut sql_dataset = dataset.clone();
@@ -274,7 +274,22 @@ async fn search(
         .documents
         .iter()
         .filter(|document| {
-            document.station_id == query.target_station_id || document.line_name == query.line_name
+            document.station_id == query.target_station_id
+                || document.line_name == query.line_name
+                || query
+                    .neighbor_distance_meters
+                    .zip(query.target_latitude)
+                    .zip(query.target_longitude)
+                    .is_some_and(|((distance_cap, lat), lon)| {
+                        document.station_id != query.target_station_id
+                            && document.line_name != query.line_name
+                            && haversine_meters(
+                                lat,
+                                lon,
+                                document.station_location.lat,
+                                document.station_location.lon,
+                            ) <= distance_cap
+                    })
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -312,6 +327,9 @@ struct ParsedMockSearchQuery<'a> {
     size: usize,
     target_station_id: &'a str,
     line_name: &'a str,
+    neighbor_distance_meters: Option<f64>,
+    target_latitude: Option<f64>,
+    target_longitude: Option<f64>,
 }
 
 fn parse_mock_search_query<'a>(
@@ -339,10 +357,24 @@ fn parse_mock_search_query<'a>(
         "/query/bool/should/1/constant_score/filter/bool/filter/0/term/line_name/value",
         "line name",
     )?;
+    let neighbor_distance_meters = body
+        .pointer("/query/bool/should/2/constant_score/filter/bool/filter/0/geo_distance/distance")
+        .and_then(Value::as_str)
+        .and_then(|value| value.strip_suffix('m'))
+        .and_then(|value| value.parse::<f64>().ok());
+    let target_latitude = body
+        .pointer("/query/bool/should/2/constant_score/filter/bool/filter/0/geo_distance/station_location/lat")
+        .and_then(Value::as_f64);
+    let target_longitude = body
+        .pointer("/query/bool/should/2/constant_score/filter/bool/filter/0/geo_distance/station_location/lon")
+        .and_then(Value::as_f64);
     Ok(ParsedMockSearchQuery {
         size,
         target_station_id,
         line_name,
+        neighbor_distance_meters,
+        target_latitude,
+        target_longitude,
     })
 }
 
@@ -441,7 +473,7 @@ async fn full_mode_candidate_retrieval_includes_same_line_candidates_before_limi
     })?;
 
     let candidate_links = store
-        .search_candidate_links(&target_station, 500.0, 2, 1)
+        .search_candidate_links(&target_station, 500.0, 2)
         .await?;
 
     assert_eq!(candidate_links.len(), 2);
@@ -478,12 +510,80 @@ async fn full_mode_candidate_retrieval_keeps_sql_only_ordering_for_limit() -> Re
     })?;
 
     let candidate_links = store
-        .search_candidate_links(&target_station, 500.0, 1, 1)
+        .search_candidate_links(&target_station, 500.0, 1)
         .await?;
 
     assert_eq!(candidate_links.len(), 1);
     assert_eq!(candidate_links[0].school_id, "school_direct");
     assert_eq!(candidate_links[0].station_id, "st_target");
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_mode_candidate_retrieval_includes_nearby_off_line_candidates() -> Result<()> {
+    let target_station = Station {
+        id: "st_target".to_string(),
+        name: "Target".to_string(),
+        line_name: "JR Yamanote Line".to_string(),
+        latitude: 35.0,
+        longitude: 139.0,
+    };
+    let documents = vec![
+        ProjectionDocument {
+            document_id: "school_neighbor:st_neighbor".to_string(),
+            school_id: "school_neighbor".to_string(),
+            school_name: "school_neighbor name".to_string(),
+            school_area: "Neighbor Ward".to_string(),
+            school_type: "high_school".to_string(),
+            station_id: "st_neighbor".to_string(),
+            station_name: "st_neighbor name".to_string(),
+            line_name: "Other Line".to_string(),
+            station_location: storage_opensearch::ProjectionGeoPoint {
+                lat: 35.0005,
+                lon: 139.0005,
+            },
+            walking_minutes: 8,
+            distance_meters: 650,
+            hop_distance: 0,
+            open_day_count: 0,
+            popularity_score: 0.0,
+        },
+        ProjectionDocument {
+            document_id: "school_far_other:st_far_other".to_string(),
+            school_id: "school_far_other".to_string(),
+            school_name: "school_far_other name".to_string(),
+            school_area: "Far Ward".to_string(),
+            school_type: "high_school".to_string(),
+            station_id: "st_far_other".to_string(),
+            station_name: "st_far_other name".to_string(),
+            line_name: "Far Line".to_string(),
+            station_location: storage_opensearch::ProjectionGeoPoint {
+                lat: 35.05,
+                lon: 139.05,
+            },
+            walking_minutes: 20,
+            distance_meters: 10_000,
+            hop_distance: 0,
+            open_day_count: 0,
+            popularity_score: 0.0,
+        },
+    ];
+    let base_url = spawn_mock_opensearch(documents).await?;
+    let store = OpenSearchStore::new(&OpenSearchSettings {
+        url: base_url,
+        index_name: TEST_INDEX_NAME.to_string(),
+        username: None,
+        password: None,
+        request_timeout_secs: 5,
+    })?;
+
+    let candidate_links = store
+        .search_candidate_links(&target_station, 2_500.0, 10)
+        .await?;
+
+    assert_eq!(candidate_links.len(), 1);
+    assert_eq!(candidate_links[0].school_id, "school_neighbor");
+
     Ok(())
 }
 

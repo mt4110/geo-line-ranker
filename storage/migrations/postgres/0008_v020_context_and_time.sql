@@ -102,6 +102,9 @@ CREATE TABLE IF NOT EXISTS context_resolution_traces (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_context_resolution_traces_request_id
+    ON context_resolution_traces(request_id);
+
 CREATE TABLE IF NOT EXISTS data_sources (
     source_id TEXT PRIMARY KEY,
     source_name TEXT NOT NULL,
