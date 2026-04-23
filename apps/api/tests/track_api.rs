@@ -1171,6 +1171,82 @@ async fn recommend_endpoint_rejects_unknown_target_station_with_clear_message() 
 }
 
 #[tokio::test]
+async fn recommend_endpoint_rejects_unknown_context_station_with_clear_message(
+) -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api_context_station").await
+    else {
+        eprintln!(
+            "skipping api recommendation integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "context": {
+                                "station_id": "station_missing"
+                            },
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(
+            payload["error"],
+            "unknown target_station_id: station_missing"
+        );
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
 async fn recommend_endpoint_accepts_area_only_context() -> anyhow::Result<()> {
     let _postgres_test_lock = acquire_postgres_test_lock().await;
     let Ok((admin_database_url, database_url, database_name)) =

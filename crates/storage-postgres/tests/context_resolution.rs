@@ -46,7 +46,24 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
                  ON CONFLICT (area_id) DO UPDATE
                  SET prefecture_code = EXCLUDED.prefecture_code,
                      prefecture_name = EXCLUDED.prefecture_name,
-                     area_level = EXCLUDED.area_level;",
+                     area_level = EXCLUDED.area_level;
+
+                 INSERT INTO areas (
+                    area_id,
+                    country_code,
+                    city_code,
+                    city_name,
+                    area_level
+                 )
+                 VALUES ('area_minato_station_sparse', 'JP', '13103', 'Minato', 'city')
+                 ON CONFLICT (area_id) DO UPDATE
+                 SET city_code = EXCLUDED.city_code,
+                     city_name = EXCLUDED.city_name,
+                     area_level = EXCLUDED.area_level;
+
+                 UPDATE stations
+                 SET area_id = 'area_minato_station_sparse'
+                 WHERE id = 'st_tamachi';",
             )
             .await?;
 
@@ -104,6 +121,27 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             .warnings
             .iter()
             .any(|warning| warning.code == "station_area_conflict"));
+        let matching_prefecture_context = repo
+            .resolve_context(
+                "req-context-station-prefecture-match",
+                None,
+                &ContextInput {
+                    station_id: Some("st_tamachi".to_string()),
+                    area: Some(AreaContextInput {
+                        city_name: Some("Minato".to_string()),
+                        prefecture_name: Some("Tokyo".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(matching_prefecture_context.city_name(), Some("Minato"));
+        assert_eq!(matching_prefecture_context.prefecture_name(), Some("Tokyo"));
+        assert!(matching_prefecture_context
+            .warnings
+            .iter()
+            .all(|warning| warning.code != "station_area_conflict"));
         let mixed_conflicted_context = repo
             .resolve_context(
                 "req-context-station-prefecture-conflict",
@@ -141,6 +179,20 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
                 .and_then(|line| line.line_id.as_deref()),
             Some("line_jr_yamanote_line")
         );
+        let unknown_line_error = repo
+            .resolve_context(
+                "req-context-line-missing",
+                None,
+                &ContextInput {
+                    line_id: Some("line_missing".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("missing line_id should fail");
+        assert!(unknown_line_error
+            .to_string()
+            .contains("unknown line_id: line_missing"));
         let coded_area_context = repo
             .resolve_context(
                 "req-context-area-code",

@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use context::{
@@ -431,6 +431,10 @@ impl PgRepository {
         area_input: &AreaContextInput,
         station_area: &StationAreaColumns,
     ) -> Result<bool> {
+        let mut matched_city_hint = false;
+        let country = non_empty(area_input.country.as_deref())
+            .or_else(|| non_empty(station_area.country_code.as_deref()))
+            .unwrap_or("JP");
         if let Some(country) = non_empty(area_input.country.as_deref()) {
             let station_country = non_empty(station_area.country_code.as_deref()).unwrap_or("JP");
             if !station_country.eq_ignore_ascii_case(country) {
@@ -441,26 +445,69 @@ impl PgRepository {
             if !matches_ignore_ascii(station_area.city_code.as_deref(), city_code) {
                 return Ok(false);
             }
+            matched_city_hint = true;
         }
         if let Some(city_name) = non_empty(area_input.city_name.as_deref()) {
             if let Some(station_city_name) = non_empty(station_area.city_name.as_deref()) {
                 if !station_city_name.eq_ignore_ascii_case(city_name) {
                     return Ok(false);
                 }
+                matched_city_hint = true;
             } else if !self
                 .station_linked_school_area_matches(client, station_id, city_name)
                 .await?
             {
                 return Ok(false);
+            } else {
+                matched_city_hint = true;
             }
         }
+        let inferred_city_area = if matched_city_hint {
+            self.lookup_area_row(
+                client,
+                country,
+                None,
+                None,
+                non_empty(area_input.city_code.as_deref()),
+                non_empty(area_input.city_name.as_deref()),
+            )
+            .await?
+        } else {
+            None
+        };
         if let Some(prefecture_code) = non_empty(area_input.prefecture_code.as_deref()) {
-            if !matches_ignore_ascii(station_area.prefecture_code.as_deref(), prefecture_code) {
+            if let Some(station_prefecture_code) =
+                non_empty(station_area.prefecture_code.as_deref())
+            {
+                if !station_prefecture_code.eq_ignore_ascii_case(prefecture_code) {
+                    return Ok(false);
+                }
+            } else if let Some(inferred_prefecture_code) = inferred_city_area
+                .as_ref()
+                .and_then(|area| area.prefecture_code.as_deref())
+            {
+                if !inferred_prefecture_code.eq_ignore_ascii_case(prefecture_code) {
+                    return Ok(false);
+                }
+            } else if !matched_city_hint {
                 return Ok(false);
             }
         }
         if let Some(prefecture_name) = non_empty(area_input.prefecture_name.as_deref()) {
-            if !matches_ignore_ascii(station_area.prefecture_name.as_deref(), prefecture_name) {
+            if let Some(station_prefecture_name) =
+                non_empty(station_area.prefecture_name.as_deref())
+            {
+                if !station_prefecture_name.eq_ignore_ascii_case(prefecture_name) {
+                    return Ok(false);
+                }
+            } else if let Some(inferred_prefecture_name) = inferred_city_area
+                .as_ref()
+                .and_then(|area| area.prefecture_name.as_deref())
+            {
+                if !inferred_prefecture_name.eq_ignore_ascii_case(prefecture_name) {
+                    return Ok(false);
+                }
+            } else if !matched_city_hint {
                 return Ok(false);
             }
         }
@@ -502,6 +549,11 @@ impl PgRepository {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        let requested_line_name = input
+            .line_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
         let line = if let Some(line_id) = requested_line_id.as_deref() {
             client
                 .query_opt(
@@ -523,11 +575,12 @@ impl PgRepository {
         let line = if let Some(line) = line {
             line
         } else {
-            let line_name = input
-                .line_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+            if let Some(line_id) = requested_line_id.as_deref() {
+                if requested_line_name.is_none() {
+                    bail!("unknown line_id: {line_id}");
+                }
+            }
+            let line_name = requested_line_name
                 .with_context(|| "line context requires line_id or line_name")?;
             let row = client
                 .query_opt(
@@ -1094,14 +1147,22 @@ impl PgRepository {
                  WHERE ($1::TEXT IS NOT NULL AND link.station_id = $1)
                     OR (
                         ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                        OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
+                        OR (
+                            $2::TEXT IS NOT NULL
+                            AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
+                            AND link.line_name = $2
+                        )
                     )
                     OR ($3::TEXT IS NOT NULL AND lower(school.area) = lower($3))
                     OR ($4::TEXT IS NOT NULL AND lower(school.area) = lower($4))
                     OR (
                         (
                             ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                            OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
+                            OR (
+                                $2::TEXT IS NOT NULL
+                                AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
+                                AND link.line_name = $2
+                            )
                         )
                         AND link.hop_distance <= $7
                         AND ST_DWithin(
@@ -1114,13 +1175,15 @@ impl PgRepository {
                  ORDER BY
                     CASE
                         WHEN $1::TEXT IS NOT NULL AND link.station_id = $1 THEN 0
+                        WHEN $11::TEXT IS NOT NULL AND candidate_station.line_id = $11 THEN 1
                         WHEN
-                            ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                            OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
-                            THEN 1
-                        WHEN $3::TEXT IS NOT NULL AND lower(school.area) = lower($3) THEN 2
-                        WHEN $4::TEXT IS NOT NULL AND lower(school.area) = lower($4) THEN 3
-                        ELSE 4
+                            $2::TEXT IS NOT NULL
+                            AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
+                            AND link.line_name = $2
+                            THEN 2
+                        WHEN $3::TEXT IS NOT NULL AND lower(school.area) = lower($3) THEN 3
+                        WHEN $4::TEXT IS NOT NULL AND lower(school.area) = lower($4) THEN 4
+                        ELSE 5
                     END,
                     link.distance_meters ASC,
                     link.walking_minutes ASC,

@@ -214,21 +214,30 @@ impl TrackRequest {
     }
 }
 
-impl From<RecommendationRequest> for domain::RankingQuery {
-    fn from(value: RecommendationRequest) -> Self {
-        Self {
-            target_station_id: value
-                .context
-                .as_ref()
-                .and_then(|context| context.station_id.clone())
-                .or(value.target_station_id)
-                .unwrap_or_default(),
+impl TryFrom<RecommendationRequest> for domain::RankingQuery {
+    type Error = String;
+
+    fn try_from(value: RecommendationRequest) -> Result<Self, Self::Error> {
+        let context = value.context_input();
+        let target_station_id = context
+            .station_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                "target_station_id or context.station_id is required to build RankingQuery"
+                    .to_string()
+            })?;
+
+        Ok(Self {
+            target_station_id,
             limit: value.limit,
             user_id: value.user_id,
             placement: value.placement,
             debug: value.debug,
             context: None,
-        }
+        })
     }
 }
 
@@ -331,7 +340,7 @@ impl From<RankingContext> for RecommendationContextDto {
 mod tests {
     use domain::{FallbackStage, RecommendationItem};
 
-    use super::{RecommendationResponse, TrackRequest};
+    use super::{RecommendationRequest, RecommendationResponse, TrackRequest};
 
     #[test]
     fn recommendation_response_omits_empty_event_fields() {
@@ -406,5 +415,30 @@ mod tests {
 
         let error = request.validate().expect_err("target station required");
         assert_eq!(error, "target_station_id is required for search_execute");
+    }
+
+    #[test]
+    fn recommendation_request_try_into_query_requires_station_context() {
+        let request = RecommendationRequest {
+            request_id: None,
+            target_station_id: None,
+            context: Some(context::ContextInput {
+                area: Some(context::AreaContextInput {
+                    city_name: Some("Minato".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            limit: Some(3),
+            user_id: Some("demo-user".to_string()),
+            placement: domain::PlacementKind::Search,
+            debug: false,
+        };
+
+        let error = domain::RankingQuery::try_from(request).expect_err("query should fail");
+        assert_eq!(
+            error,
+            "target_station_id or context.station_id is required to build RankingQuery"
+        );
     }
 }

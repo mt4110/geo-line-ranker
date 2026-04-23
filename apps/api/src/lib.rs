@@ -33,13 +33,6 @@ pub enum CandidateBackend {
 }
 
 impl CandidateBackend {
-    fn backend_name(&self) -> &'static str {
-        match self {
-            Self::SqlOnly => "postgresql",
-            Self::Full(_) => "opensearch",
-        }
-    }
-
     async fn ready_check(&self) -> Result<String> {
         match self {
             Self::SqlOnly => Ok("disabled".to_string()),
@@ -149,14 +142,8 @@ async fn recommend(
     {
         Ok(context) => context,
         Err(error) => {
-            let error_message = error.to_string();
             let status = context_resolution_error_status(&error);
-            let message = request
-                .target_station_id
-                .as_deref()
-                .filter(|_| is_unknown_station_error(&error))
-                .map(|station_id| format!("unknown target_station_id: {station_id}"))
-                .unwrap_or(error_message);
+            let message = context_resolution_error_message(&error, &context_input);
             return error_response(status, message);
         }
     };
@@ -196,6 +183,8 @@ async fn recommend(
             .await
         {
             Ok(Some(mut response)) => {
+                let actual_candidate_backend =
+                    actual_candidate_backend_name(&state.candidate_backend, &resolved_context);
                 response.request_id = Some(request_id.clone());
                 cache_hit(cache_key);
                 record_trace_best_effort(
@@ -206,7 +195,7 @@ async fn recommend(
                     build_trace_payload(TracePayloadInput {
                         response_source: "cache",
                         mode: state.candidate_retrieval_mode,
-                        backend: state.candidate_backend.backend_name(),
+                        backend: actual_candidate_backend,
                         candidate_count: 0,
                         duration_ms: 0,
                         target_station_id: &target_station.id,
@@ -224,7 +213,8 @@ async fn recommend(
 
     let retrieval_started = Instant::now();
     let neighbor_max_hops = state.engine.neighbor_max_hops(query.placement);
-    let mut actual_candidate_backend = state.candidate_backend.backend_name();
+    let actual_candidate_backend =
+        actual_candidate_backend_name(&state.candidate_backend, &resolved_context);
     let candidate_links = match &state.candidate_backend {
         CandidateBackend::SqlOnly => match state
             .repository
@@ -260,25 +250,22 @@ async fn recommend(
                 }
             }
         }
-        CandidateBackend::Full(_) => {
-            actual_candidate_backend = "postgresql";
-            match state
-                .repository
-                .load_context_candidate_links(
-                    &target_station,
-                    &resolved_context,
-                    state.candidate_retrieval_limit,
-                    state.neighbor_distance_cap_meters,
-                    neighbor_max_hops,
-                )
-                .await
-            {
-                Ok(candidate_links) => candidate_links,
-                Err(error) => {
-                    return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-                }
+        CandidateBackend::Full(_) => match state
+            .repository
+            .load_context_candidate_links(
+                &target_station,
+                &resolved_context,
+                state.candidate_retrieval_limit,
+                state.neighbor_distance_cap_meters,
+                neighbor_max_hops,
+            )
+            .await
+        {
+            Ok(candidate_links) => candidate_links,
+            Err(error) => {
+                return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
             }
-        }
+        },
     };
     let retrieval_duration_ms = retrieval_started.elapsed().as_millis();
     candidate_retrieval_completed(
@@ -508,8 +495,24 @@ fn context_resolution_error_status(error: &anyhow::Error) -> StatusCode {
     }
 }
 
+fn context_resolution_error_message(
+    error: &anyhow::Error,
+    context_input: &context::ContextInput,
+) -> String {
+    let error_message = error.to_string();
+    if is_unknown_station_error(error) {
+        return context_input
+            .station_id
+            .as_deref()
+            .map(|station_id| format!("unknown target_station_id: {station_id}"))
+            .unwrap_or(error_message);
+    }
+    error_message
+}
+
 fn is_context_resolution_validation_error(error: &anyhow::Error) -> bool {
     is_unknown_station_error(error)
+        || is_unknown_line_error(error)
         || error
             .chain()
             .any(|cause| cause.to_string() == "line context requires line_id or line_name")
@@ -519,6 +522,25 @@ fn is_unknown_station_error(error: &anyhow::Error) -> bool {
     error
         .chain()
         .any(|cause| cause.to_string().starts_with("unknown station:"))
+}
+
+fn is_unknown_line_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string().starts_with("unknown line_id:"))
+}
+
+fn actual_candidate_backend_name(
+    candidate_backend: &CandidateBackend,
+    context: &context::RankingContext,
+) -> &'static str {
+    match candidate_backend {
+        CandidateBackend::SqlOnly => "postgresql",
+        CandidateBackend::Full(_) if should_use_opensearch_candidate_retrieval(context) => {
+            "opensearch"
+        }
+        CandidateBackend::Full(_) => "postgresql",
+    }
 }
 
 fn should_use_opensearch_candidate_retrieval(context: &context::RankingContext) -> bool {
@@ -579,7 +601,7 @@ fn generate_request_id() -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use config::RankingProfiles;
+    use config::{OpenSearchSettings, RankingProfiles};
     use domain::{EventKind, PlacementKind, UserEvent};
 
     use super::*;
@@ -647,6 +669,12 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
 
+        let unknown_line = anyhow::anyhow!("unknown line_id: line_missing");
+        assert_eq!(
+            context_resolution_error_status(&unknown_line),
+            StatusCode::BAD_REQUEST
+        );
+
         let missing_line = anyhow::anyhow!("line context requires line_id or line_name");
         assert_eq!(
             context_resolution_error_status(&missing_line),
@@ -657,6 +685,22 @@ mod tests {
         assert_eq!(
             context_resolution_error_status(&trace_write_error),
             StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn context_resolution_unknown_station_message_uses_normalized_context_station() {
+        let input = context::ContextInput {
+            station_id: Some("station_missing".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            context_resolution_error_message(
+                &anyhow::anyhow!("unknown station: station_missing"),
+                &input
+            ),
+            "unknown target_station_id: station_missing"
         );
     }
 
@@ -679,6 +723,33 @@ mod tests {
             city_name: Some("Minato".to_string()),
         });
         assert!(!should_use_opensearch_candidate_retrieval(&context));
+    }
+
+    #[test]
+    fn actual_candidate_backend_uses_postgresql_when_context_disables_opensearch() {
+        let settings = OpenSearchSettings {
+            url: "http://127.0.0.1:9200".to_string(),
+            index_name: "schools".to_string(),
+            username: None,
+            password: None,
+            request_timeout_secs: 1,
+        };
+        let backend =
+            CandidateBackend::Full(OpenSearchStore::new(&settings).expect("opensearch backend"));
+        let mut context = context::RankingContext::default_safe();
+        assert_eq!(
+            actual_candidate_backend_name(&backend, &context),
+            "postgresql"
+        );
+
+        context.station = Some(context::StationContext {
+            station_id: "st_tamachi".to_string(),
+            station_name: "Tamachi".to_string(),
+        });
+        assert_eq!(
+            actual_candidate_backend_name(&backend, &context),
+            "opensearch"
+        );
     }
 
     #[test]

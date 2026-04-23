@@ -245,6 +245,84 @@ async fn station_context_candidate_links_include_full_same_line_fallback() -> an
 }
 
 #[tokio::test]
+async fn line_context_candidate_links_fall_back_to_line_name_when_station_line_id_is_missing(
+) -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_line_name_fallback").await
+    else {
+        eprintln!(
+            "skipping storage-postgres line-name fallback test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO lines (line_id, line_name, country_code) VALUES
+                    ('line_target', 'Legacy Shared Line', 'JP');
+
+                 INSERT INTO schools (id, name, area, school_type, group_id) VALUES
+                    ('school_legacy', 'Legacy School', 'Minato', 'high_school', 'group_legacy');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id) VALUES
+                    ('st_target', 'Target', 'Legacy Shared Line', 35.0, 139.0, 'line_target'),
+                    ('st_legacy', 'Legacy Candidate', 'Legacy Shared Line', 35.0, 139.0004, NULL);
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_legacy', 'st_legacy', 6, 60, 1, 'Legacy Shared Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Legacy Shared Line".to_string(),
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Legacy Shared Line".to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 1_000.0, 2)
+            .await?;
+
+        assert_eq!(candidate_links.len(), 1);
+        assert_eq!(candidate_links[0].school_id, "school_legacy");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
 async fn line_context_station_lookup_falls_back_to_line_name_when_station_line_id_is_null(
 ) -> anyhow::Result<()> {
     let Ok((admin_database_url, database_url, database_name)) =
