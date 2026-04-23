@@ -345,10 +345,14 @@ async fn line_context_station_lookup_falls_back_to_line_name_when_station_line_i
         client
             .batch_execute(
                 "INSERT INTO lines (line_id, line_name, country_code)
-                 VALUES ('line_target', 'Fallback Line', 'JP');
+                 VALUES
+                    ('line_target', 'Fallback Line', 'JP'),
+                    ('line_other', 'Fallback Line', 'JP');
 
                  INSERT INTO stations (id, name, line_name, latitude, longitude, line_id)
-                 VALUES ('st_line_name_only', 'Fallback Station', 'Fallback Line', 35.0, 139.0, NULL);",
+                 VALUES
+                    ('st_line_name_only', 'Fallback Station', 'Fallback Line', 35.0, 139.0, NULL),
+                    ('st_a_other_line', 'Other Line Station', 'Fallback Line', 35.0, 139.0, 'line_other');",
             )
             .await?;
 

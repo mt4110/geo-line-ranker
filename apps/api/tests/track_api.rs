@@ -1365,6 +1365,9 @@ async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Resu
         client
             .simple_query("DROP TABLE recommendation_traces")
             .await?;
+        client
+            .simple_query("DROP TABLE context_resolution_traces")
+            .await?;
 
         let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
         let state = AppState {

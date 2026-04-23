@@ -504,6 +504,7 @@ fn context_resolution_error_message(
         return context_input
             .station_id
             .as_deref()
+            .map(str::trim)
             .map(|station_id| format!("unknown target_station_id: {station_id}"))
             .unwrap_or(error_message);
     }
@@ -691,7 +692,7 @@ mod tests {
     #[test]
     fn context_resolution_unknown_station_message_uses_normalized_context_station() {
         let input = context::ContextInput {
-            station_id: Some("station_missing".to_string()),
+            station_id: Some("  station_missing  ".to_string()),
             ..Default::default()
         };
 

@@ -239,7 +239,8 @@ async fn fetch_with_manual_redirects<'a>(
             .with_context(|| format!("failed to fetch {}", current_url))?;
 
         if !response.status().is_redirection() {
-            return Ok((response, current_url));
+            let final_url = ensure_allowed_url(response.url().as_str(), request.allowed_domains)?;
+            return Ok((response, final_url));
         }
 
         ensure!(
@@ -462,8 +463,12 @@ fn sanitize_name(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use axum::{response::Redirect, routing::get, Router};
+    use tokio::net::TcpListener;
+
     use super::{
-        ensure_allowed_url, evaluate_robots, infer_staged_extension, is_private_or_local_host,
+        ensure_allowed_url, evaluate_robots, fetch_with_manual_redirects, infer_staged_extension,
+        is_private_or_local_host, HttpFetchRequest,
     };
 
     #[test]
@@ -583,5 +588,45 @@ Allow: /
         );
 
         assert_eq!(extension, "bin");
+    }
+
+    #[tokio::test]
+    async fn manual_redirects_revalidate_final_auto_followed_url() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let redirect_target = format!("http://localhost:{}/final", address.port());
+        let app = Router::new()
+            .route(
+                "/start",
+                get({
+                    let redirect_target = redirect_target.clone();
+                    move || {
+                        let redirect_target = redirect_target.clone();
+                        async move { Redirect::temporary(&redirect_target) }
+                    }
+                }),
+            )
+            .route("/final", get(|| async { "ok" }));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = reqwest::Client::builder().build()?;
+        let request_url = format!("http://127.0.0.1:{}/start", address.port());
+        let allowed_domains = vec![String::from("127.0.0.1")];
+        let request = HttpFetchRequest {
+            source_id: "test-source",
+            logical_name: "redirect-check",
+            url: &request_url,
+            user_agent: "geo-line-ranker-test/0.1",
+            allowed_domains: &allowed_domains,
+        };
+
+        let error = fetch_with_manual_redirects(&client, &request)
+            .await
+            .expect_err("redirect to disallowed auto-followed host should fail");
+        assert!(error.to_string().contains("outside the crawler allowlist"));
+
+        Ok(())
     }
 }

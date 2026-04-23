@@ -55,6 +55,7 @@ const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference valid
 #[derive(Debug, Clone)]
 pub struct PgRepository {
     database_url: String,
+    trace_hash_salt: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -151,8 +152,11 @@ pub struct JobMutationSummary {
 
 impl PgRepository {
     pub fn new(database_url: impl Into<String>) -> Self {
+        let database_url = database_url.into();
         Self {
-            database_url: database_url.into(),
+            trace_hash_salt: std::env::var("GEO_LINE_RANKER_TRACE_HASH_SALT")
+                .unwrap_or_else(|_| "geo-line-ranker-dev-trace-salt".to_string()),
+            database_url,
         }
     }
 
@@ -249,8 +253,12 @@ impl PgRepository {
         context
             .warnings
             .sort_by(|left, right| left.code.cmp(&right.code));
-        self.record_context_trace(&client, request_id, user_id, &context)
-            .await?;
+        if let Err(error) = self
+            .record_context_trace(&client, request_id, user_id, &context)
+            .await
+        {
+            tracing::warn!(%error, request_id, "failed to record context trace");
+        }
         Ok(context)
     }
 
@@ -282,11 +290,19 @@ impl PgRepository {
                     "SELECT id, name, line_name, latitude, longitude
                      FROM stations
                      WHERE ($1::TEXT IS NOT NULL AND line_id = $1)
-                        OR ($2::TEXT IS NOT NULL AND line_name = $2)
+                        OR (
+                            $2::TEXT IS NOT NULL
+                            AND ($1::TEXT IS NULL OR line_id IS NULL)
+                            AND line_name = $2
+                        )
                      ORDER BY
                         CASE
                             WHEN $1::TEXT IS NOT NULL AND line_id = $1 THEN 0
-                            WHEN $2::TEXT IS NOT NULL AND line_name = $2 THEN 1
+                            WHEN
+                                $2::TEXT IS NOT NULL
+                                AND ($1::TEXT IS NULL OR line_id IS NULL)
+                                AND line_name = $2
+                                THEN 1
                             ELSE 2
                         END,
                         id
@@ -873,7 +889,7 @@ impl PgRepository {
     // expose a reusable raw-user-id digest on their own.
     fn hash_user_id(&self, user_id: &str) -> String {
         let mut digest = Sha256::new();
-        digest.update(self.database_url.as_bytes());
+        digest.update(self.trace_hash_salt.as_bytes());
         digest.update(b"\0");
         digest.update(user_id.as_bytes());
         format!("{:x}", digest.finalize())

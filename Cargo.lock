@@ -874,6 +874,7 @@ name = "generic-http"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "reqwest",
  "sha2 0.10.9",
  "tokio",

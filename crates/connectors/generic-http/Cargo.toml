@@ -11,3 +11,5 @@ sha2.workspace = true
 tokio.workspace = true
 url.workspace = true
 
+[dev-dependencies]
+axum.workspace = true
