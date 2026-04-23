@@ -945,6 +945,7 @@ impl PgRepository {
     ) -> Result<Vec<SchoolStationLink>> {
         let client = self.connect().await?;
         let station_id = context.station_id().map(str::to_string);
+        let line_id = context.line.as_ref().and_then(|line| line.line_id.clone());
         let line_name = context.line_name().map(str::to_string);
         let city_name = context.city_name().map(str::to_string);
         let prefecture_name = context.prefecture_name().map(str::to_string);
@@ -964,13 +965,20 @@ impl PgRepository {
                  INNER JOIN schools AS school
                    ON school.id = link.school_id
                  WHERE ($1::TEXT IS NOT NULL AND link.station_id = $1)
-                    OR ($1::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
+                    OR (
+                        $1::TEXT IS NULL
+                        AND (
+                            ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
+                            OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
+                        )
+                    )
                     OR ($3::TEXT IS NOT NULL AND lower(school.area) = lower($3))
                     OR ($4::TEXT IS NOT NULL AND lower(school.area) = lower($4))
                     OR (
-                        $2::TEXT IS NOT NULL
-                        AND
-                        link.line_name = $2
+                        (
+                            ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
+                            OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
+                        )
                         AND link.hop_distance <= $7
                         AND ST_DWithin(
                             candidate_station.geom,
@@ -982,7 +990,13 @@ impl PgRepository {
                  ORDER BY
                     CASE
                         WHEN $1::TEXT IS NOT NULL AND link.station_id = $1 THEN 0
-                        WHEN $1::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2 THEN 1
+                        WHEN
+                            $1::TEXT IS NULL
+                            AND (
+                                ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
+                                OR ($11::TEXT IS NULL AND $2::TEXT IS NOT NULL AND link.line_name = $2)
+                            )
+                            THEN 1
                         WHEN $3::TEXT IS NOT NULL AND lower(school.area) = lower($3) THEN 2
                         WHEN $4::TEXT IS NOT NULL AND lower(school.area) = lower($4) THEN 3
                         ELSE 4
@@ -1003,6 +1017,7 @@ impl PgRepository {
                     &neighbor_distance_cap_meters,
                     &allow_global,
                     &((candidate_limit.clamp(1, 10_000)) as i64),
+                    &line_id,
                 ],
             )
             .await?;
