@@ -411,11 +411,11 @@ FROM (
         COALESCE(source_key, '') AS source_key,
         school_id,
         title,
-        COALESCE(starts_at, '') AS starts_at,
+        starts_at,
         COUNT(*) AS duplicate_count
     FROM events
     WHERE is_active = TRUE
-    GROUP BY source_type, COALESCE(source_key, ''), school_id, title, COALESCE(starts_at, '')
+    GROUP BY source_type, COALESCE(source_key, ''), school_id, title, starts_at
     HAVING COUNT(*) > 1
 ) AS duplicates;
 " "
@@ -424,11 +424,11 @@ SELECT
     COALESCE(source_key, '') AS source_key,
     school_id,
     title,
-    COALESCE(starts_at, '') AS starts_at,
+    starts_at,
     COUNT(*) AS duplicate_count
 FROM events
 WHERE is_active = TRUE
-GROUP BY source_type, COALESCE(source_key, ''), school_id, title, COALESCE(starts_at, '')
+GROUP BY source_type, COALESCE(source_key, ''), school_id, title, starts_at
 HAVING COUNT(*) > 1
 ORDER BY duplicate_count DESC, source_type ASC, source_key ASC, school_id ASC
 LIMIT 20;
