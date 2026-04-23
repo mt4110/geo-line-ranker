@@ -37,6 +37,28 @@ fn discard_staged_fetch(path: &Path) {
     }
 }
 
+fn classify_fetch_error_status(error_message: &str) -> &'static str {
+    const BLOCKED_POLICY_MARKERS: &[&str] = &[
+        "outside the crawler allowlist",
+        "private or local",
+        "unsupported URL scheme",
+        "response content-type",
+        "response Content-Length",
+        "response body",
+        "redirect count exceeded",
+        "max_response_bytes",
+    ];
+
+    if BLOCKED_POLICY_MARKERS
+        .iter()
+        .any(|marker| error_message.contains(marker))
+    {
+        "blocked_policy"
+    } else {
+        "fetch_failed"
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CrawlCommandSummary {
     pub label: String,
@@ -1038,14 +1060,7 @@ pub async fn run_fetch_command(
                 Err(error) => {
                     report_count += 1;
                     let error_message = error.to_string();
-                    let fetch_status = if error_message.contains("outside the crawler allowlist")
-                        || error_message.contains("private or local")
-                        || error_message.contains("unsupported URL scheme")
-                    {
-                        "blocked_policy"
-                    } else {
-                        "fetch_failed"
-                    };
+                    let fetch_status = classify_fetch_error_status(&error_message);
                     record_crawl_fetch_log(
                         &settings.database_url,
                         &CrawlFetchLogEntry {
@@ -3088,10 +3103,10 @@ mod tests {
     use tokio_postgres::NoTls;
 
     use super::{
-        crawl_manifest_dir_once, format_doctor_summary, format_dry_run_summary,
-        format_health_summary, format_scaffold_summary, run_doctor_command, run_dry_run_command,
-        run_fetch_command, run_health_command, run_parse_command, scaffold_domain,
-        ScaffoldDomainRequest,
+        classify_fetch_error_status, crawl_manifest_dir_once, format_doctor_summary,
+        format_dry_run_summary, format_health_summary, format_scaffold_summary, run_doctor_command,
+        run_dry_run_command, run_fetch_command, run_health_command, run_parse_command,
+        scaffold_domain, ScaffoldDomainRequest,
     };
 
     #[derive(Clone)]
@@ -3149,6 +3164,27 @@ mod tests {
             worker_retry_delay_secs: 5,
             worker_max_attempts: 3,
         }
+    }
+
+    #[test]
+    fn classify_fetch_error_status_marks_policy_failures() {
+        for message in [
+            "host localhost is outside the crawler allowlist",
+            "host 127.0.0.1 is private or local and must be explicitly allowed",
+            "unsupported URL scheme ftp for ftp://example.com",
+            "response content-type is missing and default policy denies it",
+            "response content-type text/plain is outside the crawler allowlist",
+            "redirect count exceeded max_redirects 5 for https://example.com",
+            "response Content-Length 1048577 exceeds max_response_bytes 1048576 for https://example.com",
+            "response body 1048577 bytes exceeds max_response_bytes 1048576 for https://example.com",
+        ] {
+            assert_eq!(classify_fetch_error_status(message), "blocked_policy");
+        }
+
+        assert_eq!(
+            classify_fetch_error_status("failed to fetch https://example.com"),
+            "fetch_failed"
+        );
     }
 
     #[tokio::test]
