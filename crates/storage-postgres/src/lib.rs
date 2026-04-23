@@ -8,8 +8,8 @@ use anyhow::{ensure, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use context::{
-    AreaContext, ContextInput, ContextSource, ContextWarning, LineContext, PrivacyLevel,
-    RankingContext, StationContext,
+    AreaContext, AreaContextInput, ContextInput, ContextSource, ContextWarning, LineContext,
+    PrivacyLevel, RankingContext, StationContext,
 };
 use csv::Reader;
 use domain::{
@@ -55,6 +55,23 @@ const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference valid
 #[derive(Debug, Clone)]
 pub struct PgRepository {
     database_url: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct StationAreaColumns {
+    country_code: Option<String>,
+    prefecture_code: Option<String>,
+    prefecture_name: Option<String>,
+    city_code: Option<String>,
+    city_name: Option<String>,
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn matches_ignore_ascii(actual: Option<&str>, expected: &str) -> bool {
+    actual.is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -298,10 +315,17 @@ impl PgRepository {
                     station.latitude,
                     station.longitude,
                     station.line_id,
-                    line.operator_name
+                    line.operator_name,
+                    area.country_code AS station_country_code,
+                    area.prefecture_code AS station_prefecture_code,
+                    area.prefecture_name AS station_prefecture_name,
+                    area.city_code AS station_city_code,
+                    area.city_name AS station_city_name
                  FROM stations AS station
                  LEFT JOIN lines AS line
                    ON line.line_id = station.line_id
+                 LEFT JOIN areas AS area
+                   ON area.area_id = station.area_id
                  WHERE station.id = $1",
                 &[&station_id],
             )
@@ -316,37 +340,27 @@ impl PgRepository {
         };
         let station_line_id = station_row.get::<_, Option<String>>("line_id");
         let station_operator_name = station_row.get::<_, Option<String>>("operator_name");
+        let station_area = StationAreaColumns {
+            country_code: station_row.get("station_country_code"),
+            prefecture_code: station_row.get("station_prefecture_code"),
+            prefecture_name: station_row.get("station_prefecture_name"),
+            city_code: station_row.get("station_city_code"),
+            city_name: station_row.get("station_city_name"),
+        };
 
         let mut area = input.area.clone().map(AreaContext::from);
         let mut warnings = Vec::new();
-        if let Some(area_input) = input.area.as_ref() {
-            if let Some(city_name) = area_input
-                .city_name
-                .as_deref()
-                .filter(|value| !value.is_empty())
-            {
-                let matches = client
-                    .query_one(
-                        "SELECT EXISTS (
-                            SELECT 1
-                            FROM school_station_links AS link
-                            INNER JOIN schools AS school
-                              ON school.id = link.school_id
-                            WHERE link.station_id = $1
-                              AND lower(school.area) = lower($2)
-                         ) AS matches_area",
-                        &[&station.id, &city_name],
-                    )
-                    .await?
-                    .get::<_, bool>("matches_area");
-                if !matches {
-                    warnings.push(ContextWarning {
-                        code: "station_area_conflict".to_string(),
-                        message: "station context was used and conflicting area hint was ignored"
-                            .to_string(),
-                    });
-                    area = None;
-                }
+        if let Some(area_input) = input.area.as_ref().filter(|area| !area.is_empty()) {
+            let matches = self
+                .station_matches_area_hint(client, &station.id, area_input, &station_area)
+                .await?;
+            if !matches {
+                warnings.push(ContextWarning {
+                    code: "station_area_conflict".to_string(),
+                    message: "station context was used and conflicting area hint was ignored"
+                        .to_string(),
+                });
+                area = None;
             }
         }
 
@@ -368,6 +382,73 @@ impl PgRepository {
             gate_policy: "geo_line_default".to_string(),
             warnings,
         })
+    }
+
+    async fn station_matches_area_hint(
+        &self,
+        client: &Client,
+        station_id: &str,
+        area_input: &AreaContextInput,
+        station_area: &StationAreaColumns,
+    ) -> Result<bool> {
+        if let Some(country) = non_empty(area_input.country.as_deref()) {
+            let station_country = non_empty(station_area.country_code.as_deref()).unwrap_or("JP");
+            if !station_country.eq_ignore_ascii_case(country) {
+                return Ok(false);
+            }
+        }
+        if let Some(city_code) = non_empty(area_input.city_code.as_deref()) {
+            if !matches_ignore_ascii(station_area.city_code.as_deref(), city_code) {
+                return Ok(false);
+            }
+        }
+        if let Some(city_name) = non_empty(area_input.city_name.as_deref()) {
+            if let Some(station_city_name) = non_empty(station_area.city_name.as_deref()) {
+                if !station_city_name.eq_ignore_ascii_case(city_name) {
+                    return Ok(false);
+                }
+            } else if !self
+                .station_linked_school_area_matches(client, station_id, city_name)
+                .await?
+            {
+                return Ok(false);
+            }
+        }
+        if let Some(prefecture_code) = non_empty(area_input.prefecture_code.as_deref()) {
+            if !matches_ignore_ascii(station_area.prefecture_code.as_deref(), prefecture_code) {
+                return Ok(false);
+            }
+        }
+        if let Some(prefecture_name) = non_empty(area_input.prefecture_name.as_deref()) {
+            if !matches_ignore_ascii(station_area.prefecture_name.as_deref(), prefecture_name) {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    async fn station_linked_school_area_matches(
+        &self,
+        client: &Client,
+        station_id: &str,
+        city_name: &str,
+    ) -> Result<bool> {
+        client
+            .query_one(
+                "SELECT EXISTS (
+                    SELECT 1
+                    FROM school_station_links AS link
+                    INNER JOIN schools AS school
+                      ON school.id = link.school_id
+                    WHERE link.station_id = $1
+                      AND lower(school.area) = lower($2)
+                 ) AS matches_area",
+                &[&station_id, &city_name],
+            )
+            .await
+            .map(|row| row.get::<_, bool>("matches_area"))
+            .context("failed to validate station area hint")
     }
 
     async fn resolve_line_context(

@@ -77,6 +77,26 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             .warnings
             .iter()
             .any(|warning| warning.code == "station_area_conflict"));
+        let mixed_conflicted_context = repo
+            .resolve_context(
+                "req-context-station-prefecture-conflict",
+                None,
+                &ContextInput {
+                    station_id: Some("st_tamachi".to_string()),
+                    area: Some(AreaContextInput {
+                        city_name: Some("Minato".to_string()),
+                        prefecture_name: Some("Osaka".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert!(mixed_conflicted_context.area.is_none());
+        assert!(mixed_conflicted_context
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "station_area_conflict"));
 
         let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
         tokio::spawn(async move {

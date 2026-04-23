@@ -205,13 +205,14 @@ async fn recommend(
         Ok(context) => context,
         Err(error) => {
             let error_message = error.to_string();
+            let status = context_resolution_error_status(&error);
             let message = request
                 .target_station_id
                 .as_deref()
-                .filter(|_| error_message.contains("unknown station"))
+                .filter(|_| is_unknown_station_error(&error))
                 .map(|station_id| format!("unknown target_station_id: {station_id}"))
                 .unwrap_or(error_message);
-            return error_response(StatusCode::BAD_REQUEST, message);
+            return error_response(status, message);
         }
     };
     let target_station = match state
@@ -506,6 +507,27 @@ fn error_response(status: StatusCode, message: String) -> axum::response::Respon
         .into_response()
 }
 
+fn context_resolution_error_status(error: &anyhow::Error) -> StatusCode {
+    if is_context_resolution_validation_error(error) {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
+fn is_context_resolution_validation_error(error: &anyhow::Error) -> bool {
+    is_unknown_station_error(error)
+        || error
+            .chain()
+            .any(|cause| cause.to_string() == "line context requires line_id or line_name")
+}
+
+fn is_unknown_station_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string().starts_with("unknown station:"))
+}
+
 fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
     serde_json::json!({
         "response_source": input.response_source,
@@ -586,6 +608,27 @@ mod tests {
                 "invalidate_recommendation_cache".to_string(),
                 "sync_candidate_projection".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn context_resolution_errors_split_validation_from_operational_failures() {
+        let unknown_station = anyhow::anyhow!("unknown station: station_missing");
+        assert_eq!(
+            context_resolution_error_status(&unknown_station),
+            StatusCode::BAD_REQUEST
+        );
+
+        let missing_line = anyhow::anyhow!("line context requires line_id or line_name");
+        assert_eq!(
+            context_resolution_error_status(&missing_line),
+            StatusCode::BAD_REQUEST
+        );
+
+        let trace_write_error = anyhow::anyhow!("failed to record context trace");
+        assert_eq!(
+            context_resolution_error_status(&trace_write_error),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 }
