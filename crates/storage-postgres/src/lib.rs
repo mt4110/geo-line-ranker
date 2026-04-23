@@ -461,8 +461,13 @@ impl PgRepository {
         client: &Client,
         input: &ContextInput,
     ) -> Result<RankingContext> {
-        let line = if let Some(line_id) = input.line_id.as_deref().filter(|value| !value.is_empty())
-        {
+        let requested_line_id = input
+            .line_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let line = if let Some(line_id) = requested_line_id.as_deref() {
             client
                 .query_opt(
                     "SELECT line_id, line_name, operator_name
@@ -504,7 +509,7 @@ impl PgRepository {
                 operator_name: row.get("operator_name"),
             })
             .unwrap_or_else(|| LineContext {
-                line_id: input.line_id.clone(),
+                line_id: requested_line_id,
                 line_name: line_name.to_string(),
                 operator_name: None,
             })

@@ -97,6 +97,23 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             .warnings
             .iter()
             .any(|warning| warning.code == "station_area_conflict"));
+        let trimmed_line_context = repo
+            .resolve_context(
+                "req-context-line-trimmed",
+                None,
+                &ContextInput {
+                    line_id: Some("  line_jr_yamanote_line  ".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(
+            trimmed_line_context
+                .line
+                .as_ref()
+                .and_then(|line| line.line_id.as_deref()),
+            Some("line_jr_yamanote_line")
+        );
 
         let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
         tokio::spawn(async move {

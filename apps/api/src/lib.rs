@@ -253,20 +253,24 @@ async fn recommend(
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
             }
         },
-        CandidateBackend::Full(store) if resolved_context.station_id().is_some() => match store
-            .search_candidate_links(
-                &target_station,
-                state.neighbor_distance_cap_meters,
-                state.candidate_retrieval_limit,
-                neighbor_max_hops,
-            )
-            .await
+        CandidateBackend::Full(store)
+            if should_use_opensearch_candidate_retrieval(&resolved_context) =>
         {
-            Ok(candidate_links) => candidate_links,
-            Err(error) => {
-                return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+            match store
+                .search_candidate_links(
+                    &target_station,
+                    state.neighbor_distance_cap_meters,
+                    state.candidate_retrieval_limit,
+                    neighbor_max_hops,
+                )
+                .await
+            {
+                Ok(candidate_links) => candidate_links,
+                Err(error) => {
+                    return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+                }
             }
-        },
+        }
         CandidateBackend::Full(_) => {
             actual_candidate_backend = "postgresql";
             match state
@@ -528,6 +532,10 @@ fn is_unknown_station_error(error: &anyhow::Error) -> bool {
         .any(|cause| cause.to_string().starts_with("unknown station:"))
 }
 
+fn should_use_opensearch_candidate_retrieval(context: &context::RankingContext) -> bool {
+    context.station_id().is_some() && context.area.is_none()
+}
+
 fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
     serde_json::json!({
         "response_source": input.response_source,
@@ -630,5 +638,26 @@ mod tests {
             context_resolution_error_status(&trace_write_error),
             StatusCode::INTERNAL_SERVER_ERROR
         );
+    }
+
+    #[test]
+    fn opensearch_candidate_retrieval_is_only_for_station_without_area_context() {
+        let mut context = context::RankingContext::default_safe();
+        assert!(!should_use_opensearch_candidate_retrieval(&context));
+
+        context.station = Some(context::StationContext {
+            station_id: "st_tamachi".to_string(),
+            station_name: "Tamachi".to_string(),
+        });
+        assert!(should_use_opensearch_candidate_retrieval(&context));
+
+        context.area = Some(context::AreaContext {
+            country: "JP".to_string(),
+            prefecture_code: None,
+            prefecture_name: None,
+            city_code: None,
+            city_name: Some("Minato".to_string()),
+        });
+        assert!(!should_use_opensearch_candidate_retrieval(&context));
     }
 }
