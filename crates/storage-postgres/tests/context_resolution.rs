@@ -346,6 +346,52 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         assert!(empty_profile_context.line.is_none());
         assert!(empty_profile_context.station.is_none());
 
+        client
+            .batch_execute(
+                "INSERT INTO areas (area_id, country_code, area_level)
+                 VALUES ('area_jp_country_only', 'JP', 'country')
+                 ON CONFLICT (area_id) DO UPDATE
+                 SET country_code = EXCLUDED.country_code,
+                     prefecture_code = NULL,
+                     prefecture_name = NULL,
+                     city_code = NULL,
+                     city_name = NULL,
+                     area_level = EXCLUDED.area_level;
+
+                 INSERT INTO user_profile_contexts (
+                    user_id,
+                    area_id,
+                    line_id,
+                    station_id,
+                    context_source,
+                    confidence,
+                    consent_scope
+                ) VALUES ('country-profile-user', 'area_jp_country_only', NULL, NULL, 'user_profile_area', 0.7, 'coarse_area')
+                ON CONFLICT (user_id) DO UPDATE
+                SET area_id = EXCLUDED.area_id,
+                    line_id = EXCLUDED.line_id,
+                    station_id = EXCLUDED.station_id,
+                    context_source = EXCLUDED.context_source,
+                    confidence = EXCLUDED.confidence,
+                    consent_scope = EXCLUDED.consent_scope;",
+            )
+            .await?;
+
+        let country_profile_context = repo
+            .resolve_context(
+                "req-context-country-profile",
+                Some("country-profile-user"),
+                &ContextInput::default(),
+            )
+            .await?;
+        assert_eq!(
+            country_profile_context.context_source,
+            ContextSource::DefaultSafeContext
+        );
+        assert!(country_profile_context.area.is_none());
+        assert!(country_profile_context.line.is_none());
+        assert!(country_profile_context.station.is_none());
+
         let country_only_context = repo
             .resolve_context(
                 "req-context-country-only",

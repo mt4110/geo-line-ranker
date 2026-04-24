@@ -669,15 +669,28 @@ impl PgRepository {
             .await?;
 
         Ok(row.and_then(|row| {
-            let area = row
-                .get::<_, Option<String>>("country_code")
-                .map(|country| AreaContext {
+            let country_code = row.get::<_, Option<String>>("country_code");
+            let prefecture_code = row.get::<_, Option<String>>("prefecture_code");
+            let prefecture_name = row.get::<_, Option<String>>("prefecture_name");
+            let city_code = row.get::<_, Option<String>>("city_code");
+            let city_name = row.get::<_, Option<String>>("city_name");
+            let has_area_signal = [
+                prefecture_code.as_deref(),
+                prefecture_name.as_deref(),
+                city_code.as_deref(),
+                city_name.as_deref(),
+            ]
+            .into_iter()
+            .any(|value| non_empty(value).is_some());
+            let area = country_code.and_then(|country| {
+                has_area_signal.then_some(AreaContext {
                     country,
-                    prefecture_code: row.get("prefecture_code"),
-                    prefecture_name: row.get("prefecture_name"),
-                    city_code: row.get("city_code"),
-                    city_name: row.get("city_name"),
-                });
+                    prefecture_code,
+                    prefecture_name,
+                    city_code,
+                    city_name,
+                })
+            });
             let line = row
                 .get::<_, Option<String>>("line_name")
                 .map(|line_name| LineContext {
@@ -1176,6 +1189,10 @@ impl PgRepository {
                         link.line_name,
                         candidate_station.line_id AS candidate_line_id,
                         candidate_station.geom AS candidate_geom,
+                        ST_Distance(
+                            candidate_station.geom,
+                            ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography
+                        ) AS target_distance_meters,
                         school.area AS school_area,
                         COALESCE(school.prefecture_name, school_area.prefecture_name) AS school_prefecture_name
                     FROM school_station_links AS link
@@ -1305,6 +1322,18 @@ impl PgRepository {
                         WHEN link.is_neighbor_area THEN 5
                         ELSE 6
                     END,
+                    CASE
+                        WHEN NOT (
+                            link.is_strict_station
+                            OR link.is_same_line
+                            OR link.is_same_city
+                            OR link.is_same_prefecture
+                            OR link.is_neighbor_area
+                            OR link.is_near_same_line
+                        )
+                            THEN link.target_distance_meters
+                        ELSE 0.0
+                    END ASC,
                     link.distance_meters ASC,
                     link.walking_minutes ASC,
                     link.school_id ASC,

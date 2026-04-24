@@ -570,16 +570,19 @@ async fn context_candidate_links_include_safe_global_when_scoped_filters_are_emp
         client
             .batch_execute(
                 "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id) VALUES
-                    ('school_global', 'Global School', 'Minato', 'Tokyo', 'high_school', 'group_global');
+                    ('school_near_global', 'Near Global School', 'Minato', 'Tokyo', 'high_school', 'group_near_global'),
+                    ('school_far_short_walk', 'Far Short Walk School', 'Naha', 'Okinawa', 'high_school', 'group_far_short_walk');
 
                  INSERT INTO stations (id, name, line_name, latitude, longitude) VALUES
                     ('st_target', 'Target', 'Target Line', 35.0, 139.0),
-                    ('st_global', 'Global Station', 'Global Line', 35.1, 139.1);
+                    ('st_near_global', 'Near Global Station', 'Global Line', 35.0005, 139.0005),
+                    ('st_far_short_walk', 'Far Short Walk Station', 'Remote Line', 26.2124, 127.6792);
 
                  INSERT INTO school_station_links
                     (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
                  VALUES
-                    ('school_global', 'st_global', 6, 60, 0, 'Global Line');",
+                    ('school_near_global', 'st_near_global', 20, 900, 0, 'Global Line'),
+                    ('school_far_short_walk', 'st_far_short_walk', 1, 20, 0, 'Remote Line');",
             )
             .await?;
 
@@ -610,11 +613,11 @@ async fn context_candidate_links_include_safe_global_when_scoped_filters_are_emp
         };
 
         let candidate_links = repo
-            .load_context_candidate_links(&target_station, &context, 10, 1_000.0, 1)
+            .load_context_candidate_links(&target_station, &context, 1, 1_000.0, 1)
             .await?;
 
         assert_eq!(candidate_links.len(), 1);
-        assert_eq!(candidate_links[0].school_id, "school_global");
+        assert_eq!(candidate_links[0].school_id, "school_near_global");
 
         Ok(())
     }
