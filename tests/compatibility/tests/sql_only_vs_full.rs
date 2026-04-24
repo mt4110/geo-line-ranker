@@ -50,6 +50,7 @@ fn query(target_station_id: &str) -> RankingQuery {
         user_id: None,
         placement: PlacementKind::Search,
         debug: false,
+        context: None,
     }
 }
 
@@ -89,10 +90,16 @@ async fn assert_sql_only_and_full_match(target_station_id: &str) -> Result<()> {
             &target_station,
             profiles.fallback.neighbor_distance_cap_meters,
             256,
-            profiles.placement(PlacementKind::Search).neighbor_max_hops,
         )
         .await?;
-    let sql_only_result = engine.recommend(&dataset, &query(target_station_id))?;
+    let mut sql_dataset = dataset.clone();
+    sql_dataset.school_station_links = collect_sql_only_candidate_links(
+        &dataset,
+        &target_station,
+        profiles.fallback.neighbor_distance_cap_meters,
+        profiles.placement(PlacementKind::Search).neighbor_max_hops,
+    );
+    let sql_only_result = engine.recommend(&sql_dataset, &query(target_station_id))?;
 
     let mut full_dataset = dataset.clone();
     full_dataset.school_station_links = candidate_links;
@@ -100,6 +107,36 @@ async fn assert_sql_only_and_full_match(target_station_id: &str) -> Result<()> {
 
     assert_eq!(full_mode_result, sql_only_result);
     Ok(())
+}
+
+fn collect_sql_only_candidate_links(
+    dataset: &RankingDataset,
+    target_station: &Station,
+    _neighbor_distance_cap_meters: f64,
+    _neighbor_max_hops: u8,
+) -> Vec<domain::SchoolStationLink> {
+    let mut links = dataset
+        .school_station_links
+        .iter()
+        .filter(|link| {
+            if link.station_id == target_station.id {
+                return true;
+            }
+            link.line_name == target_station.line_name
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    links.sort_by(|left, right| {
+        let left_is_not_direct = left.station_id != target_station.id;
+        let right_is_not_direct = right.station_id != target_station.id;
+        left_is_not_direct
+            .cmp(&right_is_not_direct)
+            .then_with(|| left.distance_meters.cmp(&right.distance_meters))
+            .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
+            .then_with(|| left.school_id.cmp(&right.school_id))
+            .then_with(|| left.station_id.cmp(&right.station_id))
+    });
+    links
 }
 
 fn build_projection_documents(dataset: &RankingDataset) -> Vec<ProjectionDocument> {
@@ -238,14 +275,21 @@ async fn search(
         .iter()
         .filter(|document| {
             document.station_id == query.target_station_id
-                || (document.line_name == query.line_name
-                    && document.hop_distance <= query.neighbor_max_hops
-                    && haversine_meters(
-                        query.target_lat,
-                        query.target_lon,
-                        document.station_location.lat,
-                        document.station_location.lon,
-                    ) <= query.distance_cap_meters)
+                || document.line_name == query.line_name
+                || query
+                    .neighbor_distance_meters
+                    .zip(query.target_latitude)
+                    .zip(query.target_longitude)
+                    .is_some_and(|((distance_cap, lat), lon)| {
+                        document.station_id != query.target_station_id
+                            && document.line_name != query.line_name
+                            && haversine_meters(
+                                lat,
+                                lon,
+                                document.station_location.lat,
+                                document.station_location.lon,
+                            ) <= distance_cap
+                    })
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -283,10 +327,9 @@ struct ParsedMockSearchQuery<'a> {
     size: usize,
     target_station_id: &'a str,
     line_name: &'a str,
-    neighbor_max_hops: u8,
-    distance_cap_meters: f64,
-    target_lat: f64,
-    target_lon: f64,
+    neighbor_distance_meters: Option<f64>,
+    target_latitude: Option<f64>,
+    target_longitude: Option<f64>,
 }
 
 fn parse_mock_search_query<'a>(
@@ -314,44 +357,24 @@ fn parse_mock_search_query<'a>(
         "/query/bool/should/1/constant_score/filter/bool/filter/0/term/line_name/value",
         "line name",
     )?;
-    let neighbor_max_hops = body
-        .pointer("/query/bool/should/1/constant_score/filter/bool/filter/1/range/hop_distance/lte")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| {
-            "missing or invalid neighbor hop cap at /query/bool/should/1/constant_score/filter/bool/filter/1/range/hop_distance/lte".to_string()
-        })
-        .and_then(|raw| {
-            u8::try_from(raw).map_err(|_| "neighbor hop cap exceeds u8".to_string())
-        })?;
-    let distance_raw = required_str_at(
-        body,
-        "/query/bool/should/1/constant_score/filter/bool/filter/2/geo_distance/distance",
-        "distance cap",
-    )?;
-    let distance_cap_meters = distance_raw
-        .strip_suffix('m')
-        .ok_or_else(|| "expected distance cap to end with 'm'".to_string())?
-        .parse::<f64>()
-        .map_err(|_| "expected distance cap to be a numeric meter value".to_string())?;
-    let target_lat = required_f64_at(
-        body,
-        "/query/bool/should/1/constant_score/filter/bool/filter/2/geo_distance/station_location/lat",
-        "target latitude",
-    )?;
-    let target_lon = required_f64_at(
-        body,
-        "/query/bool/should/1/constant_score/filter/bool/filter/2/geo_distance/station_location/lon",
-        "target longitude",
-    )?;
-
+    let neighbor_distance_meters = body
+        .pointer("/query/bool/should/2/constant_score/filter/bool/filter/0/geo_distance/distance")
+        .and_then(Value::as_str)
+        .and_then(|value| value.strip_suffix('m'))
+        .and_then(|value| value.parse::<f64>().ok());
+    let target_latitude = body
+        .pointer("/query/bool/should/2/constant_score/filter/bool/filter/0/geo_distance/station_location/lat")
+        .and_then(Value::as_f64);
+    let target_longitude = body
+        .pointer("/query/bool/should/2/constant_score/filter/bool/filter/0/geo_distance/station_location/lon")
+        .and_then(Value::as_f64);
     Ok(ParsedMockSearchQuery {
         size,
         target_station_id,
         line_name,
-        neighbor_max_hops,
-        distance_cap_meters,
-        target_lat,
-        target_lon,
+        neighbor_distance_meters,
+        target_latitude,
+        target_longitude,
     })
 }
 
@@ -404,16 +427,6 @@ fn required_str_at<'a>(
         .ok_or_else(|| format!("missing or invalid {field_name} at {pointer}"))
 }
 
-fn required_f64_at(
-    body: &Value,
-    pointer: &'static str,
-    field_name: &'static str,
-) -> std::result::Result<f64, String> {
-    body.pointer(pointer)
-        .and_then(Value::as_f64)
-        .ok_or_else(|| format!("missing or invalid {field_name} at {pointer}"))
-}
-
 #[test]
 fn mock_search_parser_rejects_missing_required_fields() {
     let error = parse_mock_search_query(&json!({ "size": 3 }), 10).expect_err("missing sort");
@@ -437,11 +450,12 @@ fn mock_search_parser_rejects_missing_required_fields() {
 }
 
 #[tokio::test]
-async fn full_mode_candidate_retrieval_filters_out_of_hop_neighbors_before_limit() -> Result<()> {
+async fn full_mode_candidate_retrieval_includes_same_line_candidates_before_limit() -> Result<()> {
     let target_station = Station {
         id: "st_target".to_string(),
         name: "Target".to_string(),
         line_name: "JR Yamanote Line".to_string(),
+        line_id: None,
         latitude: 35.0,
         longitude: 139.0,
     };
@@ -460,12 +474,17 @@ async fn full_mode_candidate_retrieval_filters_out_of_hop_neighbors_before_limit
     })?;
 
     let candidate_links = store
-        .search_candidate_links(&target_station, 500.0, 2, 1)
+        .search_candidate_links(&target_station, 500.0, 2)
         .await?;
 
-    assert_eq!(candidate_links.len(), 1);
-    assert_eq!(candidate_links[0].school_id, "school_in_hop");
-    assert_eq!(candidate_links[0].hop_distance, 1);
+    assert_eq!(candidate_links.len(), 2);
+    assert_eq!(
+        candidate_links
+            .iter()
+            .map(|link| link.school_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["school_far_a", "school_far_b"]
+    );
     Ok(())
 }
 
@@ -475,6 +494,7 @@ async fn full_mode_candidate_retrieval_keeps_sql_only_ordering_for_limit() -> Re
         id: "st_target".to_string(),
         name: "Target".to_string(),
         line_name: "JR Yamanote Line".to_string(),
+        line_id: None,
         latitude: 35.0,
         longitude: 139.0,
     };
@@ -492,12 +512,81 @@ async fn full_mode_candidate_retrieval_keeps_sql_only_ordering_for_limit() -> Re
     })?;
 
     let candidate_links = store
-        .search_candidate_links(&target_station, 500.0, 1, 1)
+        .search_candidate_links(&target_station, 500.0, 1)
         .await?;
 
     assert_eq!(candidate_links.len(), 1);
     assert_eq!(candidate_links[0].school_id, "school_direct");
     assert_eq!(candidate_links[0].station_id, "st_target");
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_mode_candidate_retrieval_includes_nearby_off_line_candidates() -> Result<()> {
+    let target_station = Station {
+        id: "st_target".to_string(),
+        name: "Target".to_string(),
+        line_name: "JR Yamanote Line".to_string(),
+        line_id: None,
+        latitude: 35.0,
+        longitude: 139.0,
+    };
+    let documents = vec![
+        ProjectionDocument {
+            document_id: "school_neighbor:st_neighbor".to_string(),
+            school_id: "school_neighbor".to_string(),
+            school_name: "school_neighbor name".to_string(),
+            school_area: "Neighbor Ward".to_string(),
+            school_type: "high_school".to_string(),
+            station_id: "st_neighbor".to_string(),
+            station_name: "st_neighbor name".to_string(),
+            line_name: "Other Line".to_string(),
+            station_location: storage_opensearch::ProjectionGeoPoint {
+                lat: 35.0005,
+                lon: 139.0005,
+            },
+            walking_minutes: 8,
+            distance_meters: 650,
+            hop_distance: 0,
+            open_day_count: 0,
+            popularity_score: 0.0,
+        },
+        ProjectionDocument {
+            document_id: "school_far_other:st_far_other".to_string(),
+            school_id: "school_far_other".to_string(),
+            school_name: "school_far_other name".to_string(),
+            school_area: "Far Ward".to_string(),
+            school_type: "high_school".to_string(),
+            station_id: "st_far_other".to_string(),
+            station_name: "st_far_other name".to_string(),
+            line_name: "Far Line".to_string(),
+            station_location: storage_opensearch::ProjectionGeoPoint {
+                lat: 35.05,
+                lon: 139.05,
+            },
+            walking_minutes: 20,
+            distance_meters: 10_000,
+            hop_distance: 0,
+            open_day_count: 0,
+            popularity_score: 0.0,
+        },
+    ];
+    let base_url = spawn_mock_opensearch(documents).await?;
+    let store = OpenSearchStore::new(&OpenSearchSettings {
+        url: base_url,
+        index_name: TEST_INDEX_NAME.to_string(),
+        username: None,
+        password: None,
+        request_timeout_secs: 5,
+    })?;
+
+    let candidate_links = store
+        .search_candidate_links(&target_station, 2_500.0, 10)
+        .await?;
+
+    assert_eq!(candidate_links.len(), 1);
+    assert_eq!(candidate_links[0].school_id, "school_neighbor");
+
     Ok(())
 }
 

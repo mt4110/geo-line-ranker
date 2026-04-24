@@ -15,6 +15,7 @@ use axum::{
 };
 use cache::RecommendationCache;
 use config::CandidateRetrievalMode;
+use domain::RankingQuery;
 use observability::{cache_hit, cache_miss, cache_write, candidate_retrieval_completed};
 use ranking::{RankingEngine, RankingError};
 use storage::{JobType, NewJob, RecommendationRepository, RecommendationTrace};
@@ -32,13 +33,6 @@ pub enum CandidateBackend {
 }
 
 impl CandidateBackend {
-    fn backend_name(&self) -> &'static str {
-        match self {
-            Self::SqlOnly => "postgresql",
-            Self::Full(_) => "opensearch",
-        }
-    }
-
     async fn ready_check(&self) -> Result<String> {
         match self {
             Self::SqlOnly => Ok("disabled".to_string()),
@@ -135,16 +129,43 @@ async fn recommend(
     State(state): State<AppState>,
     Json(request): Json<RecommendationRequest>,
 ) -> impl IntoResponse {
-    let query: domain::RankingQuery = request.clone().into();
+    let request_id = match resolve_request_id(request.request_id.as_deref()) {
+        Ok(request_id) => request_id,
+        Err(message) => return error_response(StatusCode::BAD_REQUEST, message.to_string()),
+    };
+
+    let context_input = request.context_input();
+    let resolved_context = match state
+        .repository
+        .resolve_context(&request_id, request.user_id.as_deref(), &context_input)
+        .await
+    {
+        Ok(context) => context,
+        Err(error) => {
+            let status = context_resolution_error_status(&error);
+            let message = context_resolution_error_message(&error, &context_input);
+            return error_response(status, message);
+        }
+    };
+    let target_station = match state
+        .repository
+        .load_station_for_context(&resolved_context)
+        .await
+    {
+        Ok(Some(station)) => station,
+        Ok(None) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "context could not be mapped to a station".to_string(),
+            );
+        }
+        Err(error) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+        }
+    };
+    let query = request.with_resolved_context(target_station.id.clone(), resolved_context.clone());
     let cache_key = if request.cacheable() {
-        match state.cache.build_key(
-            &state.profile_version,
-            &state.algorithm_version,
-            state.candidate_retrieval_mode.as_str(),
-            state.candidate_retrieval_limit,
-            state.neighbor_distance_cap_meters,
-            &request,
-        ) {
+        match build_recommendation_cache_key(&state, &query) {
             Ok(key) => Some(key),
             Err(error) => {
                 tracing::warn!(%error, "failed to build recommendation cache key");
@@ -161,7 +182,10 @@ async fn recommend(
             .get_json::<RecommendationResponse>(cache_key)
             .await
         {
-            Ok(Some(response)) => {
+            Ok(Some(mut response)) => {
+                let actual_candidate_backend =
+                    actual_candidate_backend_name(&state.candidate_backend, &resolved_context);
+                response.request_id = Some(request_id.clone());
                 cache_hit(cache_key);
                 record_trace_best_effort(
                     &state.repository,
@@ -171,10 +195,10 @@ async fn recommend(
                     build_trace_payload(TracePayloadInput {
                         response_source: "cache",
                         mode: state.candidate_retrieval_mode,
-                        backend: state.candidate_backend.backend_name(),
+                        backend: actual_candidate_backend,
                         candidate_count: 0,
                         duration_ms: 0,
-                        target_station_id: &request.target_station_id,
+                        target_station_id: &target_station.id,
                         candidate_limit: state.candidate_retrieval_limit,
                         neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
                     }),
@@ -187,31 +211,19 @@ async fn recommend(
         }
     }
 
-    let target_station = match state
-        .repository
-        .load_station(&query.target_station_id)
-        .await
-    {
-        Ok(Some(station)) => station,
-        Ok(None) => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                format!("unknown target_station_id: {}", query.target_station_id),
-            );
-        }
-        Err(error) => {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-        }
-    };
-
     let retrieval_started = Instant::now();
     let neighbor_max_hops = state.engine.neighbor_max_hops(query.placement);
+    let min_candidate_count = state.engine.minimum_candidate_count();
+    let actual_candidate_backend =
+        actual_candidate_backend_name(&state.candidate_backend, &resolved_context);
     let candidate_links = match &state.candidate_backend {
         CandidateBackend::SqlOnly => match state
             .repository
-            .load_candidate_links(
+            .load_context_candidate_links(
                 &target_station,
+                &resolved_context,
                 state.candidate_retrieval_limit,
+                min_candidate_count,
                 state.neighbor_distance_cap_meters,
                 neighbor_max_hops,
             )
@@ -222,11 +234,51 @@ async fn recommend(
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
             }
         },
-        CandidateBackend::Full(store) => match store
-            .search_candidate_links(
+        CandidateBackend::Full(store)
+            if should_use_opensearch_candidate_retrieval(&resolved_context) =>
+        {
+            match store
+                .search_candidate_links(
+                    &target_station,
+                    state.neighbor_distance_cap_meters,
+                    state.candidate_retrieval_limit,
+                )
+                .await
+            {
+                Ok(candidate_links) if candidate_links.len() < min_candidate_count => match state
+                    .repository
+                    .load_context_candidate_links(
+                        &target_station,
+                        &resolved_context,
+                        state.candidate_retrieval_limit,
+                        min_candidate_count,
+                        state.neighbor_distance_cap_meters,
+                        neighbor_max_hops,
+                    )
+                    .await
+                {
+                    Ok(candidate_links) => candidate_links,
+                    Err(error) => {
+                        return error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            error.to_string(),
+                        );
+                    }
+                },
+                Ok(candidate_links) => candidate_links,
+                Err(error) => {
+                    return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+                }
+            }
+        }
+        CandidateBackend::Full(_) => match state
+            .repository
+            .load_context_candidate_links(
                 &target_station,
-                state.neighbor_distance_cap_meters,
+                &resolved_context,
                 state.candidate_retrieval_limit,
+                min_candidate_count,
+                state.neighbor_distance_cap_meters,
                 neighbor_max_hops,
             )
             .await
@@ -240,7 +292,7 @@ async fn recommend(
     let retrieval_duration_ms = retrieval_started.elapsed().as_millis();
     candidate_retrieval_completed(
         state.candidate_retrieval_mode.as_str(),
-        state.candidate_backend.backend_name(),
+        actual_candidate_backend,
         candidate_links.len(),
         retrieval_duration_ms,
     );
@@ -266,7 +318,8 @@ async fn recommend(
         }
     };
 
-    let response: RecommendationResponse = result.into();
+    let mut response: RecommendationResponse = result.into();
+    response.request_id = Some(request_id.clone());
     record_trace_best_effort(
         &state.repository,
         &request,
@@ -275,7 +328,7 @@ async fn recommend(
         build_trace_payload(TracePayloadInput {
             response_source: "fresh",
             mode: state.candidate_retrieval_mode,
-            backend: state.candidate_backend.backend_name(),
+            backend: actual_candidate_backend,
             candidate_count: candidate_links.len(),
             duration_ms: retrieval_duration_ms,
             target_station_id: &target_station.id,
@@ -286,7 +339,9 @@ async fn recommend(
     .await;
 
     if let Some(cache_key) = cache_key {
-        if let Err(error) = state.cache.set_json(&cache_key, &response).await {
+        let mut cached_response = response.clone();
+        cached_response.request_id = None;
+        if let Err(error) = state.cache.set_json(&cache_key, &cached_response).await {
             tracing::warn!(cache_key, %error, "failed to write recommendation cache");
         } else {
             cache_write(&cache_key);
@@ -454,6 +509,88 @@ fn error_response(status: StatusCode, message: String) -> axum::response::Respon
         .into_response()
 }
 
+fn context_resolution_error_status(error: &anyhow::Error) -> StatusCode {
+    if is_context_resolution_validation_error(error) {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
+fn context_resolution_error_message(
+    error: &anyhow::Error,
+    context_input: &context::ContextInput,
+) -> String {
+    let error_message = error.to_string();
+    if is_blank_station_error(error) {
+        return "target_station_id or context.station_id must not be blank".to_string();
+    }
+    if is_unknown_station_error(error) {
+        return context_input
+            .station_id
+            .as_deref()
+            .map(str::trim)
+            .map(|station_id| format!("unknown target_station_id: {station_id}"))
+            .unwrap_or(error_message);
+    }
+    error_message
+}
+
+fn is_context_resolution_validation_error(error: &anyhow::Error) -> bool {
+    is_unknown_station_error(error)
+        || is_unknown_line_error(error)
+        || is_blank_station_error(error)
+        || error
+            .chain()
+            .any(|cause| cause.to_string() == "line context requires line_id or line_name")
+}
+
+fn is_blank_station_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string() == "station_id must not be blank")
+}
+
+fn is_unknown_station_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string().starts_with("unknown station:"))
+}
+
+fn is_unknown_line_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string().starts_with("unknown line_id:"))
+}
+
+fn actual_candidate_backend_name(
+    candidate_backend: &CandidateBackend,
+    context: &context::RankingContext,
+) -> &'static str {
+    match candidate_backend {
+        CandidateBackend::SqlOnly => "postgresql",
+        CandidateBackend::Full(_) if should_use_opensearch_candidate_retrieval(context) => {
+            "opensearch"
+        }
+        CandidateBackend::Full(_) => "postgresql",
+    }
+}
+
+fn should_use_opensearch_candidate_retrieval(context: &context::RankingContext) -> bool {
+    context.station_id().is_some() && context.area.is_none()
+}
+
+fn build_recommendation_cache_key(state: &AppState, query: &RankingQuery) -> Result<String> {
+    state.cache.build_key(
+        &state.profile_version,
+        &state.algorithm_version,
+        state.candidate_retrieval_mode.as_str(),
+        state.candidate_retrieval_limit,
+        state.neighbor_distance_cap_meters,
+        query,
+    )
+}
+
 fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
     serde_json::json!({
         "response_source": input.response_source,
@@ -469,12 +606,36 @@ fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
     })
 }
 
+fn resolve_request_id(request_id: Option<&str>) -> Result<String, &'static str> {
+    const MAX_REQUEST_ID_LEN: usize = 128;
+
+    match request_id.map(str::trim) {
+        None => Ok(generate_request_id()),
+        Some("") => Err("request_id must not be empty when provided"),
+        Some(request_id) if request_id.len() > MAX_REQUEST_ID_LEN => {
+            Err("request_id must be at most 128 characters")
+        }
+        Some(request_id)
+            if !request_id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')) =>
+        {
+            Err("request_id may contain only ASCII letters, digits, '_' or '-'")
+        }
+        Some(request_id) => Ok(request_id.to_string()),
+    }
+}
+
+fn generate_request_id() -> String {
+    format!("req_{}", uuid::Uuid::new_v4().simple())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use config::RankingProfiles;
-    use domain::{EventKind, UserEvent};
+    use config::{OpenSearchSettings, RankingProfiles};
+    use domain::{EventKind, PlacementKind, UserEvent};
 
     use super::*;
 
@@ -530,6 +691,187 @@ mod tests {
                 "invalidate_recommendation_cache".to_string(),
                 "sync_candidate_projection".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn context_resolution_errors_split_validation_from_operational_failures() {
+        let unknown_station = anyhow::anyhow!("unknown station: station_missing");
+        assert_eq!(
+            context_resolution_error_status(&unknown_station),
+            StatusCode::BAD_REQUEST
+        );
+
+        let unknown_line = anyhow::anyhow!("unknown line_id: line_missing");
+        assert_eq!(
+            context_resolution_error_status(&unknown_line),
+            StatusCode::BAD_REQUEST
+        );
+
+        let missing_line = anyhow::anyhow!("line context requires line_id or line_name");
+        assert_eq!(
+            context_resolution_error_status(&missing_line),
+            StatusCode::BAD_REQUEST
+        );
+
+        let blank_station = anyhow::anyhow!("station_id must not be blank");
+        assert_eq!(
+            context_resolution_error_status(&blank_station),
+            StatusCode::BAD_REQUEST
+        );
+
+        let trace_write_error = anyhow::anyhow!("failed to record context trace");
+        assert_eq!(
+            context_resolution_error_status(&trace_write_error),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn context_resolution_unknown_station_message_uses_normalized_context_station() {
+        let input = context::ContextInput {
+            station_id: Some("  station_missing  ".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            context_resolution_error_message(
+                &anyhow::anyhow!("unknown station: station_missing"),
+                &input
+            ),
+            "unknown target_station_id: station_missing"
+        );
+    }
+
+    #[test]
+    fn context_resolution_blank_station_message_names_request_fields() {
+        let input = context::ContextInput {
+            station_id: Some("".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            context_resolution_error_message(
+                &anyhow::anyhow!("station_id must not be blank"),
+                &input
+            ),
+            "target_station_id or context.station_id must not be blank"
+        );
+    }
+
+    #[test]
+    fn opensearch_candidate_retrieval_is_only_for_station_without_area_context() {
+        let mut context = context::RankingContext::default_safe();
+        assert!(!should_use_opensearch_candidate_retrieval(&context));
+
+        context.station = Some(context::StationContext {
+            station_id: "st_tamachi".to_string(),
+            station_name: "Tamachi".to_string(),
+        });
+        assert!(should_use_opensearch_candidate_retrieval(&context));
+
+        context.area = Some(context::AreaContext {
+            country: "JP".to_string(),
+            prefecture_code: None,
+            prefecture_name: None,
+            city_code: None,
+            city_name: Some("Minato".to_string()),
+        });
+        assert!(!should_use_opensearch_candidate_retrieval(&context));
+    }
+
+    #[test]
+    fn actual_candidate_backend_uses_postgresql_when_context_disables_opensearch() {
+        let settings = OpenSearchSettings {
+            url: "http://127.0.0.1:9200".to_string(),
+            index_name: "schools".to_string(),
+            username: None,
+            password: None,
+            request_timeout_secs: 1,
+        };
+        let backend =
+            CandidateBackend::Full(OpenSearchStore::new(&settings).expect("opensearch backend"));
+        let mut context = context::RankingContext::default_safe();
+        assert_eq!(
+            actual_candidate_backend_name(&backend, &context),
+            "postgresql"
+        );
+
+        context.station = Some(context::StationContext {
+            station_id: "st_tamachi".to_string(),
+            station_name: "Tamachi".to_string(),
+        });
+        assert_eq!(
+            actual_candidate_backend_name(&backend, &context),
+            "opensearch"
+        );
+    }
+
+    #[test]
+    fn resolved_context_changes_recommendation_cache_key() {
+        let state = test_state(false, CandidateRetrievalMode::SqlOnly);
+        let request = RecommendationRequest {
+            request_id: Some("req-client-supplied".to_string()),
+            target_station_id: None,
+            context: None,
+            limit: Some(3),
+            user_id: Some("demo-user".to_string()),
+            placement: PlacementKind::Search,
+            debug: false,
+        };
+        let minato_query =
+            request.with_resolved_context("st_tamachi".to_string(), area_context("Minato"));
+        let shibuya_query =
+            request.with_resolved_context("st_tamachi".to_string(), area_context("Shibuya"));
+
+        let minato_key =
+            build_recommendation_cache_key(&state, &minato_query).expect("minato cache key");
+        let shibuya_key =
+            build_recommendation_cache_key(&state, &shibuya_query).expect("shibuya cache key");
+
+        assert_ne!(minato_key, shibuya_key);
+    }
+
+    fn area_context(city_name: &str) -> context::RankingContext {
+        context::RankingContext {
+            context_source: context::ContextSource::UserProfileArea,
+            confidence: 0.8,
+            area: Some(context::AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: Some("Tokyo".to_string()),
+                city_code: None,
+                city_name: Some(city_name.to_string()),
+            }),
+            line: None,
+            station: None,
+            privacy_level: context::PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn resolve_request_id_accepts_trimmed_client_value() {
+        let request_id = resolve_request_id(Some("  req_client_123  ")).expect("request id");
+        assert_eq!(request_id, "req_client_123");
+    }
+
+    #[test]
+    fn resolve_request_id_rejects_invalid_characters() {
+        assert_eq!(
+            resolve_request_id(Some("req:bad")).unwrap_err(),
+            "request_id may contain only ASCII letters, digits, '_' or '-'"
+        );
+    }
+
+    #[test]
+    fn resolve_request_id_rejects_oversized_values() {
+        let oversized = "r".repeat(129);
+        assert_eq!(
+            resolve_request_id(Some(&oversized)).unwrap_err(),
+            "request_id must be at most 128 characters"
         );
     }
 }

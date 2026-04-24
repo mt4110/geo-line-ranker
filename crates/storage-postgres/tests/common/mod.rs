@@ -1,9 +1,13 @@
 use std::{
     path::PathBuf,
+    sync::OnceLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use tokio::time::{sleep, Duration};
 use tokio_postgres::NoTls;
+
+static DATABASE_DDL_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 pub fn default_database_url() -> String {
     std::env::var("DATABASE_URL").unwrap_or_else(|_| {
@@ -27,9 +31,13 @@ fn unique_database_name(prefix: &str) -> String {
 }
 
 pub async fn create_empty_database(prefix: &str) -> anyhow::Result<(String, String, String)> {
+    let _ddl_guard = DATABASE_DDL_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let admin_database_url = database_url_with_name(&default_database_url(), "postgres");
     let database_name = unique_database_name(prefix);
-    let (client, connection) = tokio_postgres::connect(&admin_database_url, NoTls).await?;
+    let (client, connection) = connect_with_recovery_retry(&admin_database_url).await?;
     tokio::spawn(async move {
         let _ = connection.await;
     });
@@ -45,7 +53,11 @@ pub async fn create_empty_database(prefix: &str) -> anyhow::Result<(String, Stri
 }
 
 pub async fn drop_database(admin_database_url: &str, database_name: &str) -> anyhow::Result<()> {
-    let (client, connection) = tokio_postgres::connect(admin_database_url, NoTls).await?;
+    let _ddl_guard = DATABASE_DDL_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let (client, connection) = connect_with_recovery_retry(admin_database_url).await?;
     tokio::spawn(async move {
         let _ = connection.await;
     });
@@ -66,4 +78,30 @@ pub async fn drop_database(admin_database_url: &str, database_name: &str) -> any
 
 pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+async fn connect_with_recovery_retry(
+    database_url: &str,
+) -> anyhow::Result<(
+    tokio_postgres::Client,
+    tokio_postgres::Connection<tokio_postgres::Socket, tokio_postgres::tls::NoTlsStream>,
+)> {
+    const MAX_ATTEMPTS: usize = 20;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match tokio_postgres::connect(database_url, NoTls).await {
+            Ok(connection) => return Ok(connection),
+            Err(error)
+                if attempt < MAX_ATTEMPTS
+                    && error
+                        .to_string()
+                        .contains("database system is in recovery mode") =>
+            {
+                sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    unreachable!("recovery retry loop returns on success or final error")
 }

@@ -1,0 +1,9 @@
+{
+  "request_id": "req_school_event_event_placement",
+  "context": {
+    "station_id": "st_tamachi"
+  },
+  "placement": "detail",
+  "limit": 5,
+  "debug": false
+}

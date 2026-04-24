@@ -1,12 +1,19 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{ensure, Context, Result};
-use reqwest::header::USER_AGENT;
+use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION, USER_AGENT};
 use sha2::{Digest, Sha256};
 use url::Url;
+
+const DEFAULT_MAX_REDIRECTS: usize = 3;
+const DEFAULT_MAX_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
+const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 20;
+const DEFAULT_ALLOWED_CONTENT_TYPES: [&str; 4] =
+    ["text/html", "text/csv", "application/json", "text/json"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpFetchRequest<'a> {
@@ -14,6 +21,7 @@ pub struct HttpFetchRequest<'a> {
     pub logical_name: &'a str,
     pub url: &'a str,
     pub user_agent: &'a str,
+    pub allowed_domains: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +35,27 @@ pub struct PreparedHttpFetch {
     pub size_bytes: u64,
     pub status_code: u16,
     pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HttpFetchClient {
+    inner: reqwest::Client,
+}
+
+impl HttpFetchClient {
+    pub fn from_builder(builder: reqwest::ClientBuilder) -> Result<Self> {
+        let inner = builder
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .context("failed to build manual redirect HTTP client")?;
+        Ok(Self { inner })
+    }
+
+    pub fn new() -> Result<Self> {
+        Self::from_builder(
+            reqwest::Client::builder().timeout(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS)),
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,31 +83,36 @@ pub fn ensure_allowed_url(raw_url: &str, allowed_domains: &[String]) -> Result<U
         host == domain || host.ends_with(&format!(".{domain}"))
     });
     ensure!(is_allowed, "host {} is outside the crawler allowlist", host);
+    ensure!(
+        !is_private_or_local_host(&host)
+            || allowed_domains.iter().any(|domain| {
+                domain
+                    .trim()
+                    .trim_start_matches('.')
+                    .eq_ignore_ascii_case(&host)
+            }),
+        "host {} is private or local and must be explicitly allowed",
+        host
+    );
 
     Ok(url)
 }
 
 pub async fn fetch_robots_txt(
-    client: &reqwest::Client,
-    robots_txt_url: &str,
-    user_agent: &str,
+    client: &HttpFetchClient,
+    request: &HttpFetchRequest<'_>,
 ) -> Result<String> {
-    let response = client
-        .get(robots_txt_url)
-        .header(USER_AGENT, user_agent)
-        .send()
-        .await
-        .with_context(|| format!("failed to fetch robots.txt from {robots_txt_url}"))?;
+    let (response, final_url) = fetch_with_manual_redirects(client, request).await?;
     ensure!(
         response.status().is_success(),
         "robots.txt returned HTTP {} from {}",
         response.status(),
-        robots_txt_url
+        final_url
     );
     response
         .text()
         .await
-        .with_context(|| format!("failed to read robots.txt body from {robots_txt_url}"))
+        .with_context(|| format!("failed to read robots.txt body from {final_url}"))
 }
 
 pub fn evaluate_robots(robots_txt: &str, user_agent: &str, target_path: &str) -> RobotsDecision {
@@ -127,16 +161,11 @@ pub fn evaluate_robots(robots_txt: &str, user_agent: &str, target_path: &str) ->
 }
 
 pub async fn fetch_to_raw(
-    client: &reqwest::Client,
+    client: &HttpFetchClient,
     request: &HttpFetchRequest<'_>,
     raw_root: impl AsRef<Path>,
 ) -> Result<PreparedHttpFetch> {
-    let response = client
-        .get(request.url)
-        .header(USER_AGENT, request.user_agent)
-        .send()
-        .await
-        .with_context(|| format!("failed to fetch {}", request.url))?;
+    let (response, final_url) = fetch_with_manual_redirects(client, request).await?;
     ensure!(
         response.status().is_success(),
         "fetch returned HTTP {} for {}",
@@ -145,16 +174,37 @@ pub async fn fetch_to_raw(
     );
 
     let status_code = response.status().as_u16();
-    let final_url = response.url().to_string();
     let content_type = response
         .headers()
-        .get(reqwest::header::CONTENT_TYPE)
+        .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
+    ensure_allowed_content_type(content_type.as_deref())?;
+    if let Some(content_length) = response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        ensure!(
+            content_length <= DEFAULT_MAX_RESPONSE_BYTES,
+            "response Content-Length {} exceeds max_response_bytes {} for {}",
+            content_length,
+            DEFAULT_MAX_RESPONSE_BYTES,
+            request.url
+        );
+    }
     let bytes = response
         .bytes()
         .await
         .with_context(|| format!("failed to read response body from {}", request.url))?;
+    ensure!(
+        bytes.len() as u64 <= DEFAULT_MAX_RESPONSE_BYTES,
+        "response body {} bytes exceeds max_response_bytes {} for {}",
+        bytes.len(),
+        DEFAULT_MAX_RESPONSE_BYTES,
+        request.url
+    );
     let checksum_sha256 = format!("{:x}", Sha256::digest(&bytes));
     let size_bytes = bytes.len() as u64;
 
@@ -164,7 +214,8 @@ pub async fn fetch_to_raw(
         .join(&checksum_sha256[..12]);
     fs::create_dir_all(&staged_dir)
         .with_context(|| format!("failed to create {}", staged_dir.display()))?;
-    let staged_extension = infer_staged_extension(content_type.as_deref(), &final_url, request.url);
+    let staged_extension =
+        infer_staged_extension(content_type.as_deref(), final_url.as_str(), request.url);
     let staged_path = staged_dir.join(format!(
         "{}.{}",
         sanitize_name(request.logical_name),
@@ -181,7 +232,7 @@ pub async fn fetch_to_raw(
     Ok(PreparedHttpFetch {
         logical_name: request.logical_name.to_string(),
         target_url: request.url.to_string(),
-        final_url,
+        final_url: final_url.to_string(),
         staged_path,
         staged_was_created,
         checksum_sha256,
@@ -189,6 +240,84 @@ pub async fn fetch_to_raw(
         status_code,
         content_type,
     })
+}
+
+async fn fetch_with_manual_redirects<'a>(
+    client: &HttpFetchClient,
+    request: &HttpFetchRequest<'a>,
+) -> Result<(reqwest::Response, Url)> {
+    let mut current_url = ensure_allowed_url(request.url, request.allowed_domains)?;
+    for redirect_count in 0..=DEFAULT_MAX_REDIRECTS {
+        let response = client
+            .inner
+            .get(current_url.clone())
+            .header(USER_AGENT, request.user_agent)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch {}", current_url))?;
+
+        if !response.status().is_redirection() {
+            let final_url = ensure_allowed_url(response.url().as_str(), request.allowed_domains)?;
+            return Ok((response, final_url));
+        }
+
+        ensure!(
+            redirect_count < DEFAULT_MAX_REDIRECTS,
+            "redirect count exceeded max_redirects {} for {}",
+            DEFAULT_MAX_REDIRECTS,
+            request.url
+        );
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .with_context(|| format!("redirect response missing Location for {}", current_url))?;
+        let next_url = current_url
+            .join(location)
+            .with_context(|| format!("failed to resolve redirect Location {location}"))?;
+        current_url = ensure_allowed_url(next_url.as_str(), request.allowed_domains)?;
+    }
+
+    unreachable!("redirect loop returns or errors before exceeding max_redirects")
+}
+
+fn ensure_allowed_content_type(content_type: Option<&str>) -> Result<()> {
+    let mime = content_type
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .with_context(|| "response content-type is missing and default policy denies it")?
+        .to_ascii_lowercase();
+    let allowed = DEFAULT_ALLOWED_CONTENT_TYPES
+        .iter()
+        .any(|allowed| mime == *allowed || (allowed.ends_with("/json") && mime.ends_with("+json")));
+    ensure!(
+        allowed,
+        "response content-type {} is outside the crawler allowlist",
+        mime
+    );
+    Ok(())
+}
+
+fn is_private_or_local_host(host: &str) -> bool {
+    if matches!(host, "localhost" | "0.0.0.0") || host.ends_with(".localhost") {
+        return true;
+    }
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+        }
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || ip.is_multicast()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -352,7 +481,18 @@ fn sanitize_name(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_allowed_url, evaluate_robots, infer_staged_extension};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    use axum::{response::Redirect, routing::get, Router};
+    use tokio::net::TcpListener;
+
+    use super::{
+        ensure_allowed_url, evaluate_robots, fetch_robots_txt, fetch_with_manual_redirects,
+        infer_staged_extension, is_private_or_local_host, HttpFetchClient, HttpFetchRequest,
+    };
 
     #[test]
     fn allowlist_accepts_matching_subdomain() {
@@ -374,6 +514,24 @@ mod tests {
         .expect_err("outside domain");
 
         assert!(error.to_string().contains("outside the crawler allowlist"));
+    }
+
+    #[test]
+    fn allowlist_accepts_explicit_local_dev_host() {
+        let url = ensure_allowed_url(
+            "http://127.0.0.1:3000/open-campus",
+            &[String::from("127.0.0.1")],
+        )
+        .expect("explicit local dev host");
+
+        assert_eq!(url.host_str(), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn private_host_detection_blocks_ipv6_local_ranges() {
+        assert!(is_private_or_local_host("fc00::1"));
+        assert!(is_private_or_local_host("fe80::1"));
+        assert!(is_private_or_local_host("ff02::1"));
     }
 
     #[test]
@@ -453,5 +611,95 @@ Allow: /
         );
 
         assert_eq!(extension, "bin");
+    }
+
+    #[tokio::test]
+    async fn manual_redirects_do_not_auto_follow_disallowed_redirects() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let redirect_target = format!("http://localhost:{}/final", address.port());
+        let final_hits = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route(
+                "/start",
+                get({
+                    let redirect_target = redirect_target.clone();
+                    move || {
+                        let redirect_target = redirect_target.clone();
+                        async move { Redirect::temporary(&redirect_target) }
+                    }
+                }),
+            )
+            .route(
+                "/final",
+                get({
+                    let final_hits = Arc::clone(&final_hits);
+                    move || {
+                        let final_hits = Arc::clone(&final_hits);
+                        async move {
+                            final_hits.fetch_add(1, Ordering::SeqCst);
+                            "ok"
+                        }
+                    }
+                }),
+            );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = HttpFetchClient::from_builder(
+            reqwest::Client::builder().redirect(reqwest::redirect::Policy::limited(10)),
+        )?;
+        let request_url = format!("http://127.0.0.1:{}/start", address.port());
+        let allowed_domains = vec![String::from("127.0.0.1")];
+        let request = HttpFetchRequest {
+            source_id: "test-source",
+            logical_name: "redirect-check",
+            url: &request_url,
+            user_agent: "geo-line-ranker-test/0.1",
+            allowed_domains: &allowed_domains,
+        };
+
+        let error = fetch_with_manual_redirects(&client, &request)
+            .await
+            .expect_err("redirect to disallowed host should fail before follow");
+        assert!(error.to_string().contains("outside the crawler allowlist"));
+        assert_eq!(final_hits.load(Ordering::SeqCst), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_robots_txt_follows_allowed_redirects() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let app = Router::new()
+            .route(
+                "/robots.txt",
+                get(|| async { Redirect::temporary("/canonical/robots.txt") }),
+            )
+            .route(
+                "/canonical/robots.txt",
+                get(|| async { "User-agent: *\nAllow: /\n" }),
+            );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = HttpFetchClient::new()?;
+        let robots_url = format!("http://127.0.0.1:{}/robots.txt", address.port());
+        let allowed_domains = vec![String::from("127.0.0.1")];
+        let request = HttpFetchRequest {
+            source_id: "test-source",
+            logical_name: "robots-txt",
+            url: &robots_url,
+            user_agent: "geo-line-ranker-test/0.1",
+            allowed_domains: &allowed_domains,
+        };
+
+        let robots_txt = fetch_robots_txt(&client, &request).await?;
+        assert!(robots_txt.contains("Allow: /"));
+
+        Ok(())
     }
 }

@@ -7,7 +7,10 @@ use std::{
 use api::{build_app, AppState};
 use axum::{
     body::{to_bytes, Body},
+    extract::State,
     http::{Request, StatusCode},
+    routing::{head, post},
+    Json, Router,
 };
 use cache::RecommendationCache;
 use config::{CandidateRetrievalMode, OpenSearchSettings, RankingProfiles};
@@ -79,6 +82,38 @@ async fn drop_database(admin_database_url: &str, database_name: &str) -> anyhow:
         .simple_query(&format!("DROP DATABASE IF EXISTS \"{database_name}\""))
         .await?;
     Ok(())
+}
+
+async fn spawn_empty_opensearch() -> anyhow::Result<String> {
+    spawn_opensearch_with_hits(Vec::new()).await
+}
+
+async fn spawn_opensearch_with_hits(hits: Vec<serde_json::Value>) -> anyhow::Result<String> {
+    let response = Arc::new(serde_json::json!({
+        "hits": {
+            "hits": hits
+        }
+    }));
+    let app = Router::new()
+        .route("/:index", head(empty_opensearch_index))
+        .route("/:index/_search", post(opensearch_search))
+        .with_state(response);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Ok(format!("http://{address}"))
+}
+
+async fn empty_opensearch_index() -> StatusCode {
+    StatusCode::OK
+}
+
+async fn opensearch_search(
+    State(response): State<Arc<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    Json((*response).clone())
 }
 
 fn repo_root() -> PathBuf {
@@ -1136,6 +1171,7 @@ async fn recommend_endpoint_rejects_unknown_target_station_with_clear_message() 
         let app = build_app(state);
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -1161,6 +1197,347 @@ async fn recommend_endpoint_rejects_unknown_target_station_with_clear_message() 
             payload["error"],
             "unknown target_station_id: station_missing"
         );
+
+        let blank_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "target_station_id": "   ",
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(blank_response.status(), StatusCode::BAD_REQUEST);
+        let blank_body = to_bytes(blank_response.into_body(), usize::MAX).await?;
+        let blank_payload: serde_json::Value = serde_json::from_slice(&blank_body)?;
+        assert_eq!(
+            blank_payload["error"],
+            "target_station_id or context.station_id must not be blank"
+        );
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn recommend_endpoint_rejects_unknown_context_station_with_clear_message(
+) -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api_context_station").await
+    else {
+        eprintln!(
+            "skipping api recommendation integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "phase6-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "phase6-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "context": {
+                                "station_id": "station_missing"
+                            },
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(
+            payload["error"],
+            "unknown target_station_id: station_missing"
+        );
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn recommend_endpoint_accepts_area_only_context() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api_area").await
+    else {
+        eprintln!(
+            "skipping api recommendation integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "v020-api-context-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "v020-api-context-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "context": {
+                                "area": {
+                                    "city_name": "Minato",
+                                    "prefecture_name": "Tokyo"
+                                }
+                            },
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["context"]["context_source"], "request_area");
+        assert_eq!(payload["fallback_stage"], "same_city");
+        assert!(payload["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn recommend_endpoint_falls_back_to_sql_when_opensearch_has_no_hits() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api_full_empty").await
+    else {
+        eprintln!(
+            "skipping api full-mode fallback test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let opensearch_url = spawn_empty_opensearch().await?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "v020-full-empty-fallback-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "v020-full-empty-fallback-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::Full,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::Full(OpenSearchStore::new(
+                &OpenSearchSettings {
+                    url: opensearch_url,
+                    index_name: "candidate_projection".to_string(),
+                    username: None,
+                    password: None,
+                    request_timeout_secs: 5,
+                },
+            )?),
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "target_station_id": "st_tamachi",
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert!(!payload["items"].as_array().expect("items array").is_empty());
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn recommend_endpoint_falls_back_to_sql_when_opensearch_is_underfilled() -> anyhow::Result<()>
+{
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("glr_api_underfilled").await
+    else {
+        eprintln!(
+            "skipping api full-mode underfilled fallback test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let opensearch_url = spawn_opensearch_with_hits(vec![serde_json::json!({
+            "_id": "school_seaside:st_tamachi",
+            "_source": {
+                "school_id": "school_seaside",
+                "station_id": "st_tamachi",
+                "walking_minutes": 8,
+                "distance_meters": 620,
+                "hop_distance": 0,
+                "line_name": "JR Yamanote Line"
+            }
+        })])
+        .await?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "v020-full-underfilled-fallback-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "v020-full-underfilled-fallback-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::Full,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::Full(OpenSearchStore::new(
+                &OpenSearchSettings {
+                    url: opensearch_url,
+                    index_name: "candidate_projection".to_string(),
+                    username: None,
+                    password: None,
+                    request_timeout_secs: 5,
+                },
+            )?),
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "target_station_id": "st_tamachi",
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        let items = payload["items"].as_array().expect("items array");
+        assert!(items.len() >= 2);
 
         Ok(())
     }
@@ -1210,6 +1587,9 @@ async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Resu
         client
             .simple_query("DROP TABLE recommendation_traces")
             .await?;
+        client
+            .simple_query("DROP TABLE context_resolution_traces")
+            .await?;
 
         let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
         let state = AppState {
@@ -1251,6 +1631,10 @@ async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Resu
             .as_array()
             .expect("items array")
             .is_empty());
+        let first_request_id = first_payload["request_id"]
+            .as_str()
+            .expect("first request_id")
+            .to_string();
 
         let second_response = app
             .oneshot(
@@ -1270,6 +1654,10 @@ async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Resu
             .as_array()
             .expect("items array")
             .is_empty());
+        let second_request_id = second_payload["request_id"]
+            .as_str()
+            .expect("second request_id");
+        assert_ne!(first_request_id, second_request_id);
 
         Ok(())
     }

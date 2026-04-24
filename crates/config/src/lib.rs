@@ -98,7 +98,7 @@ impl AppSettings {
             algorithm_version: env::var("ALGORITHM_VERSION")
                 .unwrap_or_else(|_| "phase8-policy-diversity-v1".to_string()),
             candidate_retrieval_mode,
-            candidate_retrieval_limit: parse_env("CANDIDATE_RETRIEVAL_LIMIT", 256),
+            candidate_retrieval_limit: parse_env("CANDIDATE_RETRIEVAL_LIMIT", 256)?,
             opensearch: OpenSearchSettings {
                 url: env::var("OPENSEARCH_URL")
                     .unwrap_or_else(|_| "http://127.0.0.1:9200".to_string()),
@@ -110,12 +110,12 @@ impl AppSettings {
                 password: env::var("OPENSEARCH_PASSWORD")
                     .ok()
                     .filter(|value| !value.is_empty()),
-                request_timeout_secs: parse_env("OPENSEARCH_REQUEST_TIMEOUT_SECS", 5),
+                request_timeout_secs: parse_env("OPENSEARCH_REQUEST_TIMEOUT_SECS", 5)?,
             },
-            recommendation_cache_ttl_secs: parse_env("RECOMMENDATION_CACHE_TTL_SECS", 120),
-            worker_poll_interval_ms: parse_env("WORKER_POLL_INTERVAL_MS", 1000),
-            worker_retry_delay_secs: parse_env("WORKER_RETRY_DELAY_SECS", 5),
-            worker_max_attempts: parse_env("WORKER_MAX_ATTEMPTS", 3),
+            recommendation_cache_ttl_secs: parse_env("RECOMMENDATION_CACHE_TTL_SECS", 120)?,
+            worker_poll_interval_ms: parse_env("WORKER_POLL_INTERVAL_MS", 1000)?,
+            worker_retry_delay_secs: parse_env("WORKER_RETRY_DELAY_SECS", 5)?,
+            worker_max_attempts: parse_env("WORKER_MAX_ATTEMPTS", 3)?,
         })
     }
 }
@@ -431,14 +431,18 @@ fn parse_candidate_retrieval_mode(raw: Option<String>) -> Result<CandidateRetrie
     }
 }
 
-fn parse_env<T>(name: &str, default: T) -> T
+fn parse_env<T>(name: &str, default: T) -> Result<T>
 where
     T: std::str::FromStr,
+    T::Err: std::fmt::Display,
 {
-    env::var(name)
-        .ok()
-        .and_then(|raw| raw.parse::<T>().ok())
-        .unwrap_or(default)
+    match env::var(name) {
+        Ok(raw) => raw
+            .parse::<T>()
+            .map_err(|error| anyhow::anyhow!("{name} has invalid value {raw}: {error}")),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
 }
 
 #[cfg(test)]

@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+
+use context::RankingContext;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -6,6 +9,8 @@ pub struct School {
     pub id: String,
     pub name: String,
     pub area: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefecture_name: Option<String>,
     pub school_type: String,
     pub group_id: String,
 }
@@ -73,6 +78,8 @@ pub struct Station {
     pub id: String,
     pub name: String,
     pub line_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_id: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
 }
@@ -172,6 +179,8 @@ pub struct RankingQuery {
     pub user_id: Option<String>,
     pub placement: PlacementKind,
     pub debug: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<RankingContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -197,8 +206,36 @@ pub struct ScoreComponent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FallbackStage {
-    Strict,
-    Neighbor,
+    StrictStation,
+    SameLine,
+    SameCity,
+    SamePrefecture,
+    NeighborArea,
+    SafeGlobalPopular,
+}
+
+impl FallbackStage {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::StrictStation => "strict_station",
+            Self::SameLine => "same_line",
+            Self::SameCity => "same_city",
+            Self::SamePrefecture => "same_prefecture",
+            Self::NeighborArea => "neighbor_area",
+            Self::SafeGlobalPopular => "safe_global_popular",
+        }
+    }
+
+    pub fn priority(&self) -> usize {
+        match self {
+            Self::StrictStation => 0,
+            Self::SameLine => 1,
+            Self::SameCity => 2,
+            Self::SamePrefecture => 3,
+            Self::NeighborArea => 4,
+            Self::SafeGlobalPopular => 5,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -217,6 +254,8 @@ pub struct RecommendationItem {
     pub score: f64,
     pub explanation: String,
     pub score_breakdown: Vec<ScoreComponent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_stage: Option<FallbackStage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -225,6 +264,10 @@ pub struct RecommendationResult {
     pub explanation: String,
     pub score_breakdown: Vec<ScoreComponent>,
     pub fallback_stage: FallbackStage,
+    #[serde(default)]
+    pub candidate_counts: BTreeMap<String, usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<RankingContext>,
     pub profile_version: String,
     pub algorithm_version: String,
 }

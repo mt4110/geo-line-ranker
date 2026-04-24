@@ -1,6 +1,11 @@
 use api_contracts::{
-    FallbackStageDto, HealthResponse, ReadyResponse, RecommendationItemDto, RecommendationRequest,
-    RecommendationResponse, ScoreComponentDto, TrackRequest, TrackResponse,
+    FallbackStageDto, HealthResponse, ReadyResponse, RecommendationContextDto,
+    RecommendationItemDto, RecommendationRequest, RecommendationResponse, ScoreComponentDto,
+    TrackRequest, TrackResponse,
+};
+use context::{
+    AreaContext, AreaContextInput, ContextInput, ContextSource, ContextWarning, LineContext,
+    PrivacyLevel, RankingContext, StationContext,
 };
 use utoipa::OpenApi;
 
@@ -64,10 +69,20 @@ fn track_doc() {}
             HealthResponse,
             ReadyResponse,
             FallbackStageDto,
+            AreaContext,
+            AreaContextInput,
+            ContextInput,
+            ContextSource,
+            ContextWarning,
             RecommendationItemDto,
+            RecommendationContextDto,
             RecommendationRequest,
             RecommendationResponse,
+            LineContext,
+            PrivacyLevel,
+            RankingContext,
             ScoreComponentDto,
+            StationContext,
             TrackRequest,
             TrackResponse
         )

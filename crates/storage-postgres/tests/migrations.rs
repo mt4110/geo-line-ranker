@@ -1,8 +1,55 @@
+use std::{fs, path::Path};
+
 use storage_postgres::{run_migrations, seed_fixture};
 use tokio_postgres::NoTls;
 mod common;
 
 use common::{create_empty_database, drop_database, repo_root};
+
+async fn apply_legacy_migrations_through_0007(
+    database_url: &str,
+    migrations_dir: &Path,
+) -> anyhow::Result<()> {
+    let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client
+        .batch_execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )",
+        )
+        .await?;
+
+    let mut entries = std::fs::read_dir(migrations_dir)?.collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("sql") {
+            continue;
+        }
+        let version = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow::anyhow!("migration file name must be valid UTF-8"))?
+            .to_string();
+        if version.starts_with("0008_") {
+            break;
+        }
+        let sql = std::fs::read_to_string(&path)?;
+        client.batch_execute(&sql).await?;
+        client
+            .execute(
+                "INSERT INTO schema_migrations (version) VALUES ($1)",
+                &[&version],
+            )
+            .await?;
+    }
+
+    Ok(())
+}
 
 #[tokio::test]
 async fn run_migrations_is_safe_when_called_concurrently() -> anyhow::Result<()> {
@@ -85,6 +132,213 @@ async fn seed_fixture_is_idempotent_for_user_events() -> anyhow::Result<()> {
             .query_one("SELECT COUNT(*) AS count FROM user_events", &[])
             .await?;
         assert_eq!(row.get::<_, i64>("count"), expected_user_event_count);
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn seed_fixture_keeps_same_city_areas_per_prefecture() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("glr_city_area_ids").await
+    else {
+        eprintln!(
+            "skipping storage-postgres city area seed test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+
+        let fixture_dir = tempfile::tempdir()?;
+        fs::write(
+            fixture_dir.path().join("stations.csv"),
+            "station_id,name,line_name,latitude,longitude\nst_target,Target,Target Line,35.0,139.0\n",
+        )?;
+        fs::write(
+            fixture_dir.path().join("schools.csv"),
+            "school_id,name,area,prefecture_name,school_type,group_id\n\
+             school_tokyo_fuchu,Tokyo Fuchu,Fuchu,Tokyo,high_school,group_tokyo\n\
+             school_hiroshima_fuchu,Hiroshima Fuchu,Fuchu,Hiroshima,high_school,group_hiroshima\n",
+        )?;
+        fs::write(
+            fixture_dir.path().join("events.csv"),
+            "event_id,school_id,title,event_category,is_open_day,is_featured,priority_weight,starts_at,placement_tags\n",
+        )?;
+        fs::write(
+            fixture_dir.path().join("school_station_links.csv"),
+            "school_id,station_id,walking_minutes,distance_meters,hop_distance,line_name\n",
+        )?;
+        fs::write(fixture_dir.path().join("user_events.ndjson"), "")?;
+
+        seed_fixture(&database_url, fixture_dir.path()).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let rows = client
+            .query(
+                "SELECT area_id, prefecture_name, city_name
+                 FROM areas
+                 WHERE area_level = 'city'
+                   AND city_name = 'Fuchu'
+                 ORDER BY prefecture_name",
+                &[],
+            )
+            .await?;
+        let rendered = rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>("area_id"),
+                    row.get::<_, Option<String>>("prefecture_name"),
+                    row.get::<_, Option<String>>("city_name"),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec![
+                (
+                    "area_hiroshima_fuchu".to_string(),
+                    Some("Hiroshima".to_string()),
+                    Some("Fuchu".to_string())
+                ),
+                (
+                    "area_tokyo_fuchu".to_string(),
+                    Some("Tokyo".to_string()),
+                    Some("Fuchu".to_string())
+                ),
+            ]
+        );
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn v020_migration_preserves_date_only_starts_at_as_utc_midnight() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_legacy_starts_at").await
+    else {
+        eprintln!(
+            "skipping storage-postgres legacy starts_at migration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (admin_client, admin_connection) =
+            tokio_postgres::connect(&admin_database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = admin_connection.await;
+        });
+        admin_client
+            .simple_query(&format!(
+                "ALTER DATABASE \"{database_name}\" SET timezone TO 'Asia/Tokyo'"
+            ))
+            .await?;
+
+        let migrations_dir = repo_root().join("storage/migrations/postgres");
+        apply_legacy_migrations_through_0007(&database_url, &migrations_dir).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client
+            .batch_execute(
+                "INSERT INTO schools (id, name, area, school_type, group_id)
+                 VALUES ('school_legacy', 'Legacy School', 'Minato', 'high_school', 'group_legacy');
+
+                 INSERT INTO events (id, school_id, title, starts_at)
+                 VALUES
+                    ('event_legacy_date', 'school_legacy', 'Legacy Open Day', '2026-04-22'),
+                    ('event_legacy_invalid', 'school_legacy', 'Legacy Broken Date', 'not-a-time');
+
+                 INSERT INTO user_events (user_id, school_id, event_type, occurred_at)
+                 VALUES
+                    ('user_date', 'school_legacy', 'school_view', '2026-04-22'),
+                    ('user_invalid', 'school_legacy', 'school_view', 'not-a-time');",
+            )
+            .await?;
+        drop(client);
+
+        run_migrations(&database_url, migrations_dir).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let row = client
+            .query_one(
+                "SELECT to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS utc_start
+                 FROM events
+                 WHERE id = 'event_legacy_date'",
+                &[],
+            )
+            .await?;
+        assert_eq!(row.get::<_, String>("utc_start"), "2026-04-22 00:00:00");
+        let invalid_event_row = client
+            .query_one(
+                "SELECT starts_at IS NULL AS starts_at_is_null
+                 FROM events
+                 WHERE id = 'event_legacy_invalid'",
+                &[],
+            )
+            .await?;
+        assert!(invalid_event_row.get::<_, bool>("starts_at_is_null"));
+        let user_event_rows = client
+            .query(
+                "SELECT user_id, to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS utc_occurred
+                 FROM user_events
+                 WHERE user_id IN ('user_date', 'user_invalid')
+                 ORDER BY user_id",
+                &[],
+            )
+            .await?;
+        let occurred = user_event_rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>("user_id"),
+                    row.get::<_, String>("utc_occurred"),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            occurred,
+            vec![
+                (
+                    "user_date".to_string(),
+                    "2026-04-22 00:00:00".to_string()
+                ),
+                (
+                    "user_invalid".to_string(),
+                    "1970-01-01 00:00:00".to_string()
+                ),
+            ]
+        );
+        let school_row = client
+            .query_one(
+                "SELECT prefecture_name IS NULL AS prefecture_name_is_null
+                 FROM schools
+                 WHERE id = 'school_legacy'",
+                &[],
+            )
+            .await?;
+        assert!(school_row.get::<_, bool>("prefecture_name_is_null"));
 
         Ok(())
     }

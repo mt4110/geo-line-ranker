@@ -13,7 +13,8 @@ use crawler_core::{
     ResolvedCrawlTarget, SourceMaturity,
 };
 use generic_http::{
-    ensure_allowed_url, evaluate_robots, fetch_robots_txt, fetch_to_raw, HttpFetchRequest,
+    ensure_allowed_url, evaluate_robots, fetch_robots_txt, fetch_to_raw, HttpFetchClient,
+    HttpFetchRequest,
 };
 use serde_json::{json, Value};
 use storage_postgres::{
@@ -34,6 +35,28 @@ fn discard_staged_fetch(path: &Path) {
         if error.kind() != std::io::ErrorKind::NotFound {
             tracing::warn!(path = %path.display(), %error, "failed to discard blocked staged fetch");
         }
+    }
+}
+
+fn classify_fetch_error_status(error_message: &str) -> &'static str {
+    const BLOCKED_POLICY_MARKERS: &[&str] = &[
+        "outside the crawler allowlist",
+        "private or local",
+        "unsupported URL scheme",
+        "response content-type",
+        "response Content-Length",
+        "response body",
+        "redirect count exceeded",
+        "max_response_bytes",
+    ];
+
+    if BLOCKED_POLICY_MARKERS
+        .iter()
+        .any(|marker| error_message.contains(marker))
+    {
+        "blocked_policy"
+    } else {
+        "fetch_failed"
     }
 }
 
@@ -848,18 +871,20 @@ pub async fn run_fetch_command(
         );
     }
 
-    let client = build_http_client()?;
+    let client = build_http_fetch_client()?;
 
     let mut fetched_targets = 0_i64;
     let mut report_count = 0_usize;
 
     let result: Result<()> = async {
-        let robots_txt = fetch_robots_txt(
-            &client,
-            &manifest.allowlist.robots_txt_url,
-            &manifest.allowlist.user_agent,
-        )
-        .await?;
+        let robots_request = HttpFetchRequest {
+            source_id: &manifest.source_id,
+            logical_name: "robots_txt",
+            url: &manifest.allowlist.robots_txt_url,
+            user_agent: &manifest.allowlist.user_agent,
+            allowed_domains: &manifest.allowlist.allowed_domains,
+        };
+        let robots_txt = fetch_robots_txt(&client, &robots_request).await?;
 
         for (index, target) in targets.iter().enumerate() {
             if index > 0 && manifest.allowlist.min_fetch_interval_ms > 0 {
@@ -910,6 +935,7 @@ pub async fn run_fetch_command(
                     logical_name: &target.logical_name,
                     url: &target.url,
                     user_agent: &manifest.allowlist.user_agent,
+                    allowed_domains: &manifest.allowlist.allowed_domains,
                 },
                 &settings.raw_storage_dir,
             )
@@ -1036,6 +1062,8 @@ pub async fn run_fetch_command(
                 }
                 Err(error) => {
                     report_count += 1;
+                    let error_message = error.to_string();
+                    let fetch_status = classify_fetch_error_status(&error_message);
                     record_crawl_fetch_log(
                         &settings.database_url,
                         &CrawlFetchLogEntry {
@@ -1047,10 +1075,10 @@ pub async fn run_fetch_command(
                             checksum_sha256: None,
                             size_bytes: None,
                             staged_path: None,
-                            fetch_status: "fetch_failed".to_string(),
+                            fetch_status: fetch_status.to_string(),
                             content_changed: None,
                             details: json!({
-                                "error": error.to_string(),
+                                "error": error_message,
                                 "robots_txt_url": manifest.allowlist.robots_txt_url,
                                 "terms_url": manifest.allowlist.terms_url,
                                 "terms_note": manifest.allowlist.terms_note,
@@ -1387,12 +1415,14 @@ pub async fn run_doctor_command(
         &client,
         &manifest.allowlist.robots_txt_url,
         &manifest.allowlist.user_agent,
+        &manifest.allowlist.allowed_domains,
     )
     .await;
     let terms = probe_url(
         &client,
         &manifest.allowlist.terms_url,
         &manifest.allowlist.user_agent,
+        &manifest.allowlist.allowed_domains,
     )
     .await;
 
@@ -2336,10 +2366,15 @@ struct TargetBodyProbe {
 
 fn build_http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(20))
         .build()
         .context("failed to build crawler HTTP client")
+}
+
+fn build_http_fetch_client() -> Result<HttpFetchClient> {
+    HttpFetchClient::from_builder(reqwest::Client::builder().timeout(Duration::from_secs(20)))
+        .context("failed to build crawler HTTP fetch client")
 }
 
 async fn probe_target_body(
@@ -2349,21 +2384,82 @@ async fn probe_target_body(
     allowed_domains: &[String],
     robots_body: &str,
 ) -> TargetBodyProbe {
-    match client
-        .get(url)
-        .header(reqwest::header::USER_AGENT, user_agent)
-        .send()
-        .await
-    {
+    let mut current_url = match ensure_allowed_url(url, allowed_domains) {
+        Ok(url) => url,
+        Err(error) => {
+            return TargetBodyProbe {
+                body: String::new(),
+                content_type: None,
+                error: Some(error.to_string()),
+            };
+        }
+    };
+    let mut response_result = None;
+    for redirect_count in 0..=3 {
+        match client
+            .get(current_url.clone())
+            .header(reqwest::header::USER_AGENT, user_agent)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_redirection() => {
+                if redirect_count >= 3 {
+                    return TargetBodyProbe {
+                        body: String::new(),
+                        content_type: None,
+                        error: Some("redirect count exceeded max_redirects 3".to_string()),
+                    };
+                }
+                let Some(location) = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                else {
+                    return TargetBodyProbe {
+                        body: String::new(),
+                        content_type: None,
+                        error: Some("redirect response missing Location".to_string()),
+                    };
+                };
+                let next_url = match current_url.join(location) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        return TargetBodyProbe {
+                            body: String::new(),
+                            content_type: None,
+                            error: Some(format!("failed to resolve redirect Location: {error}")),
+                        };
+                    }
+                };
+                current_url = match ensure_allowed_url(next_url.as_str(), allowed_domains) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        return TargetBodyProbe {
+                            body: String::new(),
+                            content_type: None,
+                            error: Some(format!(
+                                "resolved final_url violated crawler allowlist: {error}"
+                            )),
+                        };
+                    }
+                };
+            }
+            result => {
+                response_result = Some(result);
+                break;
+            }
+        }
+    }
+
+    match response_result.expect("target probe loop should return a response result") {
         Ok(response) => {
             let status = response.status();
-            let final_url = response.url().to_string();
             let content_type = response
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_string);
-            let parsed_final_url = match ensure_allowed_url(&final_url, allowed_domains) {
+            let parsed_final_url = match ensure_allowed_url(current_url.as_str(), allowed_domains) {
                 Ok(url) => url,
                 Err(error) => {
                     return TargetBodyProbe {
@@ -2776,7 +2872,12 @@ fn normalize_reason_for_total(reason: &str) -> Option<String> {
     }
 }
 
-async fn probe_url(client: &reqwest::Client, url: &str, user_agent: &str) -> UrlProbeSummary {
+async fn probe_url(
+    client: &reqwest::Client,
+    url: &str,
+    user_agent: &str,
+    allowed_domains: &[String],
+) -> UrlProbeSummary {
     let mut summary = UrlProbeSummary {
         requested_url: url.to_string(),
         final_url: None,
@@ -2787,14 +2888,64 @@ async fn probe_url(client: &reqwest::Client, url: &str, user_agent: &str) -> Url
         body_preview: None,
     };
 
-    match client
-        .get(url)
-        .header(reqwest::header::USER_AGENT, user_agent)
-        .send()
-        .await
-    {
+    let mut current_url = match ensure_allowed_url(url, allowed_domains) {
+        Ok(url) => url,
+        Err(error) => {
+            summary.error = Some(error.to_string());
+            return summary;
+        }
+    };
+
+    let mut response_result = None;
+    for redirect_count in 0..=3 {
+        match client
+            .get(current_url.clone())
+            .header(reqwest::header::USER_AGENT, user_agent)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_redirection() => {
+                if redirect_count >= 3 {
+                    summary.error = Some("redirect count exceeded max_redirects 3".to_string());
+                    return summary;
+                }
+                let Some(location) = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                else {
+                    summary.error = Some("redirect response missing Location".to_string());
+                    return summary;
+                };
+                let next_url = match current_url.join(location) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        summary.error =
+                            Some(format!("failed to resolve redirect Location: {error}"));
+                        return summary;
+                    }
+                };
+                current_url = match ensure_allowed_url(next_url.as_str(), allowed_domains) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        summary.final_url = Some(next_url.to_string());
+                        summary.error = Some(format!(
+                            "resolved final_url violated crawler allowlist: {error}"
+                        ));
+                        return summary;
+                    }
+                };
+            }
+            result => {
+                response_result = Some(result);
+                break;
+            }
+        }
+    }
+
+    match response_result.expect("probe loop should return a response result") {
         Ok(response) => {
-            summary.final_url = Some(response.url().to_string());
+            summary.final_url = Some(current_url.to_string());
             summary.http_status = Some(response.status().as_u16());
             summary.content_type = response
                 .headers()
@@ -2960,10 +3111,10 @@ mod tests {
     use tokio_postgres::NoTls;
 
     use super::{
-        crawl_manifest_dir_once, format_doctor_summary, format_dry_run_summary,
-        format_health_summary, format_scaffold_summary, run_doctor_command, run_dry_run_command,
-        run_fetch_command, run_health_command, run_parse_command, scaffold_domain,
-        ScaffoldDomainRequest,
+        classify_fetch_error_status, crawl_manifest_dir_once, format_doctor_summary,
+        format_dry_run_summary, format_health_summary, format_scaffold_summary, run_doctor_command,
+        run_dry_run_command, run_fetch_command, run_health_command, run_parse_command,
+        scaffold_domain, ScaffoldDomainRequest,
     };
 
     #[derive(Clone)]
@@ -3021,6 +3172,27 @@ mod tests {
             worker_retry_delay_secs: 5,
             worker_max_attempts: 3,
         }
+    }
+
+    #[test]
+    fn classify_fetch_error_status_marks_policy_failures() {
+        for message in [
+            "host localhost is outside the crawler allowlist",
+            "host 127.0.0.1 is private or local and must be explicitly allowed",
+            "unsupported URL scheme ftp for ftp://example.com",
+            "response content-type is missing and default policy denies it",
+            "response content-type text/plain is outside the crawler allowlist",
+            "redirect count exceeded max_redirects 5 for https://example.com",
+            "response Content-Length 1048577 exceeds max_response_bytes 1048576 for https://example.com",
+            "response body 1048577 bytes exceeds max_response_bytes 1048576 for https://example.com",
+        ] {
+            assert_eq!(classify_fetch_error_status(message), "blocked_policy");
+        }
+
+        assert_eq!(
+            classify_fetch_error_status("failed to fetch https://example.com"),
+            "fetch_failed"
+        );
     }
 
     #[tokio::test]
@@ -4042,7 +4214,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_shibaura_it_junior'
@@ -4145,7 +4317,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_nihon_university_junior'
@@ -4251,7 +4423,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_aoyama_gakuin_junior'
@@ -5087,7 +5259,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_keio'
@@ -5360,7 +5532,7 @@ targets:
 
         let rows = client
             .query(
-                "SELECT title, starts_at
+                "SELECT title, to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS starts_at
                  FROM events
                  WHERE source_type = 'crawl'
                    AND school_id = 'school_hachioji_gakuen_junior'

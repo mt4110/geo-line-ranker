@@ -33,6 +33,28 @@ struct ScoredCandidate {
     item: RecommendationItem,
 }
 
+struct RankingLookups<'a> {
+    stations_by_id: HashMap<&'a str, &'a Station>,
+    schools_by_id: HashMap<&'a str, &'a School>,
+}
+
+impl<'a> RankingLookups<'a> {
+    fn new(dataset: &'a RankingDataset) -> Self {
+        Self {
+            stations_by_id: dataset
+                .stations
+                .iter()
+                .map(|station| (station.id.as_str(), station))
+                .collect(),
+            schools_by_id: dataset
+                .schools
+                .iter()
+                .map(|school| (school.id.as_str(), school))
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct DiversitySelectionSummary {
     selected_count: usize,
@@ -67,6 +89,13 @@ impl RankingEngine {
         self.profiles.placement(placement).neighbor_max_hops
     }
 
+    pub fn minimum_candidate_count(&self) -> usize {
+        self.profiles
+            .schools
+            .strict_min_candidates
+            .max(self.profiles.fallback.min_results)
+    }
+
     pub fn recommend(
         &self,
         dataset: &RankingDataset,
@@ -84,22 +113,60 @@ impl RankingEngine {
             .limit
             .unwrap_or(self.profiles.schools.limit_default)
             .clamp(1, 20);
-        let strict_min_candidates = self
-            .profiles
-            .schools
-            .strict_min_candidates
-            .max(self.profiles.fallback.min_results);
+        let strict_min_candidates = self.minimum_candidate_count();
 
-        let strict_candidates =
-            self.collect_candidates(dataset, &target_station, placement_profile, false);
-        let (fallback_stage, candidates) = if strict_candidates.len() >= strict_min_candidates {
-            (FallbackStage::Strict, strict_candidates)
-        } else {
-            (
-                FallbackStage::Neighbor,
-                self.collect_candidates(dataset, &target_station, placement_profile, true),
-            )
-        };
+        let staged_candidates =
+            self.collect_candidates_by_stage(dataset, query, &target_station, placement_profile);
+        let candidate_counts = staged_candidates
+            .iter()
+            .map(|(stage, candidates)| (stage.as_str().to_string(), candidates.len()))
+            .collect::<BTreeMap<_, _>>();
+        let area_hint_was_ignored = query.context.as_ref().is_some_and(|context| {
+            context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "station_area_conflict")
+        });
+        let area_context_is_usable = query.context.as_ref().is_some_and(|context| {
+            !area_hint_was_ignored
+                && (context.city_name().is_some() || context.prefecture_name().is_some())
+        });
+        let first_sufficient_scoped_match = staged_candidates
+            .iter()
+            .filter(|(stage, _)| !matches!(stage, FallbackStage::SafeGlobalPopular))
+            .find(|(_, candidates)| candidates.len() >= strict_min_candidates);
+        let underfilled_area_match = area_context_is_usable
+            .then(|| {
+                staged_candidates.iter().find(|(stage, candidates)| {
+                    matches!(
+                        stage,
+                        FallbackStage::SameCity | FallbackStage::SamePrefecture
+                    ) && !candidates.is_empty()
+                })
+            })
+            .flatten();
+        let sufficient_safe_global_match = staged_candidates.iter().find(|(stage, candidates)| {
+            matches!(stage, FallbackStage::SafeGlobalPopular)
+                && candidates.len() >= strict_min_candidates
+        });
+        let (fallback_stage, candidates) = first_sufficient_scoped_match
+            .or(underfilled_area_match)
+            .or(sufficient_safe_global_match)
+            .or_else(|| {
+                staged_candidates
+                    .iter()
+                    .filter(|(_, candidates)| !candidates.is_empty())
+                    .max_by(
+                        |(left_stage, left_candidates), (right_stage, right_candidates)| {
+                            left_candidates
+                                .len()
+                                .cmp(&right_candidates.len())
+                                .then_with(|| right_stage.priority().cmp(&left_stage.priority()))
+                        },
+                    )
+            })
+            .map(|(stage, candidates)| (stage.clone(), candidates.clone()))
+            .unwrap_or_else(|| (FallbackStage::SafeGlobalPopular, Vec::new()));
 
         if candidates.is_empty() {
             return Err(RankingError::NoCandidates(target_station.id));
@@ -140,43 +207,190 @@ impl RankingEngine {
             fallback_stage,
             profile_version: self.profiles.profile_version.clone(),
             algorithm_version: self.algorithm_version.clone(),
+            candidate_counts,
+            context: query.context.clone(),
         })
     }
 
-    fn collect_candidates(
+    fn collect_candidates_by_stage(
         &self,
         dataset: &RankingDataset,
+        query: &RankingQuery,
         target_station: &Station,
         placement_profile: &PlacementProfile,
-        allow_neighbor: bool,
+    ) -> Vec<(FallbackStage, Vec<SchoolStationLink>)> {
+        let lookups = RankingLookups::new(dataset);
+
+        vec![
+            (
+                FallbackStage::StrictStation,
+                self.collect_stage_candidates(
+                    dataset,
+                    query,
+                    target_station,
+                    placement_profile,
+                    &FallbackStage::StrictStation,
+                    &lookups,
+                ),
+            ),
+            (
+                FallbackStage::SameLine,
+                self.collect_stage_candidates(
+                    dataset,
+                    query,
+                    target_station,
+                    placement_profile,
+                    &FallbackStage::SameLine,
+                    &lookups,
+                ),
+            ),
+            (
+                FallbackStage::SameCity,
+                self.collect_stage_candidates(
+                    dataset,
+                    query,
+                    target_station,
+                    placement_profile,
+                    &FallbackStage::SameCity,
+                    &lookups,
+                ),
+            ),
+            (
+                FallbackStage::SamePrefecture,
+                self.collect_stage_candidates(
+                    dataset,
+                    query,
+                    target_station,
+                    placement_profile,
+                    &FallbackStage::SamePrefecture,
+                    &lookups,
+                ),
+            ),
+            (
+                FallbackStage::NeighborArea,
+                self.collect_stage_candidates(
+                    dataset,
+                    query,
+                    target_station,
+                    placement_profile,
+                    &FallbackStage::NeighborArea,
+                    &lookups,
+                ),
+            ),
+            (
+                FallbackStage::SafeGlobalPopular,
+                self.collect_stage_candidates(
+                    dataset,
+                    query,
+                    target_station,
+                    placement_profile,
+                    &FallbackStage::SafeGlobalPopular,
+                    &lookups,
+                ),
+            ),
+        ]
+    }
+
+    fn collect_stage_candidates(
+        &self,
+        dataset: &RankingDataset,
+        query: &RankingQuery,
+        target_station: &Station,
+        _placement_profile: &PlacementProfile,
+        stage: &FallbackStage,
+        lookups: &RankingLookups<'_>,
     ) -> Vec<SchoolStationLink> {
-        let stations_by_id: HashMap<&str, &Station> = dataset
-            .stations
-            .iter()
-            .map(|station| (station.id.as_str(), station))
-            .collect();
+        let context = query.context.as_ref();
+        let line_name = context
+            .and_then(|context| context.line_name())
+            .unwrap_or(target_station.line_name.as_str());
+        let line_id = context.and_then(|context| {
+            context
+                .line
+                .as_ref()
+                .and_then(|line| line.line_id.as_deref())
+        });
+        let area_hint_was_ignored = context
+            .map(|context| {
+                context
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.code == "station_area_conflict")
+            })
+            .unwrap_or(false);
+        let city_name = context
+            .filter(|_| !area_hint_was_ignored)
+            .and_then(|context| context.city_name());
+        let prefecture_name = context
+            .filter(|_| !area_hint_was_ignored)
+            .and_then(|context| context.prefecture_name());
+        let station_context_is_explicit = context
+            .map(|context| context.station_id().is_some())
+            .unwrap_or(true);
+        let line_context_is_explicit = context
+            .map(|context| context.line_name().is_some() || context.station_id().is_some())
+            .unwrap_or(true);
 
         dataset
             .school_station_links
             .iter()
             .filter(|link| {
-                if !allow_neighbor {
-                    return link.station_id == target_station.id;
-                }
-
-                let Some(candidate_station) = stations_by_id.get(link.station_id.as_str()) else {
+                let Some(candidate_station) = lookups.stations_by_id.get(link.station_id.as_str())
+                else {
                     return false;
                 };
-                let station_distance = haversine_meters(
-                    target_station.latitude,
-                    target_station.longitude,
-                    candidate_station.latitude,
-                    candidate_station.longitude,
-                );
+                let Some(school) = lookups.schools_by_id.get(link.school_id.as_str()) else {
+                    return false;
+                };
+                let is_same_line = match line_id {
+                    Some(line_id) => {
+                        candidate_station
+                            .line_id
+                            .as_deref()
+                            .is_some_and(|value| value == line_id)
+                            || (candidate_station.line_id.is_none() && link.line_name == line_name)
+                    }
+                    None => link.line_name == line_name,
+                };
+                let school_prefecture_matches = |prefecture: &str| {
+                    school
+                        .prefecture_name
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(prefecture))
+                };
+                let is_same_city = city_name.is_some_and(|city| {
+                    school.area.eq_ignore_ascii_case(city)
+                        && prefecture_name.is_none_or(school_prefecture_matches)
+                });
+                let is_same_prefecture = prefecture_name.is_some_and(|prefecture| {
+                    school_prefecture_matches(prefecture)
+                        || school.area.eq_ignore_ascii_case(prefecture)
+                });
 
-                link.line_name == target_station.line_name
-                    && link.hop_distance <= placement_profile.neighbor_max_hops
-                    && station_distance <= self.profiles.fallback.neighbor_distance_cap_meters
+                match stage {
+                    FallbackStage::StrictStation => {
+                        station_context_is_explicit && link.station_id == target_station.id
+                    }
+                    FallbackStage::SameLine => line_context_is_explicit && is_same_line,
+                    FallbackStage::SameCity => is_same_city,
+                    FallbackStage::SamePrefecture => is_same_prefecture,
+                    FallbackStage::NeighborArea => {
+                        let station_distance = haversine_meters(
+                            target_station.latitude,
+                            target_station.longitude,
+                            candidate_station.latitude,
+                            candidate_station.longitude,
+                        );
+                        station_context_is_explicit
+                            && link.station_id != target_station.id
+                            && !is_same_line
+                            && !is_same_city
+                            && !is_same_prefecture
+                            && station_distance
+                                <= self.profiles.fallback.neighbor_distance_cap_meters
+                    }
+                    FallbackStage::SafeGlobalPopular => true,
+                }
             })
             .cloned()
             .collect()
@@ -419,7 +633,7 @@ impl RankingEngine {
         }
 
         if link.line_name == target_station.line_name {
-            let same_line_bonus = if matches!(fallback_stage, FallbackStage::Neighbor) {
+            let same_line_bonus = if matches!(fallback_stage, FallbackStage::NeighborArea) {
                 placement_profile.neighbor_same_line_bonus
             } else {
                 self.profiles.schools.line_match_bonus
@@ -530,11 +744,14 @@ impl RankingEngine {
             }
         }
 
-        if matches!(fallback_stage, FallbackStage::Neighbor) {
+        if matches!(
+            fallback_stage,
+            FallbackStage::NeighborArea | FallbackStage::SafeGlobalPopular
+        ) {
             breakdown.push(component(
-                "neighbor_penalty",
-                -self.profiles.fallback.neighbor_penalty,
-                "直結候補ではないため、控えめに減点しています。".to_string(),
+                fallback_penalty_feature(fallback_stage),
+                -fallback_stage_penalty(&self.profiles, fallback_stage),
+                fallback_penalty_reason(fallback_stage),
                 None,
             ));
         }
@@ -643,6 +860,7 @@ fn build_item(
         score,
         explanation,
         score_breakdown,
+        fallback_stage: Some(fallback_stage.clone()),
     }
 }
 
@@ -662,6 +880,19 @@ fn compare_candidates(left: &RecommendationItem, right: &RecommendationItem) -> 
     right
         .score
         .total_cmp(&left.score)
+        .then_with(|| {
+            left.fallback_stage
+                .as_ref()
+                .map(FallbackStage::priority)
+                .unwrap_or(usize::MAX)
+                .cmp(
+                    &right
+                        .fallback_stage
+                        .as_ref()
+                        .map(FallbackStage::priority)
+                        .unwrap_or(usize::MAX),
+                )
+        })
         .then_with(|| left.content_kind.as_str().cmp(right.content_kind.as_str()))
         .then_with(|| left.content_id.cmp(&right.content_id))
         .then_with(|| left.primary_station_id.cmp(&right.primary_station_id))
@@ -696,8 +927,12 @@ fn build_item_explanation(
     let reasons = top_reason_labels(breakdown);
     let reason_text = join_reason_labels(&reasons);
     let fallback_text = match fallback_stage {
-        FallbackStage::Strict => "直結条件",
-        FallbackStage::Neighbor => "近傍展開",
+        FallbackStage::StrictStation => "指定駅直結",
+        FallbackStage::SameLine => "同一路線",
+        FallbackStage::SameCity => "同一市区町村",
+        FallbackStage::SamePrefecture => "同一都道府県",
+        FallbackStage::NeighborArea => "近隣エリア",
+        FallbackStage::SafeGlobalPopular => "安全な広域fallback",
     };
     match content_kind {
         ContentKind::School => {
@@ -725,8 +960,12 @@ fn build_top_level_explanation(
         .unwrap_or_else(|| vec!["固定重み".to_string()]);
     let reason_text = join_reason_labels(&reasons);
     let fallback_text = match fallback_stage {
-        FallbackStage::Strict => format!("{} 直結の候補群", target_station.name),
-        FallbackStage::Neighbor => format!("{} 近傍まで広げた候補群", target_station.name),
+        FallbackStage::StrictStation => format!("{} 直結の候補群", target_station.name),
+        FallbackStage::SameLine => format!("{} 沿線の候補群", target_station.line_name),
+        FallbackStage::SameCity => "同一市区町村の候補群".to_string(),
+        FallbackStage::SamePrefecture => "同一都道府県の候補群".to_string(),
+        FallbackStage::NeighborArea => format!("{} 近傍まで広げた候補群", target_station.name),
+        FallbackStage::SafeGlobalPopular => "広域人気を距離で抑制した候補群".to_string(),
     };
 
     let mut explanation = format!(
@@ -818,7 +1057,36 @@ fn feature_label(feature: &str) -> String {
         "area_affinity_bonus" => "エリア需要".to_string(),
         "user_affinity_bonus" => "ユーザー反応".to_string(),
         "content_kind_boost" => "placement調整".to_string(),
+        "neighbor_area_penalty" => "近隣エリア調整".to_string(),
+        "safe_global_distance_penalty" => "遠距離抑制".to_string(),
         _ => "固定重み".to_string(),
+    }
+}
+
+fn fallback_stage_penalty(profiles: &RankingProfiles, fallback_stage: &FallbackStage) -> f64 {
+    match fallback_stage {
+        FallbackStage::StrictStation
+        | FallbackStage::SameLine
+        | FallbackStage::SameCity
+        | FallbackStage::SamePrefecture => 0.0,
+        FallbackStage::NeighborArea => profiles.fallback.neighbor_penalty,
+        FallbackStage::SafeGlobalPopular => profiles.fallback.neighbor_penalty * 2.0,
+    }
+}
+
+fn fallback_penalty_feature(fallback_stage: &FallbackStage) -> &'static str {
+    match fallback_stage {
+        FallbackStage::SafeGlobalPopular => "safe_global_distance_penalty",
+        _ => "neighbor_area_penalty",
+    }
+}
+
+fn fallback_penalty_reason(fallback_stage: &FallbackStage) -> &'static str {
+    match fallback_stage {
+        FallbackStage::SafeGlobalPopular => {
+            "広域候補のため、極端に遠い提示を抑える減点を入れています。"
+        }
+        _ => "直結候補ではないため、控えめに減点しています。",
     }
 }
 
@@ -867,9 +1135,13 @@ mod tests {
     use std::path::PathBuf;
 
     use config::RankingProfiles;
+    use context::{
+        AreaContext, ContextSource, ContextWarning, LineContext, PrivacyLevel, RankingContext,
+        StationContext,
+    };
     use domain::{
-        ContentKind, PlacementKind, PopularitySnapshot, RankingQuery, RecommendationItem,
-        UserAffinitySnapshot,
+        ContentKind, PlacementKind, PopularitySnapshot, RankingDataset, RankingQuery,
+        RecommendationItem, School, SchoolStationLink, Station, UserAffinitySnapshot,
     };
     use test_support::load_fixture_dataset;
 
@@ -890,6 +1162,30 @@ mod tests {
             user_id: None,
             placement,
             debug: false,
+            context: None,
+        }
+    }
+
+    fn request_area_context(
+        city_name: Option<&str>,
+        prefecture_name: Option<&str>,
+    ) -> RankingContext {
+        RankingContext {
+            context_source: ContextSource::RequestArea,
+            confidence: 0.95,
+            area: Some(AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: prefecture_name.map(str::to_string),
+                city_code: None,
+                city_name: city_name.map(str::to_string),
+            }),
+            line: None,
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
         }
     }
 
@@ -902,7 +1198,7 @@ mod tests {
             .recommend(&dataset, &query("st_tamachi", PlacementKind::Search))
             .expect("recommendation result");
 
-        assert_eq!(result.fallback_stage, FallbackStage::Strict);
+        assert_eq!(result.fallback_stage, FallbackStage::StrictStation);
         assert_eq!(result.items[0].content_kind.as_str(), "school");
         assert!(result.items[0]
             .score_breakdown
@@ -920,11 +1216,666 @@ mod tests {
             .recommend(&dataset, &query("st_shinbashi", PlacementKind::Search))
             .expect("recommendation result");
 
-        assert_eq!(result.fallback_stage, FallbackStage::Neighbor);
+        assert_eq!(result.fallback_stage, FallbackStage::SameLine);
         assert!(result
             .items
             .iter()
             .all(|item| item.line_name == "JR Yamanote Line"));
+    }
+
+    #[test]
+    fn underfilled_scoped_stages_use_safe_global_when_available() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_strict".to_string(),
+                    name: "Strict School".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_strict".to_string(),
+                },
+                School {
+                    id: "school_line_a".to_string(),
+                    name: "Line A".to_string(),
+                    area: "Shinagawa".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_line_a".to_string(),
+                },
+                School {
+                    id: "school_line_b".to_string(),
+                    name: "Line B".to_string(),
+                    area: "Shibuya".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_line_b".to_string(),
+                },
+                School {
+                    id: "school_global".to_string(),
+                    name: "Global School".to_string(),
+                    area: "Naha".to_string(),
+                    prefecture_name: Some("Okinawa".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_global".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: None,
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_line_a".to_string(),
+                    name: "Line A Station".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: None,
+                    latitude: 35.01,
+                    longitude: 139.01,
+                },
+                Station {
+                    id: "st_line_b".to_string(),
+                    name: "Line B Station".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: None,
+                    latitude: 35.02,
+                    longitude: 139.02,
+                },
+                Station {
+                    id: "st_global".to_string(),
+                    name: "Global Station".to_string(),
+                    line_name: "Far Line".to_string(),
+                    line_id: None,
+                    latitude: 26.21,
+                    longitude: 127.68,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_strict".to_string(),
+                    station_id: "st_target".to_string(),
+                    walking_minutes: 5,
+                    distance_meters: 400,
+                    hop_distance: 0,
+                    line_name: "Target Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_line_a".to_string(),
+                    station_id: "st_line_a".to_string(),
+                    walking_minutes: 7,
+                    distance_meters: 700,
+                    hop_distance: 1,
+                    line_name: "Target Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_line_b".to_string(),
+                    station_id: "st_line_b".to_string(),
+                    walking_minutes: 9,
+                    distance_meters: 900,
+                    hop_distance: 2,
+                    line_name: "Target Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_global".to_string(),
+                    station_id: "st_global".to_string(),
+                    walking_minutes: 6,
+                    distance_meters: 500,
+                    hop_distance: 0,
+                    line_name: "Far Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 4;
+        profiles.fallback.min_results = 4;
+        let engine = RankingEngine::new(profiles, "v020-insufficient-strict-test");
+
+        let result = engine
+            .recommend(&dataset, &query("st_target", PlacementKind::Search))
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("strict_station"), Some(&1));
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&3));
+        assert_eq!(result.candidate_counts.get("safe_global_popular"), Some(&4));
+        assert_eq!(result.fallback_stage, FallbackStage::SafeGlobalPopular);
+        assert_eq!(result.items.len(), 3);
+    }
+
+    #[test]
+    fn area_only_context_uses_same_city_candidates() {
+        let dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-context-test");
+        let mut query = query("st_tamachi", PlacementKind::Search);
+        query.context = Some(request_area_context(Some("Minato"), Some("Tokyo")));
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.fallback_stage, FallbackStage::SameCity);
+        assert!(result
+            .candidate_counts
+            .get("same_city")
+            .is_some_and(|count| *count >= 2));
+    }
+
+    #[test]
+    fn line_context_uses_line_id_before_line_name() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_target_line".to_string(),
+                    name: "Target Line School".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_target_line".to_string(),
+                },
+                School {
+                    id: "school_other_line".to_string(),
+                    name: "Other Line School".to_string(),
+                    area: "Shibuya".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_other_line".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Shared Line".to_string(),
+                    line_id: Some("line_target".to_string()),
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_target_line".to_string(),
+                    name: "Target Line Station".to_string(),
+                    line_name: "Shared Line".to_string(),
+                    line_id: Some("line_target".to_string()),
+                    latitude: 35.01,
+                    longitude: 139.01,
+                },
+                Station {
+                    id: "st_other_line".to_string(),
+                    name: "Other Line Station".to_string(),
+                    line_name: "Shared Line".to_string(),
+                    line_id: Some("line_other".to_string()),
+                    latitude: 35.02,
+                    longitude: 139.02,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_target_line".to_string(),
+                    station_id: "st_target_line".to_string(),
+                    walking_minutes: 6,
+                    distance_meters: 600,
+                    hop_distance: 1,
+                    line_name: "Shared Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_other_line".to_string(),
+                    station_id: "st_other_line".to_string(),
+                    walking_minutes: 7,
+                    distance_meters: 700,
+                    hop_distance: 1,
+                    line_name: "Shared Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 1;
+        profiles.fallback.min_results = 1;
+        let engine = RankingEngine::new(profiles, "v020-line-id-stage-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.context = Some(RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Shared Line".to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&1));
+        assert_eq!(result.fallback_stage, FallbackStage::SameLine);
+        assert_eq!(result.items[0].school_id, "school_target_line");
+    }
+
+    #[test]
+    fn city_context_requires_prefecture_match_when_present() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_tokyo_fuchu".to_string(),
+                    name: "Tokyo Fuchu".to_string(),
+                    area: "Fuchu".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_tokyo".to_string(),
+                },
+                School {
+                    id: "school_hiroshima_fuchu".to_string(),
+                    name: "Hiroshima Fuchu".to_string(),
+                    area: "Fuchu".to_string(),
+                    prefecture_name: Some("Hiroshima".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_hiroshima".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: None,
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_tokyo_fuchu".to_string(),
+                    name: "Tokyo Fuchu Station".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: None,
+                    latitude: 35.01,
+                    longitude: 139.01,
+                },
+                Station {
+                    id: "st_hiroshima_fuchu".to_string(),
+                    name: "Hiroshima Fuchu Station".to_string(),
+                    line_name: "Other Line".to_string(),
+                    line_id: None,
+                    latitude: 34.57,
+                    longitude: 133.24,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_tokyo_fuchu".to_string(),
+                    station_id: "st_tokyo_fuchu".to_string(),
+                    walking_minutes: 6,
+                    distance_meters: 600,
+                    hop_distance: 1,
+                    line_name: "Target Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_hiroshima_fuchu".to_string(),
+                    station_id: "st_hiroshima_fuchu".to_string(),
+                    walking_minutes: 7,
+                    distance_meters: 700,
+                    hop_distance: 1,
+                    line_name: "Other Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 1;
+        profiles.fallback.min_results = 1;
+        let engine = RankingEngine::new(profiles, "v020-city-pref-stage-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.context = Some(request_area_context(Some("Fuchu"), Some("Tokyo")));
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("same_city"), Some(&1));
+        assert_eq!(result.fallback_stage, FallbackStage::SameCity);
+        assert_eq!(result.items[0].school_id, "school_tokyo_fuchu");
+    }
+
+    #[test]
+    fn station_area_conflict_warning_suppresses_area_fallback() {
+        let dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-context-test");
+        let mut query = query("st_tamachi", PlacementKind::Search);
+        let mut context = request_area_context(Some("Shibuya"), Some("Tokyo"));
+        context.context_source = ContextSource::RequestStation;
+        context.station = Some(StationContext {
+            station_id: "st_tamachi".to_string(),
+            station_name: "Tamachi".to_string(),
+        });
+        context.line = Some(LineContext {
+            line_id: None,
+            line_name: "JR Yamanote Line".to_string(),
+            operator_name: None,
+        });
+        context.warnings.push(ContextWarning {
+            code: "station_area_conflict".to_string(),
+            message: "station context was used and conflicting area hint was ignored".to_string(),
+        });
+        query.context = Some(context);
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("same_city"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_prefecture"), Some(&0));
+    }
+
+    #[test]
+    fn default_safe_context_skips_neighbor_area_stage() {
+        let dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-context-test");
+        let mut query = query("st_tamachi", PlacementKind::Search);
+        query.context = Some(RankingContext::default_safe());
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("strict_station"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_city"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_prefecture"), Some(&0));
+        assert_eq!(result.candidate_counts.get("neighbor_area"), Some(&0));
+        assert_eq!(result.fallback_stage, FallbackStage::SafeGlobalPopular);
+    }
+
+    #[test]
+    fn neighbor_area_can_expand_beyond_same_line_candidates() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_neighbor_a".to_string(),
+                    name: "Neighbor A".to_string(),
+                    area: "Neighbor Ward".to_string(),
+                    prefecture_name: None,
+                    school_type: "high_school".to_string(),
+                    group_id: "group_neighbor_a".to_string(),
+                },
+                School {
+                    id: "school_neighbor_b".to_string(),
+                    name: "Neighbor B".to_string(),
+                    area: "Neighbor Ward".to_string(),
+                    prefecture_name: None,
+                    school_type: "high_school".to_string(),
+                    group_id: "group_neighbor_b".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: None,
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_neighbor_a".to_string(),
+                    name: "Neighbor A Station".to_string(),
+                    line_name: "Other Line".to_string(),
+                    line_id: None,
+                    latitude: 35.0005,
+                    longitude: 139.0005,
+                },
+                Station {
+                    id: "st_neighbor_b".to_string(),
+                    name: "Neighbor B Station".to_string(),
+                    line_name: "Another Line".to_string(),
+                    line_id: None,
+                    latitude: 35.0007,
+                    longitude: 139.0007,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_neighbor_a".to_string(),
+                    station_id: "st_neighbor_a".to_string(),
+                    walking_minutes: 8,
+                    distance_meters: 650,
+                    hop_distance: 0,
+                    line_name: "Other Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_neighbor_b".to_string(),
+                    station_id: "st_neighbor_b".to_string(),
+                    walking_minutes: 9,
+                    distance_meters: 780,
+                    hop_distance: 0,
+                    line_name: "Another Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-context-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.context = Some(RankingContext {
+            context_source: ContextSource::RequestStation,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: None,
+                line_name: "Target Line".to_string(),
+                operator_name: None,
+            }),
+            station: Some(StationContext {
+                station_id: "st_target".to_string(),
+                station_name: "Target".to_string(),
+            }),
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("strict_station"), Some(&0));
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&0));
+        assert_eq!(result.candidate_counts.get("neighbor_area"), Some(&2));
+        assert_eq!(result.fallback_stage, FallbackStage::NeighborArea);
+    }
+
+    #[test]
+    fn hokkaido_context_does_not_prioritize_okinawa_popularity() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_hokkaido".to_string(),
+                    name: "Hokkaido School".to_string(),
+                    area: "Hokkaido".to_string(),
+                    prefecture_name: None,
+                    school_type: "high_school".to_string(),
+                    group_id: "group_hokkaido".to_string(),
+                },
+                School {
+                    id: "school_okinawa".to_string(),
+                    name: "Okinawa Popular School".to_string(),
+                    area: "Okinawa".to_string(),
+                    prefecture_name: None,
+                    school_type: "high_school".to_string(),
+                    group_id: "group_okinawa".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_sapporo".to_string(),
+                    name: "Sapporo".to_string(),
+                    line_name: "Sapporo Line".to_string(),
+                    line_id: None,
+                    latitude: 43.0618,
+                    longitude: 141.3545,
+                },
+                Station {
+                    id: "st_naha".to_string(),
+                    name: "Naha".to_string(),
+                    line_name: "Yui Rail".to_string(),
+                    line_id: None,
+                    latitude: 26.2124,
+                    longitude: 127.6792,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_hokkaido".to_string(),
+                    station_id: "st_sapporo".to_string(),
+                    walking_minutes: 12,
+                    distance_meters: 900,
+                    hop_distance: 0,
+                    line_name: "Sapporo Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_okinawa".to_string(),
+                    station_id: "st_naha".to_string(),
+                    walking_minutes: 2,
+                    distance_meters: 100,
+                    hop_distance: 0,
+                    line_name: "Yui Rail".to_string(),
+                },
+            ],
+            popularity_snapshots: vec![PopularitySnapshot {
+                school_id: "school_okinawa".to_string(),
+                popularity_score: 100.0,
+                total_events: 100,
+                school_view_count: 100,
+                school_save_count: 0,
+                event_view_count: 0,
+                apply_click_count: 0,
+                share_count: 0,
+                search_execute_count: 0,
+            }],
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-hokkaido-test");
+        let mut query = query("st_sapporo", PlacementKind::Search);
+        query.context = Some(request_area_context(None, Some("Hokkaido")));
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.items[0].school_id, "school_hokkaido");
+        assert_eq!(result.fallback_stage, FallbackStage::SamePrefecture);
+    }
+
+    #[test]
+    fn prefecture_context_matches_school_prefecture_metadata() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_tokyo".to_string(),
+                    name: "Tokyo School".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_tokyo".to_string(),
+                },
+                School {
+                    id: "school_osaka".to_string(),
+                    name: "Osaka Popular School".to_string(),
+                    area: "Kita".to_string(),
+                    prefecture_name: Some("Osaka".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_osaka".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_tokyo".to_string(),
+                    name: "Tokyo".to_string(),
+                    line_name: "Tokyo Line".to_string(),
+                    line_id: None,
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_osaka".to_string(),
+                    name: "Osaka".to_string(),
+                    line_name: "Osaka Line".to_string(),
+                    line_id: None,
+                    latitude: 34.0,
+                    longitude: 135.0,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_tokyo".to_string(),
+                    station_id: "st_tokyo".to_string(),
+                    walking_minutes: 12,
+                    distance_meters: 900,
+                    hop_distance: 0,
+                    line_name: "Tokyo Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_osaka".to_string(),
+                    station_id: "st_osaka".to_string(),
+                    walking_minutes: 2,
+                    distance_meters: 100,
+                    hop_distance: 0,
+                    line_name: "Osaka Line".to_string(),
+                },
+            ],
+            popularity_snapshots: vec![PopularitySnapshot {
+                school_id: "school_osaka".to_string(),
+                popularity_score: 100.0,
+                total_events: 100,
+                school_view_count: 100,
+                school_save_count: 0,
+                event_view_count: 0,
+                apply_click_count: 0,
+                share_count: 0,
+                search_execute_count: 0,
+            }],
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-prefecture-test");
+        let mut query = query("st_tokyo", PlacementKind::Search);
+        query.context = Some(request_area_context(None, Some("Tokyo")));
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.items[0].school_id, "school_tokyo");
+        assert_eq!(result.candidate_counts.get("same_prefecture"), Some(&1));
+        assert_eq!(result.fallback_stage, FallbackStage::SamePrefecture);
     }
 
     #[test]
@@ -1049,6 +2000,7 @@ mod tests {
                     user_id: Some("demo-user-1".to_string()),
                     placement: PlacementKind::Mypage,
                     debug: true,
+                    context: None,
                 },
             )
             .expect("recommendation result");
@@ -1106,6 +2058,7 @@ mod tests {
                 score,
                 explanation: "test".to_string(),
                 score_breakdown: Vec::new(),
+                fallback_stage: Some(FallbackStage::StrictStation),
             },
         }
     }

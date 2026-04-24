@@ -6,5 +6,5 @@ version.workspace = true
 
 [dependencies]
 api-contracts = { path = "../api-contracts" }
+context = { path = "../context" }
 utoipa.workspace = true
-

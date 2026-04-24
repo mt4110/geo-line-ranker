@@ -21,13 +21,30 @@ type RecommendationItem = {
   score: number;
   explanation: string;
   score_breakdown: ScoreComponent[];
+  fallback_stage?: FallbackStage;
 };
 
+type FallbackStage =
+  | "strict_station"
+  | "same_line"
+  | "same_city"
+  | "same_prefecture"
+  | "neighbor_area"
+  | "safe_global_popular";
+
 type RecommendationResponse = {
+  request_id?: string;
   items: RecommendationItem[];
   explanation: string;
   score_breakdown: ScoreComponent[];
-  fallback_stage: "strict" | "neighbor";
+  fallback_stage: FallbackStage;
+  candidate_counts: Record<string, number>;
+  context?: {
+    context_source: string;
+    confidence: number;
+    privacy_level: string;
+    warnings: Array<{ code: string; message: string }>;
+  };
   profile_version: string;
   algorithm_version: string;
 };

@@ -2,10 +2,16 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
+    sync::OnceLock,
 };
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use context::{
+    AreaContext, AreaContextInput, ContextInput, ContextSource, ContextWarning, LineContext,
+    PrivacyLevel, RankingContext, StationContext,
+};
 use csv::Reader;
 use domain::{
     AreaAffinitySnapshot, Event, PlacementKind, PopularitySnapshot, RankingDataset, RankingQuery,
@@ -17,13 +23,20 @@ use jp_rail::RailStationRecord;
 use jp_school::{SchoolCodeRecord, SchoolGeodataRecord};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use storage::{
     ClaimedJob, JobType, NewJob, RecommendationRepository, RecommendationTrace,
     SnapshotRefreshStats, SnapshotTuning,
 };
 use tokio_postgres::{Client, GenericClient, NoTls, Row};
+use uuid::Uuid;
 
-const REQUIRED_READY_TABLES: [&str; 10] = [
+static MIGRATION_PROCESS_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+const REQUIRED_READY_TABLES: [&str; 14] = [
+    "areas",
+    "context_resolution_traces",
+    "lines",
     "schools",
     "events",
     "stations",
@@ -32,6 +45,7 @@ const REQUIRED_READY_TABLES: [&str; 10] = [
     "user_affinity_snapshots",
     "area_affinity_snapshots",
     "user_events",
+    "user_profile_contexts",
     "recommendation_traces",
     "job_queue",
 ];
@@ -45,6 +59,46 @@ const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference valid
 #[derive(Debug, Clone)]
 pub struct PgRepository {
     database_url: String,
+    trace_hash_salt: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct StationAreaColumns {
+    country_code: Option<String>,
+    prefecture_code: Option<String>,
+    prefecture_name: Option<String>,
+    city_code: Option<String>,
+    city_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AreaLookupRow {
+    area_id: String,
+    country_code: String,
+    prefecture_code: Option<String>,
+    prefecture_name: Option<String>,
+    city_code: Option<String>,
+    city_name: Option<String>,
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn matches_ignore_ascii(actual: Option<&str>, expected: &str) -> bool {
+    actual.is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+}
+
+fn normalized_area_context(area_input: &AreaContextInput) -> AreaContext {
+    AreaContext {
+        country: non_empty(area_input.country.as_deref())
+            .unwrap_or("JP")
+            .to_string(),
+        prefecture_code: non_empty(area_input.prefecture_code.as_deref()).map(str::to_string),
+        prefecture_name: non_empty(area_input.prefecture_name.as_deref()).map(str::to_string),
+        city_code: non_empty(area_input.city_code.as_deref()).map(str::to_string),
+        city_name: non_empty(area_input.city_name.as_deref()).map(str::to_string),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -102,8 +156,10 @@ pub struct JobMutationSummary {
 
 impl PgRepository {
     pub fn new(database_url: impl Into<String>) -> Self {
+        let database_url = database_url.into();
         Self {
-            database_url: database_url.into(),
+            trace_hash_salt: load_trace_hash_salt(),
+            database_url,
         }
     }
 
@@ -138,7 +194,7 @@ impl PgRepository {
         let client = self.connect().await?;
         client
             .query_opt(
-                "SELECT id, name, line_name, latitude, longitude
+                "SELECT id, name, line_name, line_id, latitude, longitude
                  FROM stations
                  WHERE id = $1",
                 &[&station_id],
@@ -149,11 +205,761 @@ impl PgRepository {
                     id: row.get("id"),
                     name: row.get("name"),
                     line_name: row.get("line_name"),
+                    line_id: row.get("line_id"),
                     latitude: row.get("latitude"),
                     longitude: row.get("longitude"),
                 })
             })
             .context("failed to load target station")
+    }
+
+    pub async fn resolve_context(
+        &self,
+        request_id: &str,
+        user_id: Option<&str>,
+        input: &ContextInput,
+    ) -> Result<RankingContext> {
+        let client = self.connect().await?;
+        if input
+            .station_id
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            bail!("station_id must not be blank");
+        }
+        let mut context = if let Some(station_id) = input
+            .station_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            self.resolve_station_context(&client, station_id, input)
+                .await?
+        } else if input.has_line() {
+            self.resolve_line_context(&client, input).await?
+        } else if input.area.as_ref().is_some_and(|area| !area.is_empty()) {
+            let area = match input.area.as_ref() {
+                Some(area_input) => self.resolve_area_context(&client, area_input).await?,
+                None => None,
+            };
+            RankingContext {
+                context_source: ContextSource::RequestArea,
+                confidence: 0.95,
+                area,
+                line: None,
+                station: None,
+                privacy_level: PrivacyLevel::CoarseArea,
+                fallback_policy: "school_event_jp_default".to_string(),
+                gate_policy: "geo_line_default".to_string(),
+                warnings: Vec::new(),
+            }
+        } else if let Some(user_id) = user_id {
+            self.resolve_user_profile_context(&client, user_id)
+                .await?
+                .unwrap_or_else(RankingContext::default_safe)
+        } else {
+            RankingContext::default_safe()
+        };
+
+        context
+            .warnings
+            .sort_by(|left, right| left.code.cmp(&right.code));
+        if let Err(error) = self
+            .record_context_trace(&client, request_id, user_id, &context)
+            .await
+        {
+            tracing::warn!(%error, request_id, "failed to record context trace");
+        }
+        Ok(context)
+    }
+
+    pub async fn load_station_for_context(
+        &self,
+        context: &RankingContext,
+    ) -> Result<Option<Station>> {
+        let client = self.connect().await?;
+        if let Some(station_id) = context.station_id() {
+            return client
+                .query_opt(
+                    "SELECT id, name, line_name, line_id, latitude, longitude
+                     FROM stations
+                     WHERE id = $1",
+                    &[&station_id],
+                )
+                .await
+                .map(|row| row.map(station_from_row))
+                .with_context(|| format!("failed to load station {station_id}"));
+        }
+
+        if let Some(line_name) = context.line_name() {
+            let line_id = context
+                .line
+                .as_ref()
+                .and_then(|line| line.line_id.as_deref());
+            return client
+                .query_opt(
+                    "SELECT id, name, line_name, line_id, latitude, longitude
+                     FROM stations
+                     WHERE ($1::TEXT IS NOT NULL AND line_id = $1)
+                        OR (
+                            $2::TEXT IS NOT NULL
+                            AND ($1::TEXT IS NULL OR line_id IS NULL)
+                            AND line_name = $2
+                        )
+                     ORDER BY
+                        CASE
+                            WHEN $1::TEXT IS NOT NULL AND line_id = $1 THEN 0
+                            WHEN
+                                $2::TEXT IS NOT NULL
+                                AND ($1::TEXT IS NULL OR line_id IS NULL)
+                                AND line_name = $2
+                                THEN 1
+                            ELSE 2
+                        END,
+                        id
+                     LIMIT 1",
+                    &[&line_id, &line_name],
+                )
+                .await
+                .map(|row| row.map(station_from_row))
+                .context("failed to load representative station for line context");
+        }
+
+        if let Some(city_name) = context.city_name() {
+            if let Some(station) = self
+                .load_station_for_school_area(&client, city_name, context.prefecture_name())
+                .await
+                .with_context(|| {
+                    format!("failed to load representative station for city {city_name}")
+                })?
+            {
+                return Ok(Some(station));
+            }
+        }
+
+        if let Some(prefecture_name) = context.prefecture_name() {
+            if let Some(station) = self
+                .load_station_for_school_area(&client, prefecture_name, None)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to load representative station for prefecture {prefecture_name}"
+                    )
+                })?
+            {
+                return Ok(Some(station));
+            }
+        }
+
+        client
+            .query_opt(
+                "SELECT id, name, line_name, line_id, latitude, longitude
+                 FROM stations
+                 ORDER BY id
+                 LIMIT 1",
+                &[],
+            )
+            .await
+            .map(|row| row.map(station_from_row))
+            .context("failed to load default representative station")
+    }
+
+    async fn resolve_station_context(
+        &self,
+        client: &Client,
+        station_id: &str,
+        input: &ContextInput,
+    ) -> Result<RankingContext> {
+        let station_row = client
+            .query_opt(
+                "SELECT
+                    station.id,
+                    station.name,
+                    station.line_name,
+                    station.line_id,
+                    station.latitude,
+                    station.longitude,
+                    line.operator_name,
+                    area.country_code AS station_country_code,
+                    area.prefecture_code AS station_prefecture_code,
+                    area.prefecture_name AS station_prefecture_name,
+                    area.city_code AS station_city_code,
+                    area.city_name AS station_city_name
+                 FROM stations AS station
+                 LEFT JOIN lines AS line
+                   ON line.line_id = station.line_id
+                 LEFT JOIN areas AS area
+                   ON area.area_id = station.area_id
+                 WHERE station.id = $1",
+                &[&station_id],
+            )
+            .await?
+            .with_context(|| format!("unknown station: {station_id}"))?;
+        let station = Station {
+            id: station_row.get("id"),
+            name: station_row.get("name"),
+            line_name: station_row.get("line_name"),
+            line_id: station_row.get("line_id"),
+            latitude: station_row.get("latitude"),
+            longitude: station_row.get("longitude"),
+        };
+        let station_line_id = station_row.get::<_, Option<String>>("line_id");
+        let station_operator_name = station_row.get::<_, Option<String>>("operator_name");
+        let station_area = StationAreaColumns {
+            country_code: station_row.get("station_country_code"),
+            prefecture_code: station_row.get("station_prefecture_code"),
+            prefecture_name: station_row.get("station_prefecture_name"),
+            city_code: station_row.get("station_city_code"),
+            city_name: station_row.get("station_city_name"),
+        };
+
+        let mut area = match input.area.as_ref().filter(|area| !area.is_empty()) {
+            Some(area_input) => self.resolve_area_context(client, area_input).await?,
+            None => None,
+        };
+        let mut warnings = Vec::new();
+        if let Some(area_input) = input.area.as_ref().filter(|area| !area.is_empty()) {
+            let matches = self
+                .station_matches_area_hint(client, &station.id, area_input, &station_area)
+                .await?;
+            if !matches {
+                warnings.push(ContextWarning {
+                    code: "station_area_conflict".to_string(),
+                    message: "station context was used and conflicting area hint was ignored"
+                        .to_string(),
+                });
+                area = None;
+            }
+        }
+
+        Ok(RankingContext {
+            context_source: ContextSource::RequestStation,
+            confidence: 1.0,
+            area,
+            line: Some(LineContext {
+                line_id: station_line_id,
+                line_name: station.line_name.clone(),
+                operator_name: station_operator_name,
+            }),
+            station: Some(StationContext {
+                station_id: station.id,
+                station_name: station.name,
+            }),
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings,
+        })
+    }
+
+    async fn station_matches_area_hint(
+        &self,
+        client: &Client,
+        station_id: &str,
+        area_input: &AreaContextInput,
+        station_area: &StationAreaColumns,
+    ) -> Result<bool> {
+        let mut matched_city_hint = false;
+        let country = non_empty(area_input.country.as_deref())
+            .or_else(|| non_empty(station_area.country_code.as_deref()))
+            .unwrap_or("JP");
+        if let Some(country) = non_empty(area_input.country.as_deref()) {
+            let station_country = non_empty(station_area.country_code.as_deref()).unwrap_or("JP");
+            if !station_country.eq_ignore_ascii_case(country) {
+                return Ok(false);
+            }
+        }
+        if let Some(city_code) = non_empty(area_input.city_code.as_deref()) {
+            if !matches_ignore_ascii(station_area.city_code.as_deref(), city_code) {
+                return Ok(false);
+            }
+            matched_city_hint = true;
+        }
+        if let Some(city_name) = non_empty(area_input.city_name.as_deref()) {
+            if let Some(station_city_name) = non_empty(station_area.city_name.as_deref()) {
+                if !station_city_name.eq_ignore_ascii_case(city_name) {
+                    return Ok(false);
+                }
+                matched_city_hint = true;
+            } else if !self
+                .station_linked_school_area_matches(client, station_id, city_name)
+                .await?
+            {
+                return Ok(false);
+            } else {
+                matched_city_hint = true;
+            }
+        }
+        let inferred_city_area = if matched_city_hint {
+            self.lookup_area_row(
+                client,
+                country,
+                None,
+                None,
+                non_empty(area_input.city_code.as_deref()),
+                non_empty(area_input.city_name.as_deref()),
+            )
+            .await?
+        } else {
+            None
+        };
+        if let Some(prefecture_code) = non_empty(area_input.prefecture_code.as_deref()) {
+            if let Some(station_prefecture_code) =
+                non_empty(station_area.prefecture_code.as_deref())
+            {
+                if !station_prefecture_code.eq_ignore_ascii_case(prefecture_code) {
+                    return Ok(false);
+                }
+            } else if let Some(inferred_prefecture_code) = inferred_city_area
+                .as_ref()
+                .and_then(|area| area.prefecture_code.as_deref())
+            {
+                if !inferred_prefecture_code.eq_ignore_ascii_case(prefecture_code) {
+                    return Ok(false);
+                }
+            } else {
+                return Ok(false);
+            }
+        }
+        if let Some(prefecture_name) = non_empty(area_input.prefecture_name.as_deref()) {
+            if let Some(station_prefecture_name) =
+                non_empty(station_area.prefecture_name.as_deref())
+            {
+                if !station_prefecture_name.eq_ignore_ascii_case(prefecture_name) {
+                    return Ok(false);
+                }
+            } else if let Some(inferred_prefecture_name) = inferred_city_area
+                .as_ref()
+                .and_then(|area| area.prefecture_name.as_deref())
+            {
+                if !inferred_prefecture_name.eq_ignore_ascii_case(prefecture_name) {
+                    return Ok(false);
+                }
+            } else {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    async fn station_linked_school_area_matches(
+        &self,
+        client: &Client,
+        station_id: &str,
+        city_name: &str,
+    ) -> Result<bool> {
+        client
+            .query_one(
+                "SELECT EXISTS (
+                    SELECT 1
+                    FROM school_station_links AS link
+                    INNER JOIN schools AS school
+                      ON school.id = link.school_id
+                    WHERE link.station_id = $1
+                      AND lower(school.area) = lower($2)
+                 ) AS matches_area",
+                &[&station_id, &city_name],
+            )
+            .await
+            .map(|row| row.get::<_, bool>("matches_area"))
+            .context("failed to validate station area hint")
+    }
+
+    async fn resolve_line_context(
+        &self,
+        client: &Client,
+        input: &ContextInput,
+    ) -> Result<RankingContext> {
+        let requested_line_id = input
+            .line_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let requested_line_name = input
+            .line_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let line = if let Some(line_id) = requested_line_id.as_deref() {
+            client
+                .query_opt(
+                    "SELECT line_id, line_name, operator_name
+                     FROM lines
+                     WHERE line_id = $1",
+                    &[&line_id],
+                )
+                .await?
+                .map(|row| LineContext {
+                    line_id: Some(row.get("line_id")),
+                    line_name: row.get("line_name"),
+                    operator_name: row.get("operator_name"),
+                })
+        } else {
+            None
+        };
+
+        let line = if let Some(line) = line {
+            line
+        } else {
+            if let Some(line_id) = requested_line_id.as_deref() {
+                if requested_line_name.is_none() {
+                    bail!("unknown line_id: {line_id}");
+                }
+            }
+            let line_name = requested_line_name
+                .with_context(|| "line context requires line_id or line_name")?;
+            let row = client
+                .query_opt(
+                    "SELECT line_id, line_name, operator_name
+                     FROM lines
+                     WHERE line_name = $1
+                     LIMIT 1",
+                    &[&line_name],
+                )
+                .await?;
+            row.map(|row| LineContext {
+                line_id: Some(row.get("line_id")),
+                line_name: row.get("line_name"),
+                operator_name: row.get("operator_name"),
+            })
+            .unwrap_or_else(|| LineContext {
+                line_id: None,
+                line_name: line_name.to_string(),
+                operator_name: None,
+            })
+        };
+        let area = match input.area.as_ref().filter(|area| !area.is_empty()) {
+            Some(area_input) => self.resolve_area_context(client, area_input).await?,
+            None => None,
+        };
+
+        Ok(RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area,
+            line: Some(line),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        })
+    }
+
+    async fn resolve_user_profile_context(
+        &self,
+        client: &Client,
+        user_id: &str,
+    ) -> Result<Option<RankingContext>> {
+        let row = client
+            .query_opt(
+                "SELECT
+                    profile.confidence,
+                    area.country_code,
+                    area.prefecture_code,
+                    area.prefecture_name,
+                    area.city_code,
+                    area.city_name,
+                    line.line_id,
+                    line.line_name,
+                    line.operator_name,
+                    station.id AS station_id,
+                    station.name AS station_name
+                 FROM user_profile_contexts AS profile
+                 LEFT JOIN areas AS area
+                   ON area.area_id = profile.area_id
+                 LEFT JOIN lines AS line
+                   ON line.line_id = profile.line_id
+                 LEFT JOIN stations AS station
+                   ON station.id = profile.station_id
+                 WHERE profile.user_id = $1
+                   AND (profile.retained_until IS NULL OR profile.retained_until > NOW())",
+                &[&user_id],
+            )
+            .await?;
+
+        Ok(row.and_then(|row| {
+            let country_code = row.get::<_, Option<String>>("country_code");
+            let prefecture_code = row.get::<_, Option<String>>("prefecture_code");
+            let prefecture_name = row.get::<_, Option<String>>("prefecture_name");
+            let city_code = row.get::<_, Option<String>>("city_code");
+            let city_name = row.get::<_, Option<String>>("city_name");
+            let has_area_signal = [
+                prefecture_code.as_deref(),
+                prefecture_name.as_deref(),
+                city_code.as_deref(),
+                city_name.as_deref(),
+            ]
+            .into_iter()
+            .any(|value| non_empty(value).is_some());
+            let area = country_code.and_then(|country| {
+                has_area_signal.then_some(AreaContext {
+                    country,
+                    prefecture_code,
+                    prefecture_name,
+                    city_code,
+                    city_name,
+                })
+            });
+            let line = row
+                .get::<_, Option<String>>("line_name")
+                .map(|line_name| LineContext {
+                    line_id: row.get("line_id"),
+                    line_name,
+                    operator_name: row.get("operator_name"),
+                });
+            let station = row
+                .get::<_, Option<String>>("station_id")
+                .map(|station_id| StationContext {
+                    station_id,
+                    station_name: row.get("station_name"),
+                });
+
+            (area.is_some() || line.is_some() || station.is_some()).then(|| RankingContext {
+                context_source: ContextSource::UserProfileArea,
+                confidence: row.get("confidence"),
+                area,
+                line,
+                station,
+                privacy_level: PrivacyLevel::CoarseArea,
+                fallback_policy: "school_event_jp_default".to_string(),
+                gate_policy: "geo_line_default".to_string(),
+                warnings: Vec::new(),
+            })
+        }))
+    }
+
+    async fn resolve_area_context(
+        &self,
+        client: &Client,
+        area_input: &AreaContextInput,
+    ) -> Result<Option<AreaContext>> {
+        if area_input.is_empty() {
+            return Ok(None);
+        }
+
+        let fallback_area = normalized_area_context(area_input);
+        let area = self
+            .lookup_area_row(
+                client,
+                &fallback_area.country,
+                fallback_area.prefecture_code.as_deref(),
+                fallback_area.prefecture_name.as_deref(),
+                fallback_area.city_code.as_deref(),
+                fallback_area.city_name.as_deref(),
+            )
+            .await?
+            .map(|area| AreaContext {
+                country: area.country_code,
+                prefecture_code: area.prefecture_code,
+                prefecture_name: area.prefecture_name,
+                city_code: area.city_code,
+                city_name: area.city_name,
+            })
+            .unwrap_or(fallback_area);
+
+        Ok(Some(area))
+    }
+
+    async fn record_context_trace(
+        &self,
+        client: &Client,
+        request_id: &str,
+        user_id: Option<&str>,
+        context: &RankingContext,
+    ) -> Result<()> {
+        let user_id_hash = user_id.map(|user_id| self.hash_user_id(user_id));
+        let area_id = match context.area.as_ref() {
+            Some(area) => self.resolve_trace_area_id(client, area).await?,
+            None => None,
+        };
+        let line_id = context.line.as_ref().and_then(|line| line.line_id.clone());
+        let station_id = context
+            .station
+            .as_ref()
+            .map(|station| station.station_id.clone());
+        let warnings = serde_json::to_value(&context.warnings)?;
+        client
+            .execute(
+                "INSERT INTO context_resolution_traces (
+                    request_id,
+                    user_id_hash,
+                    context_source,
+                    confidence,
+                    area_id,
+                    line_id,
+                    station_id,
+                    warnings
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[
+                    &request_id,
+                    &user_id_hash,
+                    &context.context_source.as_str(),
+                    &context.confidence,
+                    &area_id,
+                    &line_id,
+                    &station_id,
+                    &warnings,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn lookup_area_row(
+        &self,
+        client: &Client,
+        country: &str,
+        prefecture_code: Option<&str>,
+        prefecture_name: Option<&str>,
+        city_code: Option<&str>,
+        city_name: Option<&str>,
+    ) -> Result<Option<AreaLookupRow>> {
+        if city_code.is_none()
+            && prefecture_code.is_none()
+            && city_name.is_none()
+            && prefecture_name.is_none()
+        {
+            return Ok(None);
+        }
+
+        client
+            .query_opt(
+                "SELECT
+                    area_id,
+                    country_code,
+                    prefecture_code,
+                    prefecture_name,
+                    city_code,
+                    city_name
+                 FROM areas
+                 WHERE country_code = $5
+                   AND ($1::TEXT IS NULL OR city_code = $1)
+                   AND ($2::TEXT IS NULL OR prefecture_code = $2)
+                   AND ($3::TEXT IS NULL OR lower(city_name) = lower($3))
+                   AND ($4::TEXT IS NULL OR lower(prefecture_name) = lower($4))
+                 ORDER BY
+                    CASE
+                        WHEN ($1::TEXT IS NOT NULL OR $3::TEXT IS NOT NULL) AND area_level = 'city' THEN 0
+                        WHEN ($2::TEXT IS NOT NULL OR $4::TEXT IS NOT NULL) AND area_level = 'prefecture' THEN 0
+                        ELSE 1
+                    END,
+                    CASE
+                        WHEN ($1::TEXT IS NOT NULL OR $3::TEXT IS NOT NULL)
+                          AND area_level = 'city'
+                          AND prefecture_name IS NOT NULL
+                          THEN 0
+                        ELSE 1
+                    END,
+                    area_id ASC
+                 LIMIT 1",
+                &[
+                    &city_code,
+                    &prefecture_code,
+                    &city_name,
+                    &prefecture_name,
+                    &country,
+                ],
+            )
+            .await
+            .map(|row| {
+                row.map(|row| AreaLookupRow {
+                    area_id: row.get("area_id"),
+                    country_code: row.get("country_code"),
+                    prefecture_code: row.get("prefecture_code"),
+                    prefecture_name: row.get("prefecture_name"),
+                    city_code: row.get("city_code"),
+                    city_name: row.get("city_name"),
+                })
+            })
+            .context("failed to resolve area context")
+    }
+
+    async fn resolve_trace_area_id(
+        &self,
+        client: &Client,
+        area: &AreaContext,
+    ) -> Result<Option<String>> {
+        self.lookup_area_row(
+            client,
+            &area.country,
+            area.prefecture_code.as_deref(),
+            area.prefecture_name.as_deref(),
+            area.city_code.as_deref(),
+            area.city_name.as_deref(),
+        )
+        .await
+        .map(|row| row.map(|row| row.area_id))
+    }
+
+    async fn load_station_for_school_area(
+        &self,
+        client: &Client,
+        area: &str,
+        prefecture_name: Option<&str>,
+    ) -> Result<Option<Station>> {
+        client
+            .query_opt(
+                "SELECT station.id, station.name, station.line_name, station.line_id, station.latitude, station.longitude
+                 FROM schools AS school
+                 INNER JOIN school_station_links AS link
+                   ON link.school_id = school.id
+                 INNER JOIN stations AS station
+                   ON station.id = link.station_id
+                 LEFT JOIN LATERAL (
+                    SELECT area.prefecture_name
+                    FROM areas AS area
+                    WHERE area.country_code = 'JP'
+                      AND area.area_level = 'city'
+                      AND lower(area.city_name) = lower(school.area)
+                      AND (
+                          $2::TEXT IS NULL
+                          OR area.prefecture_name IS NULL
+                          OR lower(area.prefecture_name) = lower($2)
+                      )
+                    ORDER BY
+                        CASE
+                            WHEN $2::TEXT IS NOT NULL
+                              AND area.prefecture_name IS NOT NULL
+                              AND lower(area.prefecture_name) = lower($2)
+                              THEN 0
+                            ELSE 1
+                        END,
+                        area.area_id ASC
+                    LIMIT 1
+                 ) AS school_area ON TRUE
+                 WHERE (
+                    $2::TEXT IS NOT NULL
+                    AND lower(school.area) = lower($1)
+                    AND lower(COALESCE(school.prefecture_name, school_area.prefecture_name, '')) = lower($2)
+                 )
+                    OR (
+                        $2::TEXT IS NULL
+                        AND (
+                            lower(school.area) = lower($1)
+                            OR lower(school.prefecture_name) = lower($1)
+                            OR lower(school_area.prefecture_name) = lower($1)
+                        )
+                    )
+                 ORDER BY link.distance_meters ASC, link.walking_minutes ASC, station.id ASC
+                 LIMIT 1",
+                &[&area, &prefecture_name],
+            )
+            .await
+            .map(|row| row.map(station_from_row))
+            .context("failed to load representative station for area")
+    }
+
+    // Salt trace hashes with deployment-local configuration so trace tables do not
+    // expose a reusable raw-user-id digest on their own.
+    fn hash_user_id(&self, user_id: &str) -> String {
+        let mut digest = Sha256::new();
+        digest.update(self.trace_hash_salt.as_bytes());
+        digest.update(b"\0");
+        digest.update(user_id.as_bytes());
+        format!("{:x}", digest.finalize())
     }
 
     pub async fn list_jobs(&self, limit: i64) -> Result<JobQueueSnapshot> {
@@ -398,6 +1204,224 @@ impl PgRepository {
             .collect())
     }
 
+    pub async fn load_context_candidate_links(
+        &self,
+        target_station: &Station,
+        context: &RankingContext,
+        candidate_limit: usize,
+        min_scoped_candidates: usize,
+        neighbor_distance_cap_meters: f64,
+        neighbor_max_hops: u8,
+    ) -> Result<Vec<SchoolStationLink>> {
+        let client = self.connect().await?;
+        let station_id = context.station_id().map(str::to_string);
+        let line_id = context.line.as_ref().and_then(|line| line.line_id.clone());
+        let line_name = context.line_name().map(str::to_string);
+        let city_name = context.city_name().map(str::to_string);
+        let prefecture_name = context.prefecture_name().map(str::to_string);
+        let station_context_is_explicit = context.station.is_some();
+        let include_safe_global_candidates = true;
+        let rows = client
+            .query(
+                "WITH candidate_rows AS (
+                    SELECT
+                        link.school_id,
+                        link.station_id,
+                        link.walking_minutes,
+                        link.distance_meters,
+                        link.hop_distance,
+                        link.line_name,
+                        candidate_station.line_id AS candidate_line_id,
+                        candidate_station.geom AS candidate_geom,
+                        ST_Distance(
+                            candidate_station.geom,
+                            ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography
+                        ) AS target_distance_meters,
+                        school.area AS school_area,
+                        COALESCE(school.prefecture_name, school_area.prefecture_name) AS school_prefecture_name
+                    FROM school_station_links AS link
+                    INNER JOIN stations AS candidate_station
+                      ON candidate_station.id = link.station_id
+                    INNER JOIN schools AS school
+                      ON school.id = link.school_id
+                    LEFT JOIN LATERAL (
+                        SELECT area.prefecture_name
+                        FROM areas AS area
+                        WHERE area.country_code = 'JP'
+                          AND area.area_level = 'city'
+                          AND lower(area.city_name) = lower(school.area)
+                          AND (
+                              school.prefecture_name IS NULL
+                              OR area.prefecture_name IS NULL
+                              OR lower(area.prefecture_name) = lower(school.prefecture_name)
+                          )
+                        ORDER BY
+                            CASE
+                                WHEN school.prefecture_name IS NOT NULL
+                                  AND area.prefecture_name IS NOT NULL
+                                  AND lower(area.prefecture_name) = lower(school.prefecture_name)
+                                  THEN 0
+                                ELSE 1
+                            END,
+                            area.area_id ASC
+                        LIMIT 1
+                    ) AS school_area ON TRUE
+                ),
+                scored_rows AS (
+                    SELECT
+                        candidate_rows.*,
+                        ($1::TEXT IS NOT NULL AND station_id = $1) AS is_strict_station,
+                        (
+                            ($11::TEXT IS NOT NULL AND candidate_line_id = $11)
+                            OR (
+                                $2::TEXT IS NOT NULL
+                                AND ($11::TEXT IS NULL OR candidate_line_id IS NULL)
+                                AND line_name = $2
+                            )
+                        ) AS is_same_line,
+                        (
+                            $3::TEXT IS NOT NULL
+                            AND lower(school_area) = lower($3)
+                            AND (
+                                $4::TEXT IS NULL
+                                OR lower(COALESCE(school_prefecture_name, '')) = lower($4)
+                            )
+                        ) AS is_same_city,
+                        (
+                            $4::TEXT IS NOT NULL
+                            AND (
+                                lower(school_area) = lower($4)
+                                OR lower(COALESCE(school_prefecture_name, '')) = lower($4)
+                            )
+                        ) AS is_same_prefecture,
+                        (
+                            $12
+                            AND station_id <> $13
+                            AND NOT (
+                                ($11::TEXT IS NOT NULL AND candidate_line_id = $11)
+                                OR (
+                                    $2::TEXT IS NOT NULL
+                                    AND ($11::TEXT IS NULL OR candidate_line_id IS NULL)
+                                    AND line_name = $2
+                                )
+                            )
+                            AND ($3::TEXT IS NULL OR lower(school_area) <> lower($3))
+                            AND (
+                                $4::TEXT IS NULL
+                                OR NOT (
+                                    lower(school_area) = lower($4)
+                                    OR lower(COALESCE(school_prefecture_name, '')) = lower($4)
+                                )
+                            )
+                            AND ST_DWithin(
+                                candidate_geom,
+                                ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                                $8
+                            )
+                        ) AS is_neighbor_area,
+                        (
+                            (
+                                ($11::TEXT IS NOT NULL AND candidate_line_id = $11)
+                                OR (
+                                    $2::TEXT IS NOT NULL
+                                    AND ($11::TEXT IS NULL OR candidate_line_id IS NULL)
+                                    AND line_name = $2
+                                )
+                            )
+                            AND hop_distance <= $7
+                            AND ST_DWithin(
+                                candidate_geom,
+                                ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                                $8
+                            )
+                        ) AS is_near_same_line
+                    FROM candidate_rows
+                )
+                 SELECT
+                    link.school_id,
+                    link.station_id,
+                    link.walking_minutes,
+                    link.distance_meters,
+                    link.hop_distance,
+                    link.line_name
+                 FROM scored_rows AS link
+                 WHERE link.is_strict_station
+                    OR link.is_same_line
+                    OR link.is_same_city
+                    OR link.is_same_prefecture
+                    OR link.is_neighbor_area
+                    OR link.is_near_same_line
+                    OR (
+                        $9
+                        AND (
+                            SELECT COUNT(*)
+                            FROM scored_rows AS scoped
+                            WHERE scoped.is_strict_station
+                               OR scoped.is_same_line
+                               OR scoped.is_same_city
+                               OR scoped.is_same_prefecture
+                               OR scoped.is_neighbor_area
+                               OR scoped.is_near_same_line
+                        ) < $14
+                    )
+                 ORDER BY
+                    CASE
+                        WHEN link.is_strict_station THEN 0
+                        WHEN link.is_same_line THEN 1
+                        WHEN link.is_same_city THEN 3
+                        WHEN link.is_same_prefecture THEN 4
+                        WHEN link.is_neighbor_area THEN 5
+                        ELSE 6
+                    END,
+                    CASE
+                        WHEN NOT (
+                            link.is_strict_station
+                            OR link.is_same_line
+                            OR link.is_same_city
+                            OR link.is_same_prefecture
+                            OR link.is_neighbor_area
+                            OR link.is_near_same_line
+                        )
+                            THEN link.target_distance_meters
+                        ELSE 0.0
+                    END ASC,
+                    link.distance_meters ASC,
+                    link.walking_minutes ASC,
+                    link.school_id ASC,
+                    link.station_id ASC
+                LIMIT $10",
+                &[
+                    &station_id,
+                    &line_name,
+                    &city_name,
+                    &prefecture_name,
+                    &target_station.longitude,
+                    &target_station.latitude,
+                    &(neighbor_max_hops as i16),
+                    &neighbor_distance_cap_meters,
+                    &include_safe_global_candidates,
+                    &((candidate_limit.clamp(1, 10_000)) as i64),
+                    &line_id,
+                    &station_context_is_explicit,
+                    &target_station.id,
+                    &((min_scoped_candidates.max(1)) as i64),
+                ],
+            )
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| SchoolStationLink {
+                school_id: row.get("school_id"),
+                station_id: row.get("station_id"),
+                walking_minutes: row.get::<_, i16>("walking_minutes") as u16,
+                distance_meters: row.get::<_, i32>("distance_meters") as u32,
+                hop_distance: row.get::<_, i16>("hop_distance") as u8,
+                line_name: row.get("line_name"),
+            })
+            .collect())
+    }
+
     pub async fn load_candidate_dataset(
         &self,
         query: &RankingQuery,
@@ -429,7 +1453,7 @@ impl PgRepository {
 
         let schools: Vec<School> = client
             .query(
-                "SELECT id, name, area, school_type, group_id
+                "SELECT id, name, area, prefecture_name, school_type, group_id
                  FROM schools
                  WHERE id = ANY($1)
                  ORDER BY id",
@@ -441,6 +1465,7 @@ impl PgRepository {
                 id: row.get("id"),
                 name: row.get("name"),
                 area: row.get("area"),
+                prefecture_name: row.get("prefecture_name"),
                 school_type: row.get("school_type"),
                 group_id: row.get("group_id"),
             })
@@ -458,7 +1483,7 @@ impl PgRepository {
                     is_open_day,
                     is_featured,
                     priority_weight,
-                    starts_at,
+                    to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS starts_at,
                     placement_tags,
                     is_active
                  FROM events
@@ -492,7 +1517,7 @@ impl PgRepository {
 
         let stations: Vec<Station> = client
             .query(
-                "SELECT id, name, line_name, latitude, longitude
+                "SELECT id, name, line_name, line_id, latitude, longitude
                  FROM stations
                  WHERE id = ANY($1)
                  ORDER BY id",
@@ -504,6 +1529,7 @@ impl PgRepository {
                 id: row.get("id"),
                 name: row.get("name"),
                 line_name: row.get("line_name"),
+                line_id: row.get("line_id"),
                 latitude: row.get("latitude"),
                 longitude: row.get("longitude"),
             })
@@ -618,6 +1644,19 @@ impl PgRepository {
     }
 }
 
+fn load_trace_hash_salt() -> String {
+    match std::env::var("GEO_LINE_RANKER_TRACE_HASH_SALT") {
+        Ok(value) if !value.trim().is_empty() => value,
+        Ok(_) | Err(_) => {
+            let generated = Uuid::new_v4().to_string();
+            tracing::warn!(
+                "GEO_LINE_RANKER_TRACE_HASH_SALT is unset; generated an ephemeral trace hash salt for this process"
+            );
+            generated
+        }
+    }
+}
+
 pub fn is_foreign_key_violation(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause
@@ -638,6 +1677,7 @@ pub fn user_event_reference_validation_message(error: &anyhow::Error) -> Option<
 
 async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEvent) -> Result<i64> {
     let school_id = resolve_user_event_school_id(client, event).await?;
+    let occurred_at = parse_rfc3339_utc("occurred_at", &event.occurred_at)?;
     let row = client
         .query_one(
             "INSERT INTO user_events (
@@ -657,7 +1697,7 @@ async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEve
                 &event.event_kind.as_str(),
                 &event.event_id,
                 &event.target_station_id,
-                &event.occurred_at,
+                &occurred_at,
                 &event.payload,
             ],
         )
@@ -690,6 +1730,30 @@ async fn resolve_user_event_school_id(
     }
 
     Ok(Some(event_school_id))
+}
+
+fn parse_rfc3339_utc(field_name: &str, value: &str) -> Result<DateTime<Utc>> {
+    Ok(DateTime::parse_from_rfc3339(value)
+        .with_context(|| format!("{field_name} must be RFC3339: {value}"))?
+        .with_timezone(&Utc))
+}
+
+fn parse_optional_event_time(value: Option<&str>) -> Result<Option<DateTime<Utc>>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+
+    if let Ok(timestamp) = DateTime::parse_from_rfc3339(value) {
+        return Ok(Some(timestamp.with_timezone(&Utc)));
+    }
+
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").with_context(|| {
+        format!("starts_at must be RFC3339 timestamp or YYYY-MM-DD date: {value}")
+    })?;
+    let naive = date
+        .and_hms_opt(0, 0, 0)
+        .with_context(|| format!("starts_at date is out of range: {value}"))?;
+    Ok(Some(Utc.from_utc_datetime(&naive)))
 }
 
 async fn insert_job(client: &(impl GenericClient + Sync), job: &NewJob) -> Result<i64> {
@@ -779,6 +1843,48 @@ fn job_queue_row(row: Row) -> Result<JobQueueRow> {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
+}
+
+fn station_from_row(row: Row) -> Station {
+    Station {
+        id: row.get("id"),
+        name: row.get("name"),
+        line_name: row.get("line_name"),
+        line_id: row.get("line_id"),
+        latitude: row.get("latitude"),
+        longitude: row.get("longitude"),
+    }
+}
+
+fn stable_id(prefix: &str, value: &str) -> String {
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let slug = normalized
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    if slug.is_empty() {
+        format!("{}_unknown", prefix)
+    } else {
+        format!("{prefix}_{slug}")
+    }
+}
+
+fn city_area_stable_id(area_name: &str, prefecture_name: Option<&str>) -> String {
+    let key = match non_empty(prefecture_name) {
+        Some(prefecture_name) => format!("{prefecture_name}:{area_name}"),
+        None => area_name.to_string(),
+    };
+    stable_id("area", &key)
 }
 
 fn job_attempt_row(row: Row) -> Result<JobAttemptRow> {
@@ -1040,7 +2146,7 @@ impl RecommendationRepository for PgRepository {
 
         let schools = client
             .query(
-                "SELECT id, name, area, school_type, group_id FROM schools ORDER BY id",
+                "SELECT id, name, area, prefecture_name, school_type, group_id FROM schools ORDER BY id",
                 &[],
             )
             .await?
@@ -1049,6 +2155,7 @@ impl RecommendationRepository for PgRepository {
                 id: row.get("id"),
                 name: row.get("name"),
                 area: row.get("area"),
+                prefecture_name: row.get("prefecture_name"),
                 school_type: row.get("school_type"),
                 group_id: row.get("group_id"),
             })
@@ -1064,7 +2171,7 @@ impl RecommendationRepository for PgRepository {
                     is_open_day,
                     is_featured,
                     priority_weight,
-                    starts_at,
+                    to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS starts_at,
                     placement_tags,
                     is_active
                  FROM events
@@ -1097,7 +2204,7 @@ impl RecommendationRepository for PgRepository {
 
         let stations = client
             .query(
-                "SELECT id, name, line_name, latitude, longitude FROM stations ORDER BY id",
+                "SELECT id, name, line_name, line_id, latitude, longitude FROM stations ORDER BY id",
                 &[],
             )
             .await?
@@ -1106,6 +2213,7 @@ impl RecommendationRepository for PgRepository {
                 id: row.get("id"),
                 name: row.get("name"),
                 line_name: row.get("line_name"),
+                line_id: row.get("line_id"),
                 latitude: row.get("latitude"),
                 longitude: row.get("longitude"),
             })
@@ -1801,6 +2909,10 @@ impl RecommendationRepository for PgRepository {
 }
 
 pub async fn run_migrations(database_url: &str, migrations_dir: impl AsRef<Path>) -> Result<()> {
+    let _migration_guard = MIGRATION_PROCESS_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let repo = PgRepository::new(database_url);
     let mut client = repo.connect().await?;
     acquire_schema_migration_lock(&client).await?;
@@ -2655,17 +3767,19 @@ pub async fn import_jp_school_codes(
 
         transaction
             .execute(
-                "INSERT INTO schools (id, name, area, school_type, group_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (id) DO UPDATE
                  SET name = EXCLUDED.name,
                      area = EXCLUDED.area,
+                     prefecture_name = EXCLUDED.prefecture_name,
                      school_type = EXCLUDED.school_type,
                      group_id = COALESCE(NULLIF(schools.group_id, ''), EXCLUDED.group_id)",
                 &[
                     &record.school_id,
                     &record.name,
-                    &format!("{} {}", record.prefecture_name, record.city_name),
+                    &record.city_name,
+                    &record.prefecture_name,
                     &record.school_type,
                     &record.school_id,
                 ],
@@ -2740,17 +3854,19 @@ pub async fn import_jp_school_geodata(
 
         transaction
             .execute(
-                "INSERT INTO schools (id, name, area, school_type, group_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (id) DO UPDATE
                  SET name = EXCLUDED.name,
                      area = EXCLUDED.area,
+                     prefecture_name = EXCLUDED.prefecture_name,
                      school_type = EXCLUDED.school_type,
                      group_id = COALESCE(NULLIF(schools.group_id, ''), EXCLUDED.group_id)",
                 &[
                     &record.school_id,
                     &record.name,
-                    &format!("{} {}", record.prefecture_name, record.city_name),
+                    &record.city_name,
+                    &record.prefecture_name,
                     &record.school_type,
                     &record.school_id,
                 ],
@@ -2997,6 +4113,7 @@ async fn import_event_records(
             .into_iter()
             .map(|placement| placement.as_str().to_string())
             .collect::<Vec<_>>();
+        let starts_at = parse_optional_event_time(record.starts_at.as_deref())?;
 
         transaction
             .execute(
@@ -3037,7 +4154,7 @@ async fn import_event_records(
                     &record.is_open_day,
                     &record.is_featured,
                     &record.priority_weight,
-                    &record.starts_at,
+                    &starts_at,
                     &placement_tags,
                     &source_type,
                     &source_key,
@@ -3257,42 +4374,101 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
     let fixture_dir = fixture_dir.as_ref();
 
     let stations: Vec<StationRow> = read_csv(fixture_dir.join("stations.csv"))?;
-    for station in stations {
+    let line_names = stations
+        .iter()
+        .map(|station| station.line_name.clone())
+        .collect::<BTreeSet<_>>();
+    for line_name in &line_names {
+        let line_id = stable_id("line", line_name);
         transaction
             .execute(
-                "INSERT INTO stations (id, name, line_name, latitude, longitude)
-                 VALUES ($1, $2, $3, $4, $5)
+                "INSERT INTO lines (line_id, line_name, country_code, source_id, source_version)
+                 VALUES ($1, $2, 'JP', 'fixture', 'minimal')
+                 ON CONFLICT (line_id) DO UPDATE
+                 SET line_name = EXCLUDED.line_name,
+                     source_id = EXCLUDED.source_id,
+                     source_version = EXCLUDED.source_version",
+                &[&line_id, &line_name],
+            )
+            .await?;
+    }
+
+    for station in stations {
+        let line_id = stable_id("line", &station.line_name);
+        transaction
+            .execute(
+                "INSERT INTO stations (id, name, line_name, latitude, longitude, line_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (id) DO UPDATE
                  SET name = EXCLUDED.name,
                      line_name = EXCLUDED.line_name,
                      latitude = EXCLUDED.latitude,
-                     longitude = EXCLUDED.longitude",
+                     longitude = EXCLUDED.longitude,
+                     line_id = EXCLUDED.line_id",
                 &[
                     &station.station_id,
                     &station.name,
                     &station.line_name,
                     &station.latitude,
                     &station.longitude,
+                    &line_id,
                 ],
             )
             .await?;
     }
 
     let schools: Vec<SchoolRow> = read_csv(fixture_dir.join("schools.csv"))?;
+    let area_names = schools
+        .iter()
+        .map(|school| (school.area.clone(), school.prefecture_name.clone()))
+        .collect::<BTreeSet<_>>();
+    let prefecture_names = schools
+        .iter()
+        .filter_map(|school| non_empty(school.prefecture_name.as_deref()).map(str::to_string))
+        .collect::<BTreeSet<_>>();
+    for prefecture_name in &prefecture_names {
+        let area_id = stable_id("area", prefecture_name);
+        transaction
+            .execute(
+                "INSERT INTO areas (area_id, country_code, prefecture_name, area_level)
+                 VALUES ($1, 'JP', $2, 'prefecture')
+                 ON CONFLICT (area_id) DO UPDATE
+                 SET prefecture_name = EXCLUDED.prefecture_name,
+                     area_level = EXCLUDED.area_level",
+                &[&area_id, &prefecture_name],
+            )
+            .await?;
+    }
+    for (area_name, prefecture_name) in &area_names {
+        let area_id = city_area_stable_id(area_name, prefecture_name.as_deref());
+        transaction
+            .execute(
+                "INSERT INTO areas (area_id, country_code, prefecture_name, city_name, area_level)
+                 VALUES ($1, 'JP', $2, $3, 'city')
+                 ON CONFLICT (area_id) DO UPDATE
+                 SET prefecture_name = EXCLUDED.prefecture_name,
+                     city_name = EXCLUDED.city_name,
+                     area_level = EXCLUDED.area_level",
+                &[&area_id, &prefecture_name, &area_name],
+            )
+            .await?;
+    }
     for school in schools {
         transaction
             .execute(
-                "INSERT INTO schools (id, name, area, school_type, group_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (id) DO UPDATE
                  SET name = EXCLUDED.name,
                      area = EXCLUDED.area,
+                     prefecture_name = EXCLUDED.prefecture_name,
                      school_type = EXCLUDED.school_type,
                      group_id = EXCLUDED.group_id",
                 &[
                     &school.school_id,
                     &school.name,
                     &school.area,
+                    &school.prefecture_name,
                     &school.school_type,
                     &school.group_id,
                 ],
@@ -3302,6 +4478,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
 
     let events: Vec<EventRow> = read_csv(fixture_dir.join("events.csv"))?;
     for event in events {
+        let starts_at = parse_optional_event_time(event.starts_at.as_deref())?;
         transaction
             .execute(
                 "INSERT INTO events (
@@ -3339,7 +4516,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
                     &event.is_open_day,
                     &event.is_featured,
                     &event.priority_weight,
-                    &event.starts_at,
+                    &starts_at,
                     &event.normalized_placement_tags()?,
                 ],
             )
@@ -3370,6 +4547,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
     }
 
     for user_event in read_ndjson(fixture_dir.join("user_events.ndjson"))? {
+        let occurred_at = parse_rfc3339_utc("occurred_at", &user_event.occurred_at)?;
         transaction
             .execute(
                 "DELETE FROM user_events
@@ -3386,7 +4564,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
                     &user_event.event_kind.as_str(),
                     &user_event.event_id,
                     &user_event.target_station_id,
-                    &user_event.occurred_at,
+                    &occurred_at,
                     &user_event.payload,
                 ],
             )
@@ -3409,7 +4587,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
                     &user_event.event_kind.as_str(),
                     &user_event.event_id,
                     &user_event.target_station_id,
-                    &user_event.occurred_at,
+                    &occurred_at,
                     &user_event.payload,
                 ],
             )
@@ -3462,6 +4640,8 @@ struct SchoolRow {
     school_id: String,
     name: String,
     area: String,
+    #[serde(default)]
+    prefecture_name: Option<String>,
     school_type: String,
     group_id: String,
 }

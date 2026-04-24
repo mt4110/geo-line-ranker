@@ -2,6 +2,15 @@
 
 ## Current
 
+- v0.2.0 foundation
+  - add a context resolver so recommendations can start from station, line, area, or coarse user profile context
+  - add area and line fallback stages while preserving deterministic ranking
+  - harden privacy and trace behavior so raw address and raw user identifiers do not leak into traces
+  - harden crawler fetch safety around redirects, response size, content type, and local/private hosts
+  - keep the school-event JP profile as reference data and examples rather than hardcoding it into the generic core
+  - keep AI / ML / embeddings / vector search out of the system
+  - keep PostgreSQL/PostGIS as the reference implementation, Redis as cache only, and OpenSearch as optional candidate retrieval only
+
 - Phase 25: optional evidence operating handoff / closeout
   - close the Phase 17-24 optional evidence operating skeleton as a final read-only handoff flow
   - add a one-page operating handoff guide for intake -> triage -> recheck audit -> closeout ledger -> closeout integrity -> lifecycle index -> inventory report

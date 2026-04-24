@@ -2,8 +2,25 @@ export type Placement = "home" | "search" | "detail" | "mypage";
 
 export type ContentKind = "school" | "event" | "article";
 
+export type RecommendationAreaContext = {
+  country?: string | null;
+  prefecture_code?: string | null;
+  prefecture_name?: string | null;
+  city_code?: string | null;
+  city_name?: string | null;
+};
+
+export type RecommendationContextInput = {
+  station_id?: string | null;
+  line_id?: string | null;
+  line_name?: string | null;
+  area?: RecommendationAreaContext | null;
+};
+
 export type RecommendationRequest = {
-  target_station_id: string;
+  request_id?: string | null;
+  target_station_id?: string | null;
+  context?: RecommendationContextInput | null;
   limit?: number | null;
   user_id?: string | null;
   placement?: Placement;
@@ -30,13 +47,42 @@ export type RecommendationItem = {
   score: number;
   explanation: string;
   score_breakdown: ScoreComponent[];
+  fallback_stage?:
+    | "strict_station"
+    | "same_line"
+    | "same_city"
+    | "same_prefecture"
+    | "neighbor_area"
+    | "safe_global_popular"
+    | null;
 };
 
 export type RecommendationResponse = {
+  request_id?: string | null;
   items: RecommendationItem[];
   explanation: string;
   score_breakdown: ScoreComponent[];
-  fallback_stage: "strict" | "neighbor";
+  fallback_stage:
+    | "strict_station"
+    | "same_line"
+    | "same_city"
+    | "same_prefecture"
+    | "neighbor_area"
+    | "safe_global_popular";
+  candidate_counts: Record<string, number>;
+  context?: {
+    context_source:
+      | "request_station"
+      | "request_line"
+      | "request_area"
+      | "user_profile_area"
+      | "recent_search_context"
+      | "recent_behavior_context"
+      | "default_safe_context";
+    confidence: number;
+    privacy_level: "coarse_area";
+    warnings: Array<{ code: string; message: string }>;
+  } | null;
   profile_version: string;
   algorithm_version: string;
 };
@@ -50,11 +96,13 @@ export type TrackEventKind =
   | "share";
 
 export type TrackRequest = {
+  idempotency_key?: string | null;
   user_id: string;
   event_kind: TrackEventKind;
   school_id?: string | null;
   event_id?: string | null;
   target_station_id?: string | null;
+  context?: RecommendationContextInput | null;
   occurred_at?: string | null;
   payload?: Record<string, unknown> | null;
 };

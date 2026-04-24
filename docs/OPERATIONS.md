@@ -160,7 +160,7 @@ Operational notes:
 
 - raw input is checksum-staged under `.storage/raw/event-csv/...`
 - import audit is written to `import_runs`, `import_run_files`, and `import_reports`
-- `starts_at` accepts ISO-8601 date (`YYYY-MM-DD`) or RFC3339 timestamp and stays as text so CSV imports and crawl imports keep the same deterministic representation
+- `starts_at` accepts ISO-8601 date (`YYYY-MM-DD`) or RFC3339 timestamp and is stored as `TIMESTAMPTZ` after import
 - repeated import of the same logical `event-csv` source is idempotent, even when the CSV file path changes
 - rows no longer present in the same logical `event-csv` source are marked `is_active = false`
 

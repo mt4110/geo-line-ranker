@@ -55,6 +55,7 @@ pub fn load_fixture_dataset(path: impl AsRef<Path>) -> Result<RankingDataset> {
                 id: row.school_id,
                 name: row.name,
                 area: row.area,
+                prefecture_name: row.prefecture_name,
                 school_type: row.school_type,
                 group_id: row.group_id,
             })
@@ -83,6 +84,7 @@ pub fn load_fixture_dataset(path: impl AsRef<Path>) -> Result<RankingDataset> {
                 id: row.station_id,
                 name: row.name,
                 line_name: row.line_name,
+                line_id: None,
                 latitude: row.latitude,
                 longitude: row.longitude,
             })
@@ -135,6 +137,8 @@ struct SchoolRow {
     school_id: String,
     name: String,
     area: String,
+    #[serde(default)]
+    prefecture_name: Option<String>,
     school_type: String,
     group_id: String,
 }

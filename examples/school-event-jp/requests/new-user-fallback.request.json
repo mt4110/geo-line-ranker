@@ -1,14 +1,13 @@
 {
-  "request_id": "req_demo_area_1",
+  "request_id": "req_school_event_new_user",
+  "user_id": "new-user-demo",
   "context": {
     "area": {
       "prefecture_name": "Tokyo",
       "city_name": "Minato"
-    },
-    "line_name": "JR Yamanote Line"
+    }
   },
   "placement": "home",
-  "limit": 3,
-  "user_id": "demo-user-1",
+  "limit": 5,
   "debug": false
 }
