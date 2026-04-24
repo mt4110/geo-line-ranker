@@ -316,7 +316,7 @@ impl PgRepository {
 
         if let Some(city_name) = context.city_name() {
             if let Some(station) = self
-                .load_station_for_school_area(&client, city_name)
+                .load_station_for_school_area(&client, city_name, context.prefecture_name())
                 .await
                 .with_context(|| {
                     format!("failed to load representative station for city {city_name}")
@@ -328,7 +328,7 @@ impl PgRepository {
 
         if let Some(prefecture_name) = context.prefecture_name() {
             if let Some(station) = self
-                .load_station_for_school_area(&client, prefecture_name)
+                .load_station_for_school_area(&client, prefecture_name, None)
                 .await
                 .with_context(|| {
                     format!(
@@ -879,6 +879,7 @@ impl PgRepository {
         &self,
         client: &Client,
         area: &str,
+        prefecture_name: Option<&str>,
     ) -> Result<Option<Station>> {
         client
             .query_opt(
@@ -894,15 +895,38 @@ impl PgRepository {
                     WHERE area.country_code = 'JP'
                       AND area.area_level = 'city'
                       AND lower(area.city_name) = lower(school.area)
-                    ORDER BY area.area_id ASC
+                      AND (
+                          $2::TEXT IS NULL
+                          OR area.prefecture_name IS NULL
+                          OR lower(area.prefecture_name) = lower($2)
+                      )
+                    ORDER BY
+                        CASE
+                            WHEN $2::TEXT IS NOT NULL
+                              AND area.prefecture_name IS NOT NULL
+                              AND lower(area.prefecture_name) = lower($2)
+                              THEN 0
+                            ELSE 1
+                        END,
+                        area.area_id ASC
                     LIMIT 1
                  ) AS school_area ON TRUE
-                 WHERE lower(school.area) = lower($1)
-                    OR lower(school.prefecture_name) = lower($1)
-                    OR lower(school_area.prefecture_name) = lower($1)
+                 WHERE (
+                    $2::TEXT IS NOT NULL
+                    AND lower(school.area) = lower($1)
+                    AND lower(COALESCE(school.prefecture_name, school_area.prefecture_name, '')) = lower($2)
+                 )
+                    OR (
+                        $2::TEXT IS NULL
+                        AND (
+                            lower(school.area) = lower($1)
+                            OR lower(school.prefecture_name) = lower($1)
+                            OR lower(school_area.prefecture_name) = lower($1)
+                        )
+                    )
                  ORDER BY link.distance_meters ASC, link.walking_minutes ASC, station.id ASC
                  LIMIT 1",
-                &[&area],
+                &[&area, &prefecture_name],
             )
             .await
             .map(|row| row.map(station_from_row))
@@ -1235,7 +1259,14 @@ impl PgRepository {
                                 AND line_name = $2
                             )
                         ) AS is_same_line,
-                        ($3::TEXT IS NOT NULL AND lower(school_area) = lower($3)) AS is_same_city,
+                        (
+                            $3::TEXT IS NOT NULL
+                            AND lower(school_area) = lower($3)
+                            AND (
+                                $4::TEXT IS NULL
+                                OR lower(COALESCE(school_prefecture_name, '')) = lower($4)
+                            )
+                        ) AS is_same_city,
                         (
                             $4::TEXT IS NOT NULL
                             AND (

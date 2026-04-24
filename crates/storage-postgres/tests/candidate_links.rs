@@ -469,6 +469,161 @@ async fn line_context_station_lookup_falls_back_to_line_name_when_station_line_i
 }
 
 #[tokio::test]
+async fn city_context_station_lookup_honors_prefecture_name() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_city_station_pref").await
+    else {
+        eprintln!(
+            "skipping storage-postgres city station prefecture test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id) VALUES
+                    ('school_tokyo_fuchu', 'Tokyo Fuchu School', 'Fuchu', 'Tokyo', 'high_school', 'group_tokyo_fuchu'),
+                    ('school_hiroshima_fuchu', 'Hiroshima Fuchu School', 'Fuchu', 'Hiroshima', 'high_school', 'group_hiroshima_fuchu');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude) VALUES
+                    ('st_tokyo_fuchu', 'Tokyo Fuchu Station', 'Tokyo Line', 35.67, 139.48),
+                    ('st_hiroshima_fuchu', 'Hiroshima Fuchu Station', 'Hiroshima Line', 34.57, 133.24);
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_tokyo_fuchu', 'st_tokyo_fuchu', 1, 10, 0, 'Tokyo Line'),
+                    ('school_hiroshima_fuchu', 'st_hiroshima_fuchu', 8, 700, 0, 'Hiroshima Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let context = RankingContext {
+            context_source: ContextSource::RequestArea,
+            confidence: 0.95,
+            area: Some(AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: Some("Hiroshima".to_string()),
+                city_code: None,
+                city_name: Some("Fuchu".to_string()),
+            }),
+            line: None,
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let station = repo
+            .load_station_for_context(&context)
+            .await?
+            .expect("representative station");
+
+        assert_eq!(station.id, "st_hiroshima_fuchu");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn city_context_candidate_links_honor_prefecture_name() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_city_links_pref").await
+    else {
+        eprintln!(
+            "skipping storage-postgres city candidate prefecture test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id) VALUES
+                    ('school_tokyo_fuchu', 'Tokyo Fuchu School', 'Fuchu', 'Tokyo', 'high_school', 'group_tokyo_fuchu'),
+                    ('school_hiroshima_fuchu', 'Hiroshima Fuchu School', 'Fuchu', 'Hiroshima', 'high_school', 'group_hiroshima_fuchu');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude) VALUES
+                    ('st_target', 'Target Station', 'Target Line', 34.57, 133.24),
+                    ('st_tokyo_fuchu', 'Tokyo Fuchu Station', 'Tokyo Line', 35.67, 139.48),
+                    ('st_hiroshima_fuchu', 'Hiroshima Fuchu Station', 'Hiroshima Line', 34.5705, 133.2405);
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_tokyo_fuchu', 'st_tokyo_fuchu', 1, 10, 0, 'Tokyo Line'),
+                    ('school_hiroshima_fuchu', 'st_hiroshima_fuchu', 8, 700, 0, 'Hiroshima Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target Station".to_string(),
+            line_name: "Target Line".to_string(),
+            latitude: 34.57,
+            longitude: 133.24,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestArea,
+            confidence: 0.95,
+            area: Some(AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: Some("Hiroshima".to_string()),
+                city_code: None,
+                city_name: Some("Fuchu".to_string()),
+            }),
+            line: None,
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 1_000.0, 1)
+            .await?;
+
+        assert_eq!(
+            candidate_links
+                .iter()
+                .map(|link| link.school_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school_hiroshima_fuchu"]
+        );
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
 async fn prefecture_context_candidate_links_match_school_prefecture_name() -> anyhow::Result<()> {
     let Ok((admin_database_url, database_url, database_name)) =
         create_empty_database("geo_line_ranker_prefecture_links").await

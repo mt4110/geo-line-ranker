@@ -243,6 +243,25 @@ async fn recommend(
                 )
                 .await
             {
+                Ok(candidate_links) if candidate_links.is_empty() => match state
+                    .repository
+                    .load_context_candidate_links(
+                        &target_station,
+                        &resolved_context,
+                        state.candidate_retrieval_limit,
+                        state.neighbor_distance_cap_meters,
+                        neighbor_max_hops,
+                    )
+                    .await
+                {
+                    Ok(candidate_links) => candidate_links,
+                    Err(error) => {
+                        return error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            error.to_string(),
+                        );
+                    }
+                },
                 Ok(candidate_links) => candidate_links,
                 Err(error) => {
                     return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());

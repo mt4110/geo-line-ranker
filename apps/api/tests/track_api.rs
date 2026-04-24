@@ -8,6 +8,8 @@ use api::{build_app, AppState};
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
+    routing::{head, post},
+    Json, Router,
 };
 use cache::RecommendationCache;
 use config::{CandidateRetrievalMode, OpenSearchSettings, RankingProfiles};
@@ -79,6 +81,30 @@ async fn drop_database(admin_database_url: &str, database_name: &str) -> anyhow:
         .simple_query(&format!("DROP DATABASE IF EXISTS \"{database_name}\""))
         .await?;
     Ok(())
+}
+
+async fn spawn_empty_opensearch() -> anyhow::Result<String> {
+    let app = Router::new()
+        .route("/:index", head(empty_opensearch_index))
+        .route("/:index/_search", post(empty_opensearch_search));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Ok(format!("http://{address}"))
+}
+
+async fn empty_opensearch_index() -> StatusCode {
+    StatusCode::OK
+}
+
+async fn empty_opensearch_search() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "hits": {
+            "hits": []
+        }
+    }))
 }
 
 fn repo_root() -> PathBuf {
@@ -1316,6 +1342,79 @@ async fn recommend_endpoint_accepts_area_only_context() -> anyhow::Result<()> {
         assert!(payload["items"]
             .as_array()
             .is_some_and(|items| !items.is_empty()));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn recommend_endpoint_falls_back_to_sql_when_opensearch_has_no_hits() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api_full_empty").await
+    else {
+        eprintln!(
+            "skipping api full-mode fallback test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let opensearch_url = spawn_empty_opensearch().await?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "v020-full-empty-fallback-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "v020-full-empty-fallback-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::Full,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::Full(OpenSearchStore::new(
+                &OpenSearchSettings {
+                    url: opensearch_url,
+                    index_name: "candidate_projection".to_string(),
+                    username: None,
+                    password: None,
+                    request_timeout_secs: 5,
+                },
+            )?),
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "target_station_id": "st_tamachi",
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert!(!payload["items"].as_array().expect("items array").is_empty());
 
         Ok(())
     }

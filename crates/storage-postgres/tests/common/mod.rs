@@ -1,9 +1,12 @@
 use std::{
     path::PathBuf,
+    sync::OnceLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use tokio_postgres::NoTls;
+
+static DATABASE_DDL_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 pub fn default_database_url() -> String {
     std::env::var("DATABASE_URL").unwrap_or_else(|_| {
@@ -27,6 +30,10 @@ fn unique_database_name(prefix: &str) -> String {
 }
 
 pub async fn create_empty_database(prefix: &str) -> anyhow::Result<(String, String, String)> {
+    let _ddl_guard = DATABASE_DDL_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let admin_database_url = database_url_with_name(&default_database_url(), "postgres");
     let database_name = unique_database_name(prefix);
     let (client, connection) = tokio_postgres::connect(&admin_database_url, NoTls).await?;
@@ -45,6 +52,10 @@ pub async fn create_empty_database(prefix: &str) -> anyhow::Result<(String, Stri
 }
 
 pub async fn drop_database(admin_database_url: &str, database_name: &str) -> anyhow::Result<()> {
+    let _ddl_guard = DATABASE_DDL_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let (client, connection) = tokio_postgres::connect(admin_database_url, NoTls).await?;
     tokio::spawn(async move {
         let _ = connection.await;
