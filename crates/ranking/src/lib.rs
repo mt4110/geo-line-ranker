@@ -89,6 +89,13 @@ impl RankingEngine {
         self.profiles.placement(placement).neighbor_max_hops
     }
 
+    pub fn minimum_candidate_count(&self) -> usize {
+        self.profiles
+            .schools
+            .strict_min_candidates
+            .max(self.profiles.fallback.min_results)
+    }
+
     pub fn recommend(
         &self,
         dataset: &RankingDataset,
@@ -106,11 +113,7 @@ impl RankingEngine {
             .limit
             .unwrap_or(self.profiles.schools.limit_default)
             .clamp(1, 20);
-        let strict_min_candidates = self
-            .profiles
-            .schools
-            .strict_min_candidates
-            .max(self.profiles.fallback.min_results);
+        let strict_min_candidates = self.minimum_candidate_count();
 
         let staged_candidates =
             self.collect_candidates_by_stage(dataset, query, &target_station, placement_profile);

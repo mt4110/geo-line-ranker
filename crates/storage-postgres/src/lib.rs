@@ -1193,6 +1193,7 @@ impl PgRepository {
         target_station: &Station,
         context: &RankingContext,
         candidate_limit: usize,
+        min_scoped_candidates: usize,
         neighbor_distance_cap_meters: f64,
         neighbor_max_hops: u8,
     ) -> Result<Vec<SchoolStationLink>> {
@@ -1336,8 +1337,8 @@ impl PgRepository {
                     OR link.is_near_same_line
                     OR (
                         $9
-                        AND NOT EXISTS (
-                            SELECT 1
+                        AND (
+                            SELECT COUNT(*)
                             FROM scored_rows AS scoped
                             WHERE scoped.is_strict_station
                                OR scoped.is_same_line
@@ -1345,7 +1346,7 @@ impl PgRepository {
                                OR scoped.is_same_prefecture
                                OR scoped.is_neighbor_area
                                OR scoped.is_near_same_line
-                        )
+                        ) < $14
                     )
                  ORDER BY
                     CASE
@@ -1387,6 +1388,7 @@ impl PgRepository {
                     &line_id,
                     &station_context_is_explicit,
                     &target_station.id,
+                    &((min_scoped_candidates.max(1)) as i64),
                 ],
             )
             .await?;

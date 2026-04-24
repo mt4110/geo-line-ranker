@@ -89,7 +89,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             .await?
             .expect("representative station");
         let candidate_links = repo
-            .load_context_candidate_links(&target_station, &context, 20, 5_000.0, 2)
+            .load_context_candidate_links(&target_station, &context, 20, 1, 5_000.0, 2)
             .await?;
         let first_minato_candidate = candidate_links
             .iter()
@@ -228,7 +228,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             .await?
             .expect("representative station from city code");
         let coded_links = repo
-            .load_context_candidate_links(&coded_station, &coded_area_context, 20, 5_000.0, 2)
+            .load_context_candidate_links(&coded_station, &coded_area_context, 20, 1, 5_000.0, 2)
             .await?;
         assert!(!coded_links.is_empty());
         let mismatched_area_context = repo

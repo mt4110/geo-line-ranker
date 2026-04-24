@@ -213,6 +213,7 @@ async fn recommend(
 
     let retrieval_started = Instant::now();
     let neighbor_max_hops = state.engine.neighbor_max_hops(query.placement);
+    let min_candidate_count = state.engine.minimum_candidate_count();
     let actual_candidate_backend =
         actual_candidate_backend_name(&state.candidate_backend, &resolved_context);
     let candidate_links = match &state.candidate_backend {
@@ -222,6 +223,7 @@ async fn recommend(
                 &target_station,
                 &resolved_context,
                 state.candidate_retrieval_limit,
+                min_candidate_count,
                 state.neighbor_distance_cap_meters,
                 neighbor_max_hops,
             )
@@ -243,12 +245,13 @@ async fn recommend(
                 )
                 .await
             {
-                Ok(candidate_links) if candidate_links.is_empty() => match state
+                Ok(candidate_links) if candidate_links.len() < min_candidate_count => match state
                     .repository
                     .load_context_candidate_links(
                         &target_station,
                         &resolved_context,
                         state.candidate_retrieval_limit,
+                        min_candidate_count,
                         state.neighbor_distance_cap_meters,
                         neighbor_max_hops,
                     )
@@ -274,6 +277,7 @@ async fn recommend(
                 &target_station,
                 &resolved_context,
                 state.candidate_retrieval_limit,
+                min_candidate_count,
                 state.neighbor_distance_cap_meters,
                 neighbor_max_hops,
             )

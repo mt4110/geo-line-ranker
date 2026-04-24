@@ -146,6 +146,7 @@ async fn context_candidate_links_use_line_id_when_available() -> anyhow::Result<
                 &representative_station,
                 &context,
                 10,
+                1,
                 1_000.0,
                 2,
             )
@@ -232,7 +233,7 @@ async fn station_context_candidate_links_include_full_same_line_fallback() -> an
             warnings: Vec::new(),
         };
         let candidate_links = repo
-            .load_context_candidate_links(&target_station, &context, 10, 50.0, 1)
+            .load_context_candidate_links(&target_station, &context, 10, 1, 50.0, 1)
             .await?;
 
         assert_eq!(candidate_links.len(), 1);
@@ -310,7 +311,7 @@ async fn station_context_candidate_links_include_nearby_off_line_candidates() ->
         };
 
         let candidate_links = repo
-            .load_context_candidate_links(&target_station, &context, 10, 2_500.0, 1)
+            .load_context_candidate_links(&target_station, &context, 10, 1, 2_500.0, 1)
             .await?;
 
         assert_eq!(candidate_links.len(), 1);
@@ -388,7 +389,7 @@ async fn line_context_candidate_links_fall_back_to_line_name_when_station_line_i
         };
 
         let candidate_links = repo
-            .load_context_candidate_links(&target_station, &context, 10, 1_000.0, 2)
+            .load_context_candidate_links(&target_station, &context, 10, 1, 1_000.0, 2)
             .await?;
 
         assert_eq!(candidate_links.len(), 1);
@@ -604,7 +605,7 @@ async fn city_context_candidate_links_honor_prefecture_name() -> anyhow::Result<
         };
 
         let candidate_links = repo
-            .load_context_candidate_links(&target_station, &context, 10, 1_000.0, 1)
+            .load_context_candidate_links(&target_station, &context, 10, 1, 1_000.0, 1)
             .await?;
 
         assert_eq!(
@@ -688,11 +689,96 @@ async fn prefecture_context_candidate_links_match_school_prefecture_name() -> an
         };
 
         let candidate_links = repo
-            .load_context_candidate_links(&target_station, &context, 1, 1_000.0, 1)
+            .load_context_candidate_links(&target_station, &context, 1, 1, 1_000.0, 1)
             .await?;
 
         assert_eq!(candidate_links.len(), 1);
         assert_eq!(candidate_links[0].school_id, "school_tokyo");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn context_candidate_links_include_safe_global_when_scoped_filters_are_underfilled(
+) -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("glr_underfilled_links").await
+    else {
+        eprintln!(
+            "skipping storage-postgres underfilled safe-global link test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id) VALUES
+                    ('school_strict', 'Strict School', 'Minato', 'Tokyo', 'high_school', 'group_strict'),
+                    ('school_global', 'Global School', 'Naha', 'Okinawa', 'high_school', 'group_global');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude) VALUES
+                    ('st_target', 'Target', 'Target Line', 35.0, 139.0),
+                    ('st_global', 'Global Station', 'Global Line', 26.2124, 127.6792);
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_strict', 'st_target', 8, 620, 0, 'Target Line'),
+                    ('school_global', 'st_global', 4, 300, 0, 'Global Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Target Line".to_string(),
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestStation,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: None,
+                line_name: "Target Line".to_string(),
+                operator_name: None,
+            }),
+            station: Some(StationContext {
+                station_id: "st_target".to_string(),
+                station_name: "Target".to_string(),
+            }),
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 2, 1_000.0, 1)
+            .await?;
+
+        assert_eq!(
+            candidate_links
+                .iter()
+                .map(|link| link.school_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school_strict", "school_global"]
+        );
 
         Ok(())
     }
@@ -768,7 +854,7 @@ async fn context_candidate_links_include_safe_global_when_scoped_filters_are_emp
         };
 
         let candidate_links = repo
-            .load_context_candidate_links(&target_station, &context, 1, 1_000.0, 1)
+            .load_context_candidate_links(&target_station, &context, 1, 1, 1_000.0, 1)
             .await?;
 
         assert_eq!(candidate_links.len(), 1);
