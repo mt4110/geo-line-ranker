@@ -1,4 +1,4 @@
-use context::{AreaContextInput, ContextInput, ContextSource};
+use context::{AreaContextInput, ContextInput, ContextSource, RankingContext};
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
 use tokio_postgres::NoTls;
 
@@ -61,9 +61,29 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
                      city_name = EXCLUDED.city_name,
                      area_level = EXCLUDED.area_level;
 
+                 INSERT INTO areas (
+                    area_id,
+                    country_code,
+                    city_name,
+                    area_level
+                 )
+                 VALUES ('area_sparse_city', 'JP', 'Sparse', 'city')
+                 ON CONFLICT (area_id) DO UPDATE
+                 SET city_name = EXCLUDED.city_name,
+                     area_level = EXCLUDED.area_level;
+
                  UPDATE stations
                  SET area_id = 'area_minato_station_sparse'
-                 WHERE id = 'st_tamachi';",
+                 WHERE id = 'st_tamachi';
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, area_id)
+                 VALUES ('st_sparse', 'Sparse', 'Sparse Line', 35.7, 139.8, 'area_sparse_city')
+                 ON CONFLICT (id) DO UPDATE
+                 SET name = EXCLUDED.name,
+                     line_name = EXCLUDED.line_name,
+                     latitude = EXCLUDED.latitude,
+                     longitude = EXCLUDED.longitude,
+                     area_id = EXCLUDED.area_id;",
             )
             .await?;
 
@@ -173,6 +193,31 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             .warnings
             .iter()
             .any(|warning| warning.code == "station_area_conflict"));
+        let unverifiable_prefecture_context = repo
+            .resolve_context(
+                "req-context-station-prefecture-unverified",
+                None,
+                &ContextInput {
+                    station_id: Some("st_sparse".to_string()),
+                    area: Some(AreaContextInput {
+                        city_name: Some("Sparse".to_string()),
+                        prefecture_name: Some("Osaka".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert!(unverifiable_prefecture_context.area.is_none());
+        assert!(unverifiable_prefecture_context
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "station_area_conflict"));
+        let default_station = repo
+            .load_station_for_context(&RankingContext::default_safe())
+            .await?
+            .expect("default station");
+        assert!(default_station.line_id.is_some());
         let trimmed_line_context = repo
             .resolve_context(
                 "req-context-line-trimmed",

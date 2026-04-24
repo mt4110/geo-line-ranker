@@ -346,7 +346,7 @@ impl PgRepository {
 
         client
             .query_opt(
-                "SELECT id, name, line_name, latitude, longitude
+                "SELECT id, name, line_name, line_id, latitude, longitude
                  FROM stations
                  ORDER BY id
                  LIMIT 1",
@@ -510,7 +510,7 @@ impl PgRepository {
                 if !inferred_prefecture_code.eq_ignore_ascii_case(prefecture_code) {
                     return Ok(false);
                 }
-            } else if !matched_city_hint {
+            } else {
                 return Ok(false);
             }
         }
@@ -528,7 +528,7 @@ impl PgRepository {
                 if !inferred_prefecture_name.eq_ignore_ascii_case(prefecture_name) {
                     return Ok(false);
                 }
-            } else if !matched_city_hint {
+            } else {
                 return Ok(false);
             }
         }
