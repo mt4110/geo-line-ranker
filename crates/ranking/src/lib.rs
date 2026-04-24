@@ -126,7 +126,15 @@ impl RankingEngine {
                 staged_candidates
                     .iter()
                     .filter(|(stage, _)| !matches!(stage, FallbackStage::SafeGlobalPopular))
-                    .find(|(_, candidates)| !candidates.is_empty())
+                    .filter(|(_, candidates)| !candidates.is_empty())
+                    .max_by(
+                        |(left_stage, left_candidates), (right_stage, right_candidates)| {
+                            left_candidates
+                                .len()
+                                .cmp(&right_candidates.len())
+                                .then_with(|| right_stage.priority().cmp(&left_stage.priority()))
+                        },
+                    )
             });
         let (fallback_stage, candidates) = first_non_global_match
             .or_else(|| {
@@ -1170,6 +1178,104 @@ mod tests {
             .items
             .iter()
             .all(|item| item.line_name == "JR Yamanote Line"));
+    }
+
+    #[test]
+    fn insufficient_strict_stage_uses_largest_broader_stage() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_strict".to_string(),
+                    name: "Strict School".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_strict".to_string(),
+                },
+                School {
+                    id: "school_line_a".to_string(),
+                    name: "Line A".to_string(),
+                    area: "Shinagawa".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_line_a".to_string(),
+                },
+                School {
+                    id: "school_line_b".to_string(),
+                    name: "Line B".to_string(),
+                    area: "Shibuya".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_line_b".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_line_a".to_string(),
+                    name: "Line A Station".to_string(),
+                    line_name: "Target Line".to_string(),
+                    latitude: 35.01,
+                    longitude: 139.01,
+                },
+                Station {
+                    id: "st_line_b".to_string(),
+                    name: "Line B Station".to_string(),
+                    line_name: "Target Line".to_string(),
+                    latitude: 35.02,
+                    longitude: 139.02,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_strict".to_string(),
+                    station_id: "st_target".to_string(),
+                    walking_minutes: 5,
+                    distance_meters: 400,
+                    hop_distance: 0,
+                    line_name: "Target Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_line_a".to_string(),
+                    station_id: "st_line_a".to_string(),
+                    walking_minutes: 7,
+                    distance_meters: 700,
+                    hop_distance: 1,
+                    line_name: "Target Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_line_b".to_string(),
+                    station_id: "st_line_b".to_string(),
+                    walking_minutes: 9,
+                    distance_meters: 900,
+                    hop_distance: 2,
+                    line_name: "Target Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 4;
+        profiles.fallback.min_results = 4;
+        let engine = RankingEngine::new(profiles, "v020-insufficient-strict-test");
+
+        let result = engine
+            .recommend(&dataset, &query("st_target", PlacementKind::Search))
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("strict_station"), Some(&1));
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&3));
+        assert_eq!(result.fallback_stage, FallbackStage::SameLine);
+        assert_eq!(result.items.len(), 3);
     }
 
     #[test]
