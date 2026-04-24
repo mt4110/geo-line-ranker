@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
+    sync::OnceLock,
 };
 
 use anyhow::{bail, ensure, Context, Result};
@@ -29,6 +30,8 @@ use storage::{
 };
 use tokio_postgres::{Client, GenericClient, NoTls, Row};
 use uuid::Uuid;
+
+static MIGRATION_PROCESS_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 const REQUIRED_READY_TABLES: [&str; 14] = [
     "areas",
@@ -2877,6 +2880,10 @@ impl RecommendationRepository for PgRepository {
 }
 
 pub async fn run_migrations(database_url: &str, migrations_dir: impl AsRef<Path>) -> Result<()> {
+    let _migration_guard = MIGRATION_PROCESS_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let repo = PgRepository::new(database_url);
     let mut client = repo.connect().await?;
     acquire_schema_migration_lock(&client).await?;

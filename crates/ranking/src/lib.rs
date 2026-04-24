@@ -118,14 +118,40 @@ impl RankingEngine {
             .iter()
             .map(|(stage, candidates)| (stage.as_str().to_string(), candidates.len()))
             .collect::<BTreeMap<_, _>>();
-        let first_non_global_match = staged_candidates
+        let area_hint_was_ignored = query.context.as_ref().is_some_and(|context| {
+            context
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "station_area_conflict")
+        });
+        let area_context_is_usable = query.context.as_ref().is_some_and(|context| {
+            !area_hint_was_ignored
+                && (context.city_name().is_some() || context.prefecture_name().is_some())
+        });
+        let first_sufficient_scoped_match = staged_candidates
             .iter()
             .filter(|(stage, _)| !matches!(stage, FallbackStage::SafeGlobalPopular))
-            .find(|(_, candidates)| candidates.len() >= strict_min_candidates)
+            .find(|(_, candidates)| candidates.len() >= strict_min_candidates);
+        let underfilled_area_match = area_context_is_usable
+            .then(|| {
+                staged_candidates.iter().find(|(stage, candidates)| {
+                    matches!(
+                        stage,
+                        FallbackStage::SameCity | FallbackStage::SamePrefecture
+                    ) && !candidates.is_empty()
+                })
+            })
+            .flatten();
+        let sufficient_safe_global_match = staged_candidates.iter().find(|(stage, candidates)| {
+            matches!(stage, FallbackStage::SafeGlobalPopular)
+                && candidates.len() >= strict_min_candidates
+        });
+        let (fallback_stage, candidates) = first_sufficient_scoped_match
+            .or(underfilled_area_match)
+            .or(sufficient_safe_global_match)
             .or_else(|| {
                 staged_candidates
                     .iter()
-                    .filter(|(stage, _)| !matches!(stage, FallbackStage::SafeGlobalPopular))
                     .filter(|(_, candidates)| !candidates.is_empty())
                     .max_by(
                         |(left_stage, left_candidates), (right_stage, right_candidates)| {
@@ -135,12 +161,6 @@ impl RankingEngine {
                                 .then_with(|| right_stage.priority().cmp(&left_stage.priority()))
                         },
                     )
-            });
-        let (fallback_stage, candidates) = first_non_global_match
-            .or_else(|| {
-                staged_candidates
-                    .iter()
-                    .find(|(_, candidates)| !candidates.is_empty())
             })
             .map(|(stage, candidates)| (stage.clone(), candidates.clone()))
             .unwrap_or_else(|| (FallbackStage::SafeGlobalPopular, Vec::new()));
@@ -1181,7 +1201,7 @@ mod tests {
     }
 
     #[test]
-    fn insufficient_strict_stage_uses_largest_broader_stage() {
+    fn underfilled_scoped_stages_use_safe_global_when_available() {
         let dataset = RankingDataset {
             schools: vec![
                 School {
@@ -1208,6 +1228,14 @@ mod tests {
                     school_type: "high_school".to_string(),
                     group_id: "group_line_b".to_string(),
                 },
+                School {
+                    id: "school_global".to_string(),
+                    name: "Global School".to_string(),
+                    area: "Naha".to_string(),
+                    prefecture_name: Some("Okinawa".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_global".to_string(),
+                },
             ],
             events: Vec::new(),
             stations: vec![
@@ -1231,6 +1259,13 @@ mod tests {
                     line_name: "Target Line".to_string(),
                     latitude: 35.02,
                     longitude: 139.02,
+                },
+                Station {
+                    id: "st_global".to_string(),
+                    name: "Global Station".to_string(),
+                    line_name: "Far Line".to_string(),
+                    latitude: 26.21,
+                    longitude: 127.68,
                 },
             ],
             school_station_links: vec![
@@ -1258,6 +1293,14 @@ mod tests {
                     hop_distance: 2,
                     line_name: "Target Line".to_string(),
                 },
+                SchoolStationLink {
+                    school_id: "school_global".to_string(),
+                    station_id: "st_global".to_string(),
+                    walking_minutes: 6,
+                    distance_meters: 500,
+                    hop_distance: 0,
+                    line_name: "Far Line".to_string(),
+                },
             ],
             popularity_snapshots: Vec::new(),
             user_affinity_snapshots: Vec::new(),
@@ -1274,7 +1317,8 @@ mod tests {
 
         assert_eq!(result.candidate_counts.get("strict_station"), Some(&1));
         assert_eq!(result.candidate_counts.get("same_line"), Some(&3));
-        assert_eq!(result.fallback_stage, FallbackStage::SameLine);
+        assert_eq!(result.candidate_counts.get("safe_global_popular"), Some(&4));
+        assert_eq!(result.fallback_stage, FallbackStage::SafeGlobalPopular);
         assert_eq!(result.items.len(), 3);
     }
 

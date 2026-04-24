@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{ensure, Context, Result};
@@ -10,6 +11,7 @@ use url::Url;
 
 const DEFAULT_MAX_REDIRECTS: usize = 3;
 const DEFAULT_MAX_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
+const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 20;
 const DEFAULT_ALLOWED_CONTENT_TYPES: [&str; 4] =
     ["text/html", "text/csv", "application/json", "text/json"];
 
@@ -220,9 +222,16 @@ pub async fn fetch_to_raw(
 }
 
 async fn fetch_with_manual_redirects<'a>(
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
     request: &HttpFetchRequest<'a>,
 ) -> Result<(reqwest::Response, Url)> {
+    // Redirect policy is client-wide in reqwest, so this helper constructs a
+    // no-redirect client instead of trusting the caller-provided client.
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
+        .build()
+        .context("failed to build manual redirect HTTP client")?;
     let mut current_url = ensure_allowed_url(request.url, request.allowed_domains)?;
     for redirect_count in 0..=DEFAULT_MAX_REDIRECTS {
         let response = client
@@ -457,6 +466,11 @@ fn sanitize_name(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
     use axum::{response::Redirect, routing::get, Router};
     use tokio::net::TcpListener;
 
@@ -585,10 +599,11 @@ Allow: /
     }
 
     #[tokio::test]
-    async fn manual_redirects_revalidate_final_auto_followed_url() -> anyhow::Result<()> {
+    async fn manual_redirects_do_not_auto_follow_disallowed_redirects() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
         let redirect_target = format!("http://localhost:{}/final", address.port());
+        let final_hits = Arc::new(AtomicUsize::new(0));
         let app = Router::new()
             .route(
                 "/start",
@@ -600,7 +615,19 @@ Allow: /
                     }
                 }),
             )
-            .route("/final", get(|| async { "ok" }));
+            .route(
+                "/final",
+                get({
+                    let final_hits = Arc::clone(&final_hits);
+                    move || {
+                        let final_hits = Arc::clone(&final_hits);
+                        async move {
+                            final_hits.fetch_add(1, Ordering::SeqCst);
+                            "ok"
+                        }
+                    }
+                }),
+            );
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
@@ -618,8 +645,9 @@ Allow: /
 
         let error = fetch_with_manual_redirects(&client, &request)
             .await
-            .expect_err("redirect to disallowed auto-followed host should fail");
+            .expect_err("redirect to disallowed host should fail before follow");
         assert!(error.to_string().contains("outside the crawler allowlist"));
+        assert_eq!(final_hits.load(Ordering::SeqCst), 0);
 
         Ok(())
     }
