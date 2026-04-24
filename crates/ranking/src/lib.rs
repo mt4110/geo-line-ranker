@@ -304,6 +304,12 @@ impl RankingEngine {
         let line_name = context
             .and_then(|context| context.line_name())
             .unwrap_or(target_station.line_name.as_str());
+        let line_id = context.and_then(|context| {
+            context
+                .line
+                .as_ref()
+                .and_then(|line| line.line_id.as_deref())
+        });
         let area_hint_was_ignored = context
             .map(|context| {
                 context
@@ -336,14 +342,28 @@ impl RankingEngine {
                 let Some(school) = lookups.schools_by_id.get(link.school_id.as_str()) else {
                     return false;
                 };
-                let is_same_line = link.line_name == line_name;
-                let is_same_city =
-                    city_name.is_some_and(|city| school.area.eq_ignore_ascii_case(city));
-                let is_same_prefecture = prefecture_name.is_some_and(|prefecture| {
+                let is_same_line = match line_id {
+                    Some(line_id) => {
+                        candidate_station
+                            .line_id
+                            .as_deref()
+                            .is_some_and(|value| value == line_id)
+                            || (candidate_station.line_id.is_none() && link.line_name == line_name)
+                    }
+                    None => link.line_name == line_name,
+                };
+                let school_prefecture_matches = |prefecture: &str| {
                     school
                         .prefecture_name
                         .as_deref()
                         .is_some_and(|value| value.eq_ignore_ascii_case(prefecture))
+                };
+                let is_same_city = city_name.is_some_and(|city| {
+                    school.area.eq_ignore_ascii_case(city)
+                        && prefecture_name.is_none_or(school_prefecture_matches)
+                });
+                let is_same_prefecture = prefecture_name.is_some_and(|prefecture| {
+                    school_prefecture_matches(prefecture)
                         || school.area.eq_ignore_ascii_case(prefecture)
                 });
 
@@ -1246,6 +1266,7 @@ mod tests {
                     id: "st_target".to_string(),
                     name: "Target".to_string(),
                     line_name: "Target Line".to_string(),
+                    line_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -1253,6 +1274,7 @@ mod tests {
                     id: "st_line_a".to_string(),
                     name: "Line A Station".to_string(),
                     line_name: "Target Line".to_string(),
+                    line_id: None,
                     latitude: 35.01,
                     longitude: 139.01,
                 },
@@ -1260,6 +1282,7 @@ mod tests {
                     id: "st_line_b".to_string(),
                     name: "Line B Station".to_string(),
                     line_name: "Target Line".to_string(),
+                    line_id: None,
                     latitude: 35.02,
                     longitude: 139.02,
                 },
@@ -1267,6 +1290,7 @@ mod tests {
                     id: "st_global".to_string(),
                     name: "Global Station".to_string(),
                     line_name: "Far Line".to_string(),
+                    line_id: None,
                     latitude: 26.21,
                     longitude: 127.68,
                 },
@@ -1342,6 +1366,192 @@ mod tests {
             .candidate_counts
             .get("same_city")
             .is_some_and(|count| *count >= 2));
+    }
+
+    #[test]
+    fn line_context_uses_line_id_before_line_name() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_target_line".to_string(),
+                    name: "Target Line School".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_target_line".to_string(),
+                },
+                School {
+                    id: "school_other_line".to_string(),
+                    name: "Other Line School".to_string(),
+                    area: "Shibuya".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_other_line".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Shared Line".to_string(),
+                    line_id: Some("line_target".to_string()),
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_target_line".to_string(),
+                    name: "Target Line Station".to_string(),
+                    line_name: "Shared Line".to_string(),
+                    line_id: Some("line_target".to_string()),
+                    latitude: 35.01,
+                    longitude: 139.01,
+                },
+                Station {
+                    id: "st_other_line".to_string(),
+                    name: "Other Line Station".to_string(),
+                    line_name: "Shared Line".to_string(),
+                    line_id: Some("line_other".to_string()),
+                    latitude: 35.02,
+                    longitude: 139.02,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_target_line".to_string(),
+                    station_id: "st_target_line".to_string(),
+                    walking_minutes: 6,
+                    distance_meters: 600,
+                    hop_distance: 1,
+                    line_name: "Shared Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_other_line".to_string(),
+                    station_id: "st_other_line".to_string(),
+                    walking_minutes: 7,
+                    distance_meters: 700,
+                    hop_distance: 1,
+                    line_name: "Shared Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 1;
+        profiles.fallback.min_results = 1;
+        let engine = RankingEngine::new(profiles, "v020-line-id-stage-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.context = Some(RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Shared Line".to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&1));
+        assert_eq!(result.fallback_stage, FallbackStage::SameLine);
+        assert_eq!(result.items[0].school_id, "school_target_line");
+    }
+
+    #[test]
+    fn city_context_requires_prefecture_match_when_present() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_tokyo_fuchu".to_string(),
+                    name: "Tokyo Fuchu".to_string(),
+                    area: "Fuchu".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_tokyo".to_string(),
+                },
+                School {
+                    id: "school_hiroshima_fuchu".to_string(),
+                    name: "Hiroshima Fuchu".to_string(),
+                    area: "Fuchu".to_string(),
+                    prefecture_name: Some("Hiroshima".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_hiroshima".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: None,
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_tokyo_fuchu".to_string(),
+                    name: "Tokyo Fuchu Station".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: None,
+                    latitude: 35.01,
+                    longitude: 139.01,
+                },
+                Station {
+                    id: "st_hiroshima_fuchu".to_string(),
+                    name: "Hiroshima Fuchu Station".to_string(),
+                    line_name: "Other Line".to_string(),
+                    line_id: None,
+                    latitude: 34.57,
+                    longitude: 133.24,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_tokyo_fuchu".to_string(),
+                    station_id: "st_tokyo_fuchu".to_string(),
+                    walking_minutes: 6,
+                    distance_meters: 600,
+                    hop_distance: 1,
+                    line_name: "Target Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_hiroshima_fuchu".to_string(),
+                    station_id: "st_hiroshima_fuchu".to_string(),
+                    walking_minutes: 7,
+                    distance_meters: 700,
+                    hop_distance: 1,
+                    line_name: "Other Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 1;
+        profiles.fallback.min_results = 1;
+        let engine = RankingEngine::new(profiles, "v020-city-pref-stage-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.context = Some(request_area_context(Some("Fuchu"), Some("Tokyo")));
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("same_city"), Some(&1));
+        assert_eq!(result.fallback_stage, FallbackStage::SameCity);
+        assert_eq!(result.items[0].school_id, "school_tokyo_fuchu");
     }
 
     #[test]
@@ -1422,6 +1632,7 @@ mod tests {
                     id: "st_target".to_string(),
                     name: "Target".to_string(),
                     line_name: "Target Line".to_string(),
+                    line_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -1429,6 +1640,7 @@ mod tests {
                     id: "st_neighbor_a".to_string(),
                     name: "Neighbor A Station".to_string(),
                     line_name: "Other Line".to_string(),
+                    line_id: None,
                     latitude: 35.0005,
                     longitude: 139.0005,
                 },
@@ -1436,6 +1648,7 @@ mod tests {
                     id: "st_neighbor_b".to_string(),
                     name: "Neighbor B Station".to_string(),
                     line_name: "Another Line".to_string(),
+                    line_id: None,
                     latitude: 35.0007,
                     longitude: 139.0007,
                 },
@@ -1521,6 +1734,7 @@ mod tests {
                     id: "st_sapporo".to_string(),
                     name: "Sapporo".to_string(),
                     line_name: "Sapporo Line".to_string(),
+                    line_id: None,
                     latitude: 43.0618,
                     longitude: 141.3545,
                 },
@@ -1528,6 +1742,7 @@ mod tests {
                     id: "st_naha".to_string(),
                     name: "Naha".to_string(),
                     line_name: "Yui Rail".to_string(),
+                    line_id: None,
                     latitude: 26.2124,
                     longitude: 127.6792,
                 },
@@ -1604,6 +1819,7 @@ mod tests {
                     id: "st_tokyo".to_string(),
                     name: "Tokyo".to_string(),
                     line_name: "Tokyo Line".to_string(),
+                    line_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -1611,6 +1827,7 @@ mod tests {
                     id: "st_osaka".to_string(),
                     name: "Osaka".to_string(),
                     line_name: "Osaka Line".to_string(),
+                    line_id: None,
                     latitude: 34.0,
                     longitude: 135.0,
                 },

@@ -84,6 +84,7 @@ pub fn load_fixture_dataset(path: impl AsRef<Path>) -> Result<RankingDataset> {
                 id: row.station_id,
                 name: row.name,
                 line_name: row.line_name,
+                line_id: None,
                 latitude: row.latitude,
                 longitude: row.longitude,
             })

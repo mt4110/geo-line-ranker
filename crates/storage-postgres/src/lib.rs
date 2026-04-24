@@ -194,7 +194,7 @@ impl PgRepository {
         let client = self.connect().await?;
         client
             .query_opt(
-                "SELECT id, name, line_name, latitude, longitude
+                "SELECT id, name, line_name, line_id, latitude, longitude
                  FROM stations
                  WHERE id = $1",
                 &[&station_id],
@@ -205,6 +205,7 @@ impl PgRepository {
                     id: row.get("id"),
                     name: row.get("name"),
                     line_name: row.get("line_name"),
+                    line_id: row.get("line_id"),
                     latitude: row.get("latitude"),
                     longitude: row.get("longitude"),
                 })
@@ -273,7 +274,7 @@ impl PgRepository {
         if let Some(station_id) = context.station_id() {
             return client
                 .query_opt(
-                    "SELECT id, name, line_name, latitude, longitude
+                    "SELECT id, name, line_name, line_id, latitude, longitude
                      FROM stations
                      WHERE id = $1",
                     &[&station_id],
@@ -290,7 +291,7 @@ impl PgRepository {
                 .and_then(|line| line.line_id.as_deref());
             return client
                 .query_opt(
-                    "SELECT id, name, line_name, latitude, longitude
+                    "SELECT id, name, line_name, line_id, latitude, longitude
                      FROM stations
                      WHERE ($1::TEXT IS NOT NULL AND line_id = $1)
                         OR (
@@ -368,9 +369,9 @@ impl PgRepository {
                     station.id,
                     station.name,
                     station.line_name,
+                    station.line_id,
                     station.latitude,
                     station.longitude,
-                    station.line_id,
                     line.operator_name,
                     area.country_code AS station_country_code,
                     area.prefecture_code AS station_prefecture_code,
@@ -391,6 +392,7 @@ impl PgRepository {
             id: station_row.get("id"),
             name: station_row.get("name"),
             line_name: station_row.get("line_name"),
+            line_id: station_row.get("line_id"),
             latitude: station_row.get("latitude"),
             longitude: station_row.get("longitude"),
         };
@@ -893,7 +895,7 @@ impl PgRepository {
     ) -> Result<Option<Station>> {
         client
             .query_opt(
-                "SELECT station.id, station.name, station.line_name, station.latitude, station.longitude
+                "SELECT station.id, station.name, station.line_name, station.line_id, station.latitude, station.longitude
                  FROM schools AS school
                  INNER JOIN school_station_links AS link
                    ON link.school_id = school.id
@@ -1508,7 +1510,7 @@ impl PgRepository {
 
         let stations: Vec<Station> = client
             .query(
-                "SELECT id, name, line_name, latitude, longitude
+                "SELECT id, name, line_name, line_id, latitude, longitude
                  FROM stations
                  WHERE id = ANY($1)
                  ORDER BY id",
@@ -1520,6 +1522,7 @@ impl PgRepository {
                 id: row.get("id"),
                 name: row.get("name"),
                 line_name: row.get("line_name"),
+                line_id: row.get("line_id"),
                 latitude: row.get("latitude"),
                 longitude: row.get("longitude"),
             })
@@ -1840,6 +1843,7 @@ fn station_from_row(row: Row) -> Station {
         id: row.get("id"),
         name: row.get("name"),
         line_name: row.get("line_name"),
+        line_id: row.get("line_id"),
         latitude: row.get("latitude"),
         longitude: row.get("longitude"),
     }
@@ -2193,7 +2197,7 @@ impl RecommendationRepository for PgRepository {
 
         let stations = client
             .query(
-                "SELECT id, name, line_name, latitude, longitude FROM stations ORDER BY id",
+                "SELECT id, name, line_name, line_id, latitude, longitude FROM stations ORDER BY id",
                 &[],
             )
             .await?
@@ -2202,6 +2206,7 @@ impl RecommendationRepository for PgRepository {
                 id: row.get("id"),
                 name: row.get("name"),
                 line_name: row.get("line_name"),
+                line_id: row.get("line_id"),
                 latitude: row.get("latitude"),
                 longitude: row.get("longitude"),
             })

@@ -56,6 +56,7 @@ async fn load_candidate_links_filters_neighbor_hops_before_limit() -> anyhow::Re
                     id: "st_target".to_string(),
                     name: "Target".to_string(),
                     line_name: "JR Yamanote Line".to_string(),
+                    line_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -211,6 +212,7 @@ async fn station_context_candidate_links_include_full_same_line_fallback() -> an
             id: "st_target".to_string(),
             name: "Target".to_string(),
             line_name: "Same Line".to_string(),
+            line_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -288,6 +290,7 @@ async fn station_context_candidate_links_include_nearby_off_line_candidates() ->
             id: "st_target".to_string(),
             name: "Target".to_string(),
             line_name: "Target Line".to_string(),
+            line_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -369,6 +372,7 @@ async fn line_context_candidate_links_fall_back_to_line_name_when_station_line_i
             id: "st_target".to_string(),
             name: "Target".to_string(),
             line_name: "Legacy Shared Line".to_string(),
+            line_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -583,6 +587,7 @@ async fn city_context_candidate_links_honor_prefecture_name() -> anyhow::Result<
             id: "st_target".to_string(),
             name: "Target Station".to_string(),
             line_name: "Target Line".to_string(),
+            line_id: None,
             latitude: 34.57,
             longitude: 133.24,
         };
@@ -667,6 +672,7 @@ async fn prefecture_context_candidate_links_match_school_prefecture_name() -> an
             id: "st_target".to_string(),
             name: "Target".to_string(),
             line_name: "Target Line".to_string(),
+            line_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -746,6 +752,7 @@ async fn context_candidate_links_include_safe_global_when_scoped_filters_are_und
             id: "st_target".to_string(),
             name: "Target".to_string(),
             line_name: "Target Line".to_string(),
+            line_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -832,6 +839,7 @@ async fn context_candidate_links_include_safe_global_when_scoped_filters_are_emp
             id: "st_target".to_string(),
             name: "Target".to_string(),
             line_name: "Target Line".to_string(),
+            line_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };

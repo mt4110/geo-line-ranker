@@ -455,6 +455,7 @@ async fn full_mode_candidate_retrieval_includes_same_line_candidates_before_limi
         id: "st_target".to_string(),
         name: "Target".to_string(),
         line_name: "JR Yamanote Line".to_string(),
+        line_id: None,
         latitude: 35.0,
         longitude: 139.0,
     };
@@ -493,6 +494,7 @@ async fn full_mode_candidate_retrieval_keeps_sql_only_ordering_for_limit() -> Re
         id: "st_target".to_string(),
         name: "Target".to_string(),
         line_name: "JR Yamanote Line".to_string(),
+        line_id: None,
         latitude: 35.0,
         longitude: 139.0,
     };
@@ -525,6 +527,7 @@ async fn full_mode_candidate_retrieval_includes_nearby_off_line_candidates() -> 
         id: "st_target".to_string(),
         name: "Target".to_string(),
         line_name: "JR Yamanote Line".to_string(),
+        line_id: None,
         latitude: 35.0,
         longitude: 139.0,
     };

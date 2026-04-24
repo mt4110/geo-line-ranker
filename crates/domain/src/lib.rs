@@ -78,6 +78,8 @@ pub struct Station {
     pub id: String,
     pub name: String,
     pub line_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_id: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
 }
