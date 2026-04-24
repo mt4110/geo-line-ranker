@@ -522,6 +522,9 @@ fn context_resolution_error_message(
     context_input: &context::ContextInput,
 ) -> String {
     let error_message = error.to_string();
+    if is_blank_station_error(error) {
+        return "target_station_id or context.station_id must not be blank".to_string();
+    }
     if is_unknown_station_error(error) {
         return context_input
             .station_id
@@ -536,9 +539,16 @@ fn context_resolution_error_message(
 fn is_context_resolution_validation_error(error: &anyhow::Error) -> bool {
     is_unknown_station_error(error)
         || is_unknown_line_error(error)
+        || is_blank_station_error(error)
         || error
             .chain()
             .any(|cause| cause.to_string() == "line context requires line_id or line_name")
+}
+
+fn is_blank_station_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string() == "station_id must not be blank")
 }
 
 fn is_unknown_station_error(error: &anyhow::Error) -> bool {
@@ -704,6 +714,12 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
 
+        let blank_station = anyhow::anyhow!("station_id must not be blank");
+        assert_eq!(
+            context_resolution_error_status(&blank_station),
+            StatusCode::BAD_REQUEST
+        );
+
         let trace_write_error = anyhow::anyhow!("failed to record context trace");
         assert_eq!(
             context_resolution_error_status(&trace_write_error),
@@ -724,6 +740,22 @@ mod tests {
                 &input
             ),
             "unknown target_station_id: station_missing"
+        );
+    }
+
+    #[test]
+    fn context_resolution_blank_station_message_names_request_fields() {
+        let input = context::ContextInput {
+            station_id: Some("".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            context_resolution_error_message(
+                &anyhow::anyhow!("station_id must not be blank"),
+                &input
+            ),
+            "target_station_id or context.station_id must not be blank"
         );
     }
 

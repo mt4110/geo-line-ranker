@@ -249,6 +249,20 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         assert!(unknown_line_error
             .to_string()
             .contains("unknown line_id: line_missing"));
+        let blank_station_error = repo
+            .resolve_context(
+                "req-context-station-blank",
+                None,
+                &ContextInput {
+                    station_id: Some("   ".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("blank station_id should fail");
+        assert!(blank_station_error
+            .to_string()
+            .contains("station_id must not be blank"));
         let line_name_fallback_context = repo
             .resolve_context(
                 "req-context-line-name-fallback",

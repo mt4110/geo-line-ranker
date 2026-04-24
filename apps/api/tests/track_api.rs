@@ -1171,6 +1171,7 @@ async fn recommend_endpoint_rejects_unknown_target_station_with_clear_message() 
         let app = build_app(state);
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -1195,6 +1196,33 @@ async fn recommend_endpoint_rejects_unknown_target_station_with_clear_message() 
         assert_eq!(
             payload["error"],
             "unknown target_station_id: station_missing"
+        );
+
+        let blank_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "target_station_id": "   ",
+                            "placement": "search",
+                            "limit": 3
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recommendation response");
+
+        assert_eq!(blank_response.status(), StatusCode::BAD_REQUEST);
+        let blank_body = to_bytes(blank_response.into_body(), usize::MAX).await?;
+        let blank_payload: serde_json::Value = serde_json::from_slice(&blank_body)?;
+        assert_eq!(
+            blank_payload["error"],
+            "target_station_id or context.station_id must not be blank"
         );
 
         Ok(())

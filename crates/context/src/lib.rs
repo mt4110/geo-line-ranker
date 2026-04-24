@@ -226,10 +226,7 @@ pub fn build_request_context(
         .as_deref()
         .is_none_or(|value| value.trim().is_empty())
     {
-        input.station_id = target_station_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
+        input.station_id = target_station_id.map(str::trim).map(str::to_string);
     }
     input
 }
@@ -301,6 +298,13 @@ mod tests {
         );
 
         assert_eq!(input.station_id.as_deref(), Some("st_tamachi"));
+    }
+
+    #[test]
+    fn blank_target_station_id_is_preserved_for_validation() {
+        let input = build_request_context(Some("   "), None);
+
+        assert_eq!(input.station_id.as_deref(), Some(""));
     }
 
     #[test]

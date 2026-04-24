@@ -220,6 +220,13 @@ impl PgRepository {
         input: &ContextInput,
     ) -> Result<RankingContext> {
         let client = self.connect().await?;
+        if input
+            .station_id
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            bail!("station_id must not be blank");
+        }
         let mut context = if let Some(station_id) = input
             .station_id
             .as_deref()
