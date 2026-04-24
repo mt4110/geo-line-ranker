@@ -335,6 +335,27 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         assert!(empty_profile_context.line.is_none());
         assert!(empty_profile_context.station.is_none());
 
+        let country_only_context = repo
+            .resolve_context(
+                "req-context-country-only",
+                None,
+                &ContextInput {
+                    area: Some(AreaContextInput {
+                        country: Some("JP".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(
+            country_only_context.context_source,
+            ContextSource::DefaultSafeContext
+        );
+        assert!(country_only_context.area.is_none());
+        assert!(country_only_context.line.is_none());
+        assert!(country_only_context.station.is_none());
+
         Ok(())
     }
     .await;

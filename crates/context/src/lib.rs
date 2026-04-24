@@ -56,13 +56,9 @@ pub struct AreaContextInput {
 
 impl AreaContextInput {
     pub fn is_empty(&self) -> bool {
-        self.country
+        self.prefecture_code
             .as_deref()
             .is_none_or(|value| value.trim().is_empty())
-            && self
-                .prefecture_code
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty())
             && self
                 .prefecture_name
                 .as_deref()
@@ -316,6 +312,19 @@ mod tests {
                 prefecture_name: Some(" ".to_string()),
                 city_code: Some("\n".to_string()),
                 city_name: Some("   ".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn country_only_area_does_not_count_as_context() {
+        let input = ContextInput {
+            area: Some(AreaContextInput {
+                country: Some("JP".to_string()),
+                ..Default::default()
             }),
             ..Default::default()
         };
