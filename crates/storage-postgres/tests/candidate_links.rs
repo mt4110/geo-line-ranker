@@ -1,4 +1,6 @@
-use context::{ContextSource, LineContext, PrivacyLevel, RankingContext, StationContext};
+use context::{
+    AreaContext, ContextSource, LineContext, PrivacyLevel, RankingContext, StationContext,
+};
 use domain::Station;
 use storage_postgres::{run_migrations, PgRepository};
 use tokio_postgres::NoTls;
@@ -457,6 +459,162 @@ async fn line_context_station_lookup_falls_back_to_line_name_when_station_line_i
             .expect("representative station");
 
         assert_eq!(station.id, "st_line_name_only");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn prefecture_context_candidate_links_match_school_prefecture_name() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_prefecture_links").await
+    else {
+        eprintln!(
+            "skipping storage-postgres prefecture candidate link test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id) VALUES
+                    ('school_tokyo', 'Tokyo School', 'Minato', 'Tokyo', 'high_school', 'group_tokyo'),
+                    ('school_osaka', 'Osaka School', 'Kita', 'Osaka', 'high_school', 'group_osaka');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude) VALUES
+                    ('st_target', 'Target', 'Target Line', 35.0, 139.0),
+                    ('st_tokyo', 'Tokyo Station', 'Tokyo Line', 35.1, 139.1),
+                    ('st_osaka', 'Osaka Station', 'Osaka Line', 34.7, 135.5);
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_tokyo', 'st_tokyo', 6, 60, 0, 'Tokyo Line'),
+                    ('school_osaka', 'st_osaka', 7, 70, 0, 'Osaka Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Target Line".to_string(),
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestArea,
+            confidence: 0.95,
+            area: Some(AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: Some("Tokyo".to_string()),
+                city_code: None,
+                city_name: None,
+            }),
+            line: None,
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 1, 1_000.0, 1)
+            .await?;
+
+        assert_eq!(candidate_links.len(), 1);
+        assert_eq!(candidate_links[0].school_id, "school_tokyo");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn context_candidate_links_include_safe_global_when_scoped_filters_are_empty(
+) -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_safe_global_links").await
+    else {
+        eprintln!(
+            "skipping storage-postgres safe-global candidate link test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id) VALUES
+                    ('school_global', 'Global School', 'Minato', 'Tokyo', 'high_school', 'group_global');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude) VALUES
+                    ('st_target', 'Target', 'Target Line', 35.0, 139.0),
+                    ('st_global', 'Global Station', 'Global Line', 35.1, 139.1);
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_global', 'st_global', 6, 60, 0, 'Global Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Target Line".to_string(),
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestArea,
+            confidence: 0.95,
+            area: Some(AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: None,
+                city_code: None,
+                city_name: Some("Nowhere".to_string()),
+            }),
+            line: None,
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 1_000.0, 1)
+            .await?;
+
+        assert_eq!(candidate_links.len(), 1);
+        assert_eq!(candidate_links[0].school_id, "school_global");
 
         Ok(())
     }

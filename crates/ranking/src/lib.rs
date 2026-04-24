@@ -308,8 +308,13 @@ impl RankingEngine {
                 let is_same_line = link.line_name == line_name;
                 let is_same_city =
                     city_name.is_some_and(|city| school.area.eq_ignore_ascii_case(city));
-                let is_same_prefecture = prefecture_name
-                    .is_some_and(|prefecture| school.area.eq_ignore_ascii_case(prefecture));
+                let is_same_prefecture = prefecture_name.is_some_and(|prefecture| {
+                    school
+                        .prefecture_name
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(prefecture))
+                        || school.area.eq_ignore_ascii_case(prefecture)
+                });
 
                 match stage {
                     FallbackStage::StrictStation => {
@@ -1245,6 +1250,7 @@ mod tests {
                     id: "school_neighbor_a".to_string(),
                     name: "Neighbor A".to_string(),
                     area: "Neighbor Ward".to_string(),
+                    prefecture_name: None,
                     school_type: "high_school".to_string(),
                     group_id: "group_neighbor_a".to_string(),
                 },
@@ -1252,6 +1258,7 @@ mod tests {
                     id: "school_neighbor_b".to_string(),
                     name: "Neighbor B".to_string(),
                     area: "Neighbor Ward".to_string(),
+                    prefecture_name: None,
                     school_type: "high_school".to_string(),
                     group_id: "group_neighbor_b".to_string(),
                 },
@@ -1342,6 +1349,7 @@ mod tests {
                     id: "school_hokkaido".to_string(),
                     name: "Hokkaido School".to_string(),
                     area: "Hokkaido".to_string(),
+                    prefecture_name: None,
                     school_type: "high_school".to_string(),
                     group_id: "group_hokkaido".to_string(),
                 },
@@ -1349,6 +1357,7 @@ mod tests {
                     id: "school_okinawa".to_string(),
                     name: "Okinawa Popular School".to_string(),
                     area: "Okinawa".to_string(),
+                    prefecture_name: None,
                     school_type: "high_school".to_string(),
                     group_id: "group_okinawa".to_string(),
                 },
@@ -1412,6 +1421,90 @@ mod tests {
             .expect("recommendation result");
 
         assert_eq!(result.items[0].school_id, "school_hokkaido");
+        assert_eq!(result.fallback_stage, FallbackStage::SamePrefecture);
+    }
+
+    #[test]
+    fn prefecture_context_matches_school_prefecture_metadata() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_tokyo".to_string(),
+                    name: "Tokyo School".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_tokyo".to_string(),
+                },
+                School {
+                    id: "school_osaka".to_string(),
+                    name: "Osaka Popular School".to_string(),
+                    area: "Kita".to_string(),
+                    prefecture_name: Some("Osaka".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_osaka".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_tokyo".to_string(),
+                    name: "Tokyo".to_string(),
+                    line_name: "Tokyo Line".to_string(),
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_osaka".to_string(),
+                    name: "Osaka".to_string(),
+                    line_name: "Osaka Line".to_string(),
+                    latitude: 34.0,
+                    longitude: 135.0,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_tokyo".to_string(),
+                    station_id: "st_tokyo".to_string(),
+                    walking_minutes: 12,
+                    distance_meters: 900,
+                    hop_distance: 0,
+                    line_name: "Tokyo Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_osaka".to_string(),
+                    station_id: "st_osaka".to_string(),
+                    walking_minutes: 2,
+                    distance_meters: 100,
+                    hop_distance: 0,
+                    line_name: "Osaka Line".to_string(),
+                },
+            ],
+            popularity_snapshots: vec![PopularitySnapshot {
+                school_id: "school_osaka".to_string(),
+                popularity_score: 100.0,
+                total_events: 100,
+                school_view_count: 100,
+                school_save_count: 0,
+                event_view_count: 0,
+                apply_click_count: 0,
+                share_count: 0,
+                search_execute_count: 0,
+            }],
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "v020-prefecture-test");
+        let mut query = query("st_tokyo", PlacementKind::Search);
+        query.context = Some(request_area_context(None, Some("Tokyo")));
+
+        let result = engine
+            .recommend(&dataset, &query)
+            .expect("recommendation result");
+
+        assert_eq!(result.items[0].school_id, "school_tokyo");
+        assert_eq!(result.candidate_counts.get("same_prefecture"), Some(&1));
         assert_eq!(result.fallback_stage, FallbackStage::SamePrefecture);
     }
 

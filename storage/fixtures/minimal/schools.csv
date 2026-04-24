@@ -1,11 +1,11 @@
-school_id,name,area,school_type,group_id
-school_seaside,Seaside High,Minato,high_school,group_bayside
-school_garden,Garden Tech,Minato,technical_college,group_bayside
-school_hillside,Hillside Academy,Shiodome,high_school,group_urban
-school_creative,Creative Arts School,Shibuya,high_school,group_creative
-school_utokyo,University of Tokyo,Bunkyo,university,group_national_university
-school_keio,Keio University,Minato,university,group_private_university
-school_shibaura_it_junior,Shibaura Institute of Technology Junior High,Koto,junior_high,group_shibaura
-school_hachioji_gakuen_junior,Hachioji Gakuen Hachioji Junior High,Hachioji,junior_high,group_hachioji_gakuen
-school_nihon_university_junior,Nihon University Junior High School,Kohoku,junior_high,group_nihon_university
-school_aoyama_gakuin_junior,Aoyama Gakuin Junior High,Shibuya,junior_high,group_aoyama_gakuin
+school_id,name,area,prefecture_name,school_type,group_id
+school_seaside,Seaside High,Minato,Tokyo,high_school,group_bayside
+school_garden,Garden Tech,Minato,Tokyo,technical_college,group_bayside
+school_hillside,Hillside Academy,Shiodome,Tokyo,high_school,group_urban
+school_creative,Creative Arts School,Shibuya,Tokyo,high_school,group_creative
+school_utokyo,University of Tokyo,Bunkyo,Tokyo,university,group_national_university
+school_keio,Keio University,Minato,Tokyo,university,group_private_university
+school_shibaura_it_junior,Shibaura Institute of Technology Junior High,Koto,Tokyo,junior_high,group_shibaura
+school_hachioji_gakuen_junior,Hachioji Gakuen Hachioji Junior High,Hachioji,Tokyo,junior_high,group_hachioji_gakuen
+school_nihon_university_junior,Nihon University Junior High School,Kohoku,Kanagawa,junior_high,group_nihon_university
+school_aoyama_gakuin_junior,Aoyama Gakuin Junior High,Shibuya,Tokyo,junior_high,group_aoyama_gakuin

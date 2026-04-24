@@ -244,6 +244,15 @@ async fn v020_migration_preserves_date_only_starts_at_as_utc_midnight() -> anyho
                 ),
             ]
         );
+        let school_row = client
+            .query_one(
+                "SELECT prefecture_name IS NULL AS prefecture_name_is_null
+                 FROM schools
+                 WHERE id = 'school_legacy'",
+                &[],
+            )
+            .await?;
+        assert!(school_row.get::<_, bool>("prefecture_name_is_null"));
 
         Ok(())
     }

@@ -875,7 +875,18 @@ impl PgRepository {
                    ON link.school_id = school.id
                  INNER JOIN stations AS station
                    ON station.id = link.station_id
+                 LEFT JOIN LATERAL (
+                    SELECT area.prefecture_name
+                    FROM areas AS area
+                    WHERE area.country_code = 'JP'
+                      AND area.area_level = 'city'
+                      AND lower(area.city_name) = lower(school.area)
+                    ORDER BY area.area_id ASC
+                    LIMIT 1
+                 ) AS school_area ON TRUE
                  WHERE lower(school.area) = lower($1)
+                    OR lower(school.prefecture_name) = lower($1)
+                    OR lower(school_area.prefecture_name) = lower($1)
                  ORDER BY link.distance_meters ASC, link.walking_minutes ASC, station.id ASC
                  LIMIT 1",
                 &[&area],
@@ -1152,98 +1163,146 @@ impl PgRepository {
         let city_name = context.city_name().map(str::to_string);
         let prefecture_name = context.prefecture_name().map(str::to_string);
         let station_context_is_explicit = context.station.is_some();
-        let allow_global = matches!(context.context_source, ContextSource::DefaultSafeContext);
+        let include_safe_global_candidates = true;
         let rows = client
             .query(
-                "SELECT
+                "WITH candidate_rows AS (
+                    SELECT
+                        link.school_id,
+                        link.station_id,
+                        link.walking_minutes,
+                        link.distance_meters,
+                        link.hop_distance,
+                        link.line_name,
+                        candidate_station.line_id AS candidate_line_id,
+                        candidate_station.geom AS candidate_geom,
+                        school.area AS school_area,
+                        COALESCE(school.prefecture_name, school_area.prefecture_name) AS school_prefecture_name
+                    FROM school_station_links AS link
+                    INNER JOIN stations AS candidate_station
+                      ON candidate_station.id = link.station_id
+                    INNER JOIN schools AS school
+                      ON school.id = link.school_id
+                    LEFT JOIN LATERAL (
+                        SELECT area.prefecture_name
+                        FROM areas AS area
+                        WHERE area.country_code = 'JP'
+                          AND area.area_level = 'city'
+                          AND lower(area.city_name) = lower(school.area)
+                          AND (
+                              school.prefecture_name IS NULL
+                              OR area.prefecture_name IS NULL
+                              OR lower(area.prefecture_name) = lower(school.prefecture_name)
+                          )
+                        ORDER BY
+                            CASE
+                                WHEN school.prefecture_name IS NOT NULL
+                                  AND area.prefecture_name IS NOT NULL
+                                  AND lower(area.prefecture_name) = lower(school.prefecture_name)
+                                  THEN 0
+                                ELSE 1
+                            END,
+                            area.area_id ASC
+                        LIMIT 1
+                    ) AS school_area ON TRUE
+                ),
+                scored_rows AS (
+                    SELECT
+                        candidate_rows.*,
+                        ($1::TEXT IS NOT NULL AND station_id = $1) AS is_strict_station,
+                        (
+                            ($11::TEXT IS NOT NULL AND candidate_line_id = $11)
+                            OR (
+                                $2::TEXT IS NOT NULL
+                                AND ($11::TEXT IS NULL OR candidate_line_id IS NULL)
+                                AND line_name = $2
+                            )
+                        ) AS is_same_line,
+                        ($3::TEXT IS NOT NULL AND lower(school_area) = lower($3)) AS is_same_city,
+                        (
+                            $4::TEXT IS NOT NULL
+                            AND (
+                                lower(school_area) = lower($4)
+                                OR lower(COALESCE(school_prefecture_name, '')) = lower($4)
+                            )
+                        ) AS is_same_prefecture,
+                        (
+                            $12
+                            AND station_id <> $13
+                            AND NOT (
+                                ($11::TEXT IS NOT NULL AND candidate_line_id = $11)
+                                OR (
+                                    $2::TEXT IS NOT NULL
+                                    AND ($11::TEXT IS NULL OR candidate_line_id IS NULL)
+                                    AND line_name = $2
+                                )
+                            )
+                            AND ($3::TEXT IS NULL OR lower(school_area) <> lower($3))
+                            AND (
+                                $4::TEXT IS NULL
+                                OR NOT (
+                                    lower(school_area) = lower($4)
+                                    OR lower(COALESCE(school_prefecture_name, '')) = lower($4)
+                                )
+                            )
+                            AND ST_DWithin(
+                                candidate_geom,
+                                ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                                $8
+                            )
+                        ) AS is_neighbor_area,
+                        (
+                            (
+                                ($11::TEXT IS NOT NULL AND candidate_line_id = $11)
+                                OR (
+                                    $2::TEXT IS NOT NULL
+                                    AND ($11::TEXT IS NULL OR candidate_line_id IS NULL)
+                                    AND line_name = $2
+                                )
+                            )
+                            AND hop_distance <= $7
+                            AND ST_DWithin(
+                                candidate_geom,
+                                ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                                $8
+                            )
+                        ) AS is_near_same_line
+                    FROM candidate_rows
+                )
+                 SELECT
                     link.school_id,
                     link.station_id,
                     link.walking_minutes,
                     link.distance_meters,
                     link.hop_distance,
                     link.line_name
-                 FROM school_station_links AS link
-                 INNER JOIN stations AS candidate_station
-                   ON candidate_station.id = link.station_id
-                 INNER JOIN schools AS school
-                   ON school.id = link.school_id
-                 WHERE ($1::TEXT IS NOT NULL AND link.station_id = $1)
+                 FROM scored_rows AS link
+                 WHERE link.is_strict_station
+                    OR link.is_same_line
+                    OR link.is_same_city
+                    OR link.is_same_prefecture
+                    OR link.is_neighbor_area
+                    OR link.is_near_same_line
                     OR (
-                        ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                        OR (
-                            $2::TEXT IS NOT NULL
-                            AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
-                            AND link.line_name = $2
+                        $9
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM scored_rows AS scoped
+                            WHERE scoped.is_strict_station
+                               OR scoped.is_same_line
+                               OR scoped.is_same_city
+                               OR scoped.is_same_prefecture
+                               OR scoped.is_neighbor_area
+                               OR scoped.is_near_same_line
                         )
                     )
-                    OR ($3::TEXT IS NOT NULL AND lower(school.area) = lower($3))
-                    OR ($4::TEXT IS NOT NULL AND lower(school.area) = lower($4))
-                    OR (
-                        $12
-                        AND link.station_id <> $13
-                        AND NOT (
-                            ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                            OR (
-                                $2::TEXT IS NOT NULL
-                                AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
-                                AND link.line_name = $2
-                            )
-                        )
-                        AND ($3::TEXT IS NULL OR lower(school.area) <> lower($3))
-                        AND ($4::TEXT IS NULL OR lower(school.area) <> lower($4))
-                        AND ST_DWithin(
-                            candidate_station.geom,
-                            ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
-                            $8
-                        )
-                    )
-                    OR (
-                        (
-                            ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                            OR (
-                                $2::TEXT IS NOT NULL
-                                AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
-                                AND link.line_name = $2
-                            )
-                        )
-                        AND link.hop_distance <= $7
-                        AND ST_DWithin(
-                            candidate_station.geom,
-                            ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
-                            $8
-                        )
-                    )
-                    OR $9
                  ORDER BY
                     CASE
-                        WHEN $1::TEXT IS NOT NULL AND link.station_id = $1 THEN 0
-                        WHEN $11::TEXT IS NOT NULL AND candidate_station.line_id = $11 THEN 1
-                        WHEN
-                            $2::TEXT IS NOT NULL
-                            AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
-                            AND link.line_name = $2
-                            THEN 2
-                        WHEN $3::TEXT IS NOT NULL AND lower(school.area) = lower($3) THEN 3
-                        WHEN $4::TEXT IS NOT NULL AND lower(school.area) = lower($4) THEN 4
-                        WHEN
-                            $12
-                            AND link.station_id <> $13
-                            AND NOT (
-                                ($11::TEXT IS NOT NULL AND candidate_station.line_id = $11)
-                                OR (
-                                    $2::TEXT IS NOT NULL
-                                    AND ($11::TEXT IS NULL OR candidate_station.line_id IS NULL)
-                                    AND link.line_name = $2
-                                )
-                            )
-                            AND ($3::TEXT IS NULL OR lower(school.area) <> lower($3))
-                            AND ($4::TEXT IS NULL OR lower(school.area) <> lower($4))
-                            AND ST_DWithin(
-                                candidate_station.geom,
-                                ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
-                                $8
-                            )
-                            THEN 5
+                        WHEN link.is_strict_station THEN 0
+                        WHEN link.is_same_line THEN 1
+                        WHEN link.is_same_city THEN 3
+                        WHEN link.is_same_prefecture THEN 4
+                        WHEN link.is_neighbor_area THEN 5
                         ELSE 6
                     END,
                     link.distance_meters ASC,
@@ -1260,7 +1319,7 @@ impl PgRepository {
                     &target_station.latitude,
                     &(neighbor_max_hops as i16),
                     &neighbor_distance_cap_meters,
-                    &allow_global,
+                    &include_safe_global_candidates,
                     &((candidate_limit.clamp(1, 10_000)) as i64),
                     &line_id,
                     &station_context_is_explicit,
@@ -1313,7 +1372,7 @@ impl PgRepository {
 
         let schools: Vec<School> = client
             .query(
-                "SELECT id, name, area, school_type, group_id
+                "SELECT id, name, area, prefecture_name, school_type, group_id
                  FROM schools
                  WHERE id = ANY($1)
                  ORDER BY id",
@@ -1325,6 +1384,7 @@ impl PgRepository {
                 id: row.get("id"),
                 name: row.get("name"),
                 area: row.get("area"),
+                prefecture_name: row.get("prefecture_name"),
                 school_type: row.get("school_type"),
                 group_id: row.get("group_id"),
             })
@@ -1995,7 +2055,7 @@ impl RecommendationRepository for PgRepository {
 
         let schools = client
             .query(
-                "SELECT id, name, area, school_type, group_id FROM schools ORDER BY id",
+                "SELECT id, name, area, prefecture_name, school_type, group_id FROM schools ORDER BY id",
                 &[],
             )
             .await?
@@ -2004,6 +2064,7 @@ impl RecommendationRepository for PgRepository {
                 id: row.get("id"),
                 name: row.get("name"),
                 area: row.get("area"),
+                prefecture_name: row.get("prefecture_name"),
                 school_type: row.get("school_type"),
                 group_id: row.get("group_id"),
             })
@@ -3610,17 +3671,19 @@ pub async fn import_jp_school_codes(
 
         transaction
             .execute(
-                "INSERT INTO schools (id, name, area, school_type, group_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (id) DO UPDATE
                  SET name = EXCLUDED.name,
                      area = EXCLUDED.area,
+                     prefecture_name = EXCLUDED.prefecture_name,
                      school_type = EXCLUDED.school_type,
                      group_id = COALESCE(NULLIF(schools.group_id, ''), EXCLUDED.group_id)",
                 &[
                     &record.school_id,
                     &record.name,
-                    &format!("{} {}", record.prefecture_name, record.city_name),
+                    &record.city_name,
+                    &record.prefecture_name,
                     &record.school_type,
                     &record.school_id,
                 ],
@@ -3695,17 +3758,19 @@ pub async fn import_jp_school_geodata(
 
         transaction
             .execute(
-                "INSERT INTO schools (id, name, area, school_type, group_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (id) DO UPDATE
                  SET name = EXCLUDED.name,
                      area = EXCLUDED.area,
+                     prefecture_name = EXCLUDED.prefecture_name,
                      school_type = EXCLUDED.school_type,
                      group_id = COALESCE(NULLIF(schools.group_id, ''), EXCLUDED.group_id)",
                 &[
                     &record.school_id,
                     &record.name,
-                    &format!("{} {}", record.prefecture_name, record.city_name),
+                    &record.city_name,
+                    &record.prefecture_name,
                     &record.school_type,
                     &record.school_id,
                 ],
@@ -4259,35 +4324,55 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
     let schools: Vec<SchoolRow> = read_csv(fixture_dir.join("schools.csv"))?;
     let area_names = schools
         .iter()
-        .map(|school| school.area.clone())
+        .map(|school| (school.area.clone(), school.prefecture_name.clone()))
         .collect::<BTreeSet<_>>();
-    for area_name in &area_names {
+    let prefecture_names = schools
+        .iter()
+        .filter_map(|school| non_empty(school.prefecture_name.as_deref()).map(str::to_string))
+        .collect::<BTreeSet<_>>();
+    for prefecture_name in &prefecture_names {
+        let area_id = stable_id("area", prefecture_name);
+        transaction
+            .execute(
+                "INSERT INTO areas (area_id, country_code, prefecture_name, area_level)
+                 VALUES ($1, 'JP', $2, 'prefecture')
+                 ON CONFLICT (area_id) DO UPDATE
+                 SET prefecture_name = EXCLUDED.prefecture_name,
+                     area_level = EXCLUDED.area_level",
+                &[&area_id, &prefecture_name],
+            )
+            .await?;
+    }
+    for (area_name, prefecture_name) in &area_names {
         let area_id = stable_id("area", area_name);
         transaction
             .execute(
-                "INSERT INTO areas (area_id, country_code, city_name, area_level)
-                 VALUES ($1, 'JP', $2, 'city')
+                "INSERT INTO areas (area_id, country_code, prefecture_name, city_name, area_level)
+                 VALUES ($1, 'JP', $2, $3, 'city')
                  ON CONFLICT (area_id) DO UPDATE
-                 SET city_name = EXCLUDED.city_name,
+                 SET prefecture_name = EXCLUDED.prefecture_name,
+                     city_name = EXCLUDED.city_name,
                      area_level = EXCLUDED.area_level",
-                &[&area_id, &area_name],
+                &[&area_id, &prefecture_name, &area_name],
             )
             .await?;
     }
     for school in schools {
         transaction
             .execute(
-                "INSERT INTO schools (id, name, area, school_type, group_id)
-                 VALUES ($1, $2, $3, $4, $5)
+                "INSERT INTO schools (id, name, area, prefecture_name, school_type, group_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (id) DO UPDATE
                  SET name = EXCLUDED.name,
                      area = EXCLUDED.area,
+                     prefecture_name = EXCLUDED.prefecture_name,
                      school_type = EXCLUDED.school_type,
                      group_id = EXCLUDED.group_id",
                 &[
                     &school.school_id,
                     &school.name,
                     &school.area,
+                    &school.prefecture_name,
                     &school.school_type,
                     &school.group_id,
                 ],
@@ -4459,6 +4544,8 @@ struct SchoolRow {
     school_id: String,
     name: String,
     area: String,
+    #[serde(default)]
+    prefecture_name: Option<String>,
     school_type: String,
     group_id: String,
 }

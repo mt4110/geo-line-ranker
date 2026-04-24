@@ -91,9 +91,20 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         let candidate_links = repo
             .load_context_candidate_links(&target_station, &context, 20, 5_000.0, 2)
             .await?;
-        assert!(candidate_links
+        let first_minato_candidate = candidate_links
             .iter()
-            .all(|link| link.school_id != "school_creative"));
+            .position(|link| {
+                matches!(
+                    link.school_id.as_str(),
+                    "school_seaside" | "school_garden" | "school_keio"
+                )
+            })
+            .expect("city candidate");
+        let shibuya_candidate = candidate_links
+            .iter()
+            .position(|link| link.school_id == "school_creative")
+            .expect("prefecture fallback candidate");
+        assert!(first_minato_candidate < shibuya_candidate);
 
         let conflicted_context = repo
             .resolve_context(

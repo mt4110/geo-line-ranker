@@ -9,6 +9,8 @@ pub struct School {
     pub id: String,
     pub name: String,
     pub area: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefecture_name: Option<String>,
     pub school_type: String,
     pub group_id: String,
 }
