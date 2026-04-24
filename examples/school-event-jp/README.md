@@ -42,3 +42,18 @@ Then run the API and try the request samples in this directory.
 ## Guardrail
 
 The expected behavior is context-first and deterministic. A strong Hokkaido context must not prioritize Okinawa merely because an Okinawa school has high global popularity.
+
+## Operating Profile
+
+Use this profile as the practical default for JP school/event discovery:
+
+- Keep `CANDIDATE_RETRIEVAL_MODE=sql_only` for the public path.
+- Import operational events through `event-csv`; keep crawler outputs as reviewed supplemental evidence.
+- Run `cargo run -p cli -- snapshot refresh` after event or tracking changes.
+- Run `cargo run -p cli -- replay evaluate --limit 20` after ranking config changes.
+- Run `./scripts/data_quality_doctor.sh` before release evidence capture.
+- Keep `POSTGRES_POOL_MAX_SIZE` explicit per process and below the database connection budget.
+
+The first operational tuning target is not maximum event exposure. It is a
+stable mixed result where the top item can be explained by cataloged geo,
+event, behavior, placement, and fallback reasons.

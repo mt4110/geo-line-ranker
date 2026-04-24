@@ -39,7 +39,10 @@ async fn main() -> anyhow::Result<()> {
 async fn serve() -> anyhow::Result<()> {
     let settings = AppSettings::from_env()?;
     let snapshot_tuning = load_snapshot_tuning(&settings)?;
-    let repository = Arc::new(PgRepository::new(settings.database_url.clone()));
+    let repository = Arc::new(PgRepository::with_pool_max_size(
+        settings.database_url.clone(),
+        settings.postgres_pool_max_size,
+    )?);
     let cache = RecommendationCache::new(
         settings.redis_url.clone(),
         settings.recommendation_cache_ttl_secs,
@@ -70,7 +73,10 @@ async fn serve() -> anyhow::Result<()> {
 async fn run_once(max_jobs: usize) -> anyhow::Result<()> {
     let settings = AppSettings::from_env()?;
     let snapshot_tuning = load_snapshot_tuning(&settings)?;
-    let repository = Arc::new(PgRepository::new(settings.database_url.clone()));
+    let repository = Arc::new(PgRepository::with_pool_max_size(
+        settings.database_url.clone(),
+        settings.postgres_pool_max_size,
+    )?);
     let cache = RecommendationCache::new(
         settings.redis_url.clone(),
         settings.recommendation_cache_ttl_secs,

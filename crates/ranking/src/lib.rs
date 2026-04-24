@@ -77,6 +77,94 @@ struct DiversitySelection {
     summary: DiversitySelectionSummary,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReasonCatalogEntry {
+    pub feature: &'static str,
+    pub reason_code: &'static str,
+    pub label: &'static str,
+}
+
+const REASON_CATALOG: &[ReasonCatalogEntry] = &[
+    ReasonCatalogEntry {
+        feature: "direct_station_bonus",
+        reason_code: "geo.direct_station",
+        label: "直結条件",
+    },
+    ReasonCatalogEntry {
+        feature: "line_match_bonus",
+        reason_code: "geo.line_match",
+        label: "沿線一致",
+    },
+    ReasonCatalogEntry {
+        feature: "school_station_distance",
+        reason_code: "geo.station_distance",
+        label: "駅からの近さ",
+    },
+    ReasonCatalogEntry {
+        feature: "walking_minutes",
+        reason_code: "geo.walking_minutes",
+        label: "徒歩分数",
+    },
+    ReasonCatalogEntry {
+        feature: "neighbor_station_proximity",
+        reason_code: "geo.neighbor_station_proximity",
+        label: "近傍駅との距離",
+    },
+    ReasonCatalogEntry {
+        feature: "open_day_bonus",
+        reason_code: "event.open_day",
+        label: "公開イベント",
+    },
+    ReasonCatalogEntry {
+        feature: "featured_event_bonus",
+        reason_code: "event.featured",
+        label: "注目イベント",
+    },
+    ReasonCatalogEntry {
+        feature: "event_priority_boost",
+        reason_code: "event.priority",
+        label: "運用優先度",
+    },
+    ReasonCatalogEntry {
+        feature: "popularity_snapshot_bonus",
+        reason_code: "behavior.popularity",
+        label: "最近の人気",
+    },
+    ReasonCatalogEntry {
+        feature: "area_affinity_bonus",
+        reason_code: "behavior.area_affinity",
+        label: "エリア需要",
+    },
+    ReasonCatalogEntry {
+        feature: "user_affinity_bonus",
+        reason_code: "behavior.user_affinity",
+        label: "ユーザー反応",
+    },
+    ReasonCatalogEntry {
+        feature: "content_kind_boost",
+        reason_code: "placement.content_kind_boost",
+        label: "placement調整",
+    },
+    ReasonCatalogEntry {
+        feature: "neighbor_area_penalty",
+        reason_code: "fallback.neighbor_area_penalty",
+        label: "近隣エリア調整",
+    },
+    ReasonCatalogEntry {
+        feature: "safe_global_distance_penalty",
+        reason_code: "fallback.safe_global_distance_penalty",
+        label: "遠距離抑制",
+    },
+];
+
+pub fn reason_catalog() -> &'static [ReasonCatalogEntry] {
+    REASON_CATALOG
+}
+
+pub fn reason_catalog_entry(feature: &str) -> Option<&'static ReasonCatalogEntry> {
+    REASON_CATALOG.iter().find(|entry| entry.feature == feature)
+}
+
 impl RankingEngine {
     pub fn new(profiles: RankingProfiles, algorithm_version: impl Into<String>) -> Self {
         Self {
@@ -1044,23 +1132,9 @@ fn top_reason_labels(breakdown: &[ScoreComponent]) -> Vec<String> {
 }
 
 fn feature_label(feature: &str) -> String {
-    match feature {
-        "direct_station_bonus" => "直結条件".to_string(),
-        "line_match_bonus" => "沿線一致".to_string(),
-        "school_station_distance" => "駅からの近さ".to_string(),
-        "walking_minutes" => "徒歩分数".to_string(),
-        "neighbor_station_proximity" => "近傍駅との距離".to_string(),
-        "open_day_bonus" => "公開イベント".to_string(),
-        "featured_event_bonus" => "注目イベント".to_string(),
-        "event_priority_boost" => "運用優先度".to_string(),
-        "popularity_snapshot_bonus" => "最近の人気".to_string(),
-        "area_affinity_bonus" => "エリア需要".to_string(),
-        "user_affinity_bonus" => "ユーザー反応".to_string(),
-        "content_kind_boost" => "placement調整".to_string(),
-        "neighbor_area_penalty" => "近隣エリア調整".to_string(),
-        "safe_global_distance_penalty" => "遠距離抑制".to_string(),
-        _ => "固定重み".to_string(),
-    }
+    reason_catalog_entry(feature)
+        .map(|entry| entry.label.to_string())
+        .unwrap_or_else(|| "固定重み".to_string())
 }
 
 fn fallback_stage_penalty(profiles: &RankingProfiles, fallback_stage: &FallbackStage) -> f64 {
@@ -1118,8 +1192,18 @@ fn component(
     reason: impl Into<String>,
     details: Option<serde_json::Value>,
 ) -> ScoreComponent {
+    let feature = feature.into();
+    let reason_code = reason_catalog_entry(&feature)
+        .map(|entry| entry.reason_code)
+        .unwrap_or("uncataloged")
+        .to_string();
+    debug_assert_ne!(
+        reason_code, "uncataloged",
+        "score component feature must be in the reason catalog"
+    );
     ScoreComponent {
-        feature: feature.into(),
+        feature,
+        reason_code,
         value,
         reason: reason.into(),
         details,
@@ -1205,6 +1289,32 @@ mod tests {
             .iter()
             .any(|component| component.feature == "direct_station_bonus"));
         assert_eq!(result.profile_version, profiles.profile_version);
+    }
+
+    #[test]
+    fn emitted_score_components_are_backed_by_reason_catalog() {
+        let dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "reason-catalog-test");
+        let result = engine
+            .recommend(&dataset, &query("st_tamachi", PlacementKind::Home))
+            .expect("recommendation result");
+
+        for component in result
+            .items
+            .iter()
+            .flat_map(|item| item.score_breakdown.iter())
+            .chain(result.score_breakdown.iter())
+        {
+            let catalog_entry =
+                super::reason_catalog_entry(&component.feature).expect("cataloged feature");
+            assert_eq!(component.reason_code, catalog_entry.reason_code);
+        }
+
+        let top_reason_labels = super::top_reason_labels(&result.score_breakdown);
+        assert!(top_reason_labels
+            .iter()
+            .all(|label| result.explanation.contains(label)));
     }
 
     #[test]

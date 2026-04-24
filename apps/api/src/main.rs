@@ -42,7 +42,10 @@ async fn serve() -> anyhow::Result<()> {
         api::CandidateBackend::SqlOnly
     };
     let state = AppState {
-        repository: Arc::new(PgRepository::new(settings.database_url.clone())),
+        repository: Arc::new(PgRepository::with_pool_max_size(
+            settings.database_url.clone(),
+            settings.postgres_pool_max_size,
+        )?),
         engine: RankingEngine::new(profiles, settings.algorithm_version.clone()),
         cache: RecommendationCache::new(
             settings.redis_url.clone(),

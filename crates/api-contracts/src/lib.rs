@@ -51,11 +51,19 @@ impl RecommendationRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ScoreComponentDto {
     pub feature: String,
+    #[serde(default = "default_reason_code")]
+    pub reason_code: String,
     pub value: f64,
     pub reason: String,
     #[schema(value_type = Option<Object>)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ErrorResponse {
+    pub error: String,
+    pub code: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -263,11 +271,16 @@ impl From<ScoreComponent> for ScoreComponentDto {
     fn from(value: ScoreComponent) -> Self {
         Self {
             feature: value.feature,
+            reason_code: value.reason_code,
             value: value.value,
             reason: value.reason,
             details: value.details,
         }
     }
+}
+
+fn default_reason_code() -> String {
+    "uncataloged".to_string()
 }
 
 impl From<domain::FallbackStage> for FallbackStageDto {

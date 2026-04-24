@@ -197,6 +197,8 @@ pub struct RankingDataset {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScoreComponent {
     pub feature: String,
+    #[serde(default = "default_reason_code")]
+    pub reason_code: String,
     pub value: f64,
     pub reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -278,4 +280,8 @@ fn default_payload() -> Value {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_reason_code() -> String {
+    "uncataloged".to_string()
 }

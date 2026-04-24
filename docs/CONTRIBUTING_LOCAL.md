@@ -76,7 +76,7 @@ cargo run -p cli -- index rebuild
 
 ### MySQL status
 
-MySQL remains optional and experimental in this repository. There is no committed MySQL verification command set or CI job in the current tree. If a change adds or modifies MySQL write-path behavior, the same PR must add exact local commands, CI coverage, and documentation before any readiness claim is made.
+MySQL remains optional and experimental in this repository. There is no committed MySQL verification command set or CI job in the current tree. If a change adds or modifies MySQL write-path behavior, the same PR must add exact local commands, CI coverage, and documentation before any readiness claim is made. See [MySQL Compatibility](MYSQL_COMPATIBILITY.md).
 
 ## Data Source and Storage Rules
 
