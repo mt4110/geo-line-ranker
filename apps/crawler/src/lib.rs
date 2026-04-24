@@ -13,7 +13,8 @@ use crawler_core::{
     ResolvedCrawlTarget, SourceMaturity,
 };
 use generic_http::{
-    ensure_allowed_url, evaluate_robots, fetch_robots_txt, fetch_to_raw, HttpFetchRequest,
+    ensure_allowed_url, evaluate_robots, fetch_robots_txt, fetch_to_raw, HttpFetchClient,
+    HttpFetchRequest,
 };
 use serde_json::{json, Value};
 use storage_postgres::{
@@ -870,7 +871,7 @@ pub async fn run_fetch_command(
         );
     }
 
-    let client = build_http_client()?;
+    let client = build_http_fetch_client()?;
 
     let mut fetched_targets = 0_i64;
     let mut report_count = 0_usize;
@@ -2369,6 +2370,11 @@ fn build_http_client() -> Result<reqwest::Client> {
         .timeout(Duration::from_secs(20))
         .build()
         .context("failed to build crawler HTTP client")
+}
+
+fn build_http_fetch_client() -> Result<HttpFetchClient> {
+    HttpFetchClient::from_builder(reqwest::Client::builder().timeout(Duration::from_secs(20)))
+        .context("failed to build crawler HTTP fetch client")
 }
 
 async fn probe_target_body(

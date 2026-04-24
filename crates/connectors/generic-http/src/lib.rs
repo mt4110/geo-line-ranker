@@ -37,6 +37,27 @@ pub struct PreparedHttpFetch {
     pub content_type: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct HttpFetchClient {
+    inner: reqwest::Client,
+}
+
+impl HttpFetchClient {
+    pub fn from_builder(builder: reqwest::ClientBuilder) -> Result<Self> {
+        let inner = builder
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .context("failed to build manual redirect HTTP client")?;
+        Ok(Self { inner })
+    }
+
+    pub fn new() -> Result<Self> {
+        Self::from_builder(
+            reqwest::Client::builder().timeout(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS)),
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RobotsDecision {
     pub allowed: bool,
@@ -78,7 +99,7 @@ pub fn ensure_allowed_url(raw_url: &str, allowed_domains: &[String]) -> Result<U
 }
 
 pub async fn fetch_robots_txt(
-    client: &reqwest::Client,
+    client: &HttpFetchClient,
     request: &HttpFetchRequest<'_>,
 ) -> Result<String> {
     let (response, final_url) = fetch_with_manual_redirects(client, request).await?;
@@ -140,7 +161,7 @@ pub fn evaluate_robots(robots_txt: &str, user_agent: &str, target_path: &str) ->
 }
 
 pub async fn fetch_to_raw(
-    client: &reqwest::Client,
+    client: &HttpFetchClient,
     request: &HttpFetchRequest<'_>,
     raw_root: impl AsRef<Path>,
 ) -> Result<PreparedHttpFetch> {
@@ -222,19 +243,13 @@ pub async fn fetch_to_raw(
 }
 
 async fn fetch_with_manual_redirects<'a>(
-    _client: &reqwest::Client,
+    client: &HttpFetchClient,
     request: &HttpFetchRequest<'a>,
 ) -> Result<(reqwest::Response, Url)> {
-    // Redirect policy is client-wide in reqwest, so this helper constructs a
-    // no-redirect client instead of trusting the caller-provided client.
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
-        .build()
-        .context("failed to build manual redirect HTTP client")?;
     let mut current_url = ensure_allowed_url(request.url, request.allowed_domains)?;
     for redirect_count in 0..=DEFAULT_MAX_REDIRECTS {
         let response = client
+            .inner
             .get(current_url.clone())
             .header(USER_AGENT, request.user_agent)
             .send()
@@ -476,7 +491,7 @@ mod tests {
 
     use super::{
         ensure_allowed_url, evaluate_robots, fetch_robots_txt, fetch_with_manual_redirects,
-        infer_staged_extension, is_private_or_local_host, HttpFetchRequest,
+        infer_staged_extension, is_private_or_local_host, HttpFetchClient, HttpFetchRequest,
     };
 
     #[test]
@@ -632,7 +647,9 @@ Allow: /
             let _ = axum::serve(listener, app).await;
         });
 
-        let client = reqwest::Client::builder().build()?;
+        let client = HttpFetchClient::from_builder(
+            reqwest::Client::builder().redirect(reqwest::redirect::Policy::limited(10)),
+        )?;
         let request_url = format!("http://127.0.0.1:{}/start", address.port());
         let allowed_domains = vec![String::from("127.0.0.1")];
         let request = HttpFetchRequest {
@@ -669,9 +686,7 @@ Allow: /
             let _ = axum::serve(listener, app).await;
         });
 
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+        let client = HttpFetchClient::new()?;
         let robots_url = format!("http://127.0.0.1:{}/robots.txt", address.port());
         let allowed_domains = vec![String::from("127.0.0.1")];
         let request = HttpFetchRequest {
