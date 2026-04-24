@@ -91,6 +91,7 @@
     "TIMESTAMPTZ",
     "tokio",
     "Toyosu",
+    "underfilled",
     "upserts",
     "unredacted",
     "UTC",
