@@ -616,7 +616,7 @@ impl PgRepository {
                 operator_name: row.get("operator_name"),
             })
             .unwrap_or_else(|| LineContext {
-                line_id: requested_line_id,
+                line_id: None,
                 line_name: line_name.to_string(),
                 operator_name: None,
             })
@@ -835,6 +835,13 @@ impl PgRepository {
                     CASE
                         WHEN ($1::TEXT IS NOT NULL OR $3::TEXT IS NOT NULL) AND area_level = 'city' THEN 0
                         WHEN ($2::TEXT IS NOT NULL OR $4::TEXT IS NOT NULL) AND area_level = 'prefecture' THEN 0
+                        ELSE 1
+                    END,
+                    CASE
+                        WHEN ($1::TEXT IS NOT NULL OR $3::TEXT IS NOT NULL)
+                          AND area_level = 'city'
+                          AND prefecture_name IS NOT NULL
+                          THEN 0
                         ELSE 1
                     END,
                     area_id ASC
@@ -1859,6 +1866,14 @@ fn stable_id(prefix: &str, value: &str) -> String {
     } else {
         format!("{prefix}_{slug}")
     }
+}
+
+fn city_area_stable_id(area_name: &str, prefecture_name: Option<&str>) -> String {
+    let key = match non_empty(prefecture_name) {
+        Some(prefecture_name) => format!("{prefecture_name}:{area_name}"),
+        None => area_name.to_string(),
+    };
+    stable_id("area", &key)
 }
 
 fn job_attempt_row(row: Row) -> Result<JobAttemptRow> {
@@ -4413,7 +4428,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
             .await?;
     }
     for (area_name, prefecture_name) in &area_names {
-        let area_id = stable_id("area", area_name);
+        let area_id = city_area_stable_id(area_name, prefecture_name.as_deref());
         transaction
             .execute(
                 "INSERT INTO areas (area_id, country_code, prefecture_name, city_name, area_level)

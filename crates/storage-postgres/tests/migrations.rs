@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use storage_postgres::{run_migrations, seed_fixture};
 use tokio_postgres::NoTls;
@@ -132,6 +132,92 @@ async fn seed_fixture_is_idempotent_for_user_events() -> anyhow::Result<()> {
             .query_one("SELECT COUNT(*) AS count FROM user_events", &[])
             .await?;
         assert_eq!(row.get::<_, i64>("count"), expected_user_event_count);
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn seed_fixture_keeps_same_city_areas_per_prefecture() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("glr_city_area_ids").await
+    else {
+        eprintln!(
+            "skipping storage-postgres city area seed test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+
+        let fixture_dir = tempfile::tempdir()?;
+        fs::write(
+            fixture_dir.path().join("stations.csv"),
+            "station_id,name,line_name,latitude,longitude\nst_target,Target,Target Line,35.0,139.0\n",
+        )?;
+        fs::write(
+            fixture_dir.path().join("schools.csv"),
+            "school_id,name,area,prefecture_name,school_type,group_id\n\
+             school_tokyo_fuchu,Tokyo Fuchu,Fuchu,Tokyo,high_school,group_tokyo\n\
+             school_hiroshima_fuchu,Hiroshima Fuchu,Fuchu,Hiroshima,high_school,group_hiroshima\n",
+        )?;
+        fs::write(
+            fixture_dir.path().join("events.csv"),
+            "event_id,school_id,title,event_category,is_open_day,is_featured,priority_weight,starts_at,placement_tags\n",
+        )?;
+        fs::write(
+            fixture_dir.path().join("school_station_links.csv"),
+            "school_id,station_id,walking_minutes,distance_meters,hop_distance,line_name\n",
+        )?;
+        fs::write(fixture_dir.path().join("user_events.ndjson"), "")?;
+
+        seed_fixture(&database_url, fixture_dir.path()).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let rows = client
+            .query(
+                "SELECT area_id, prefecture_name, city_name
+                 FROM areas
+                 WHERE area_level = 'city'
+                   AND city_name = 'Fuchu'
+                 ORDER BY prefecture_name",
+                &[],
+            )
+            .await?;
+        let rendered = rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>("area_id"),
+                    row.get::<_, Option<String>>("prefecture_name"),
+                    row.get::<_, Option<String>>("city_name"),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec![
+                (
+                    "area_hiroshima_fuchu".to_string(),
+                    Some("Hiroshima".to_string()),
+                    Some("Fuchu".to_string())
+                ),
+                (
+                    "area_tokyo_fuchu".to_string(),
+                    Some("Tokyo".to_string()),
+                    Some("Fuchu".to_string())
+                ),
+            ]
+        );
 
         Ok(())
     }

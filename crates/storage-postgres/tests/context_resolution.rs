@@ -33,7 +33,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
                  SET prefecture_code = '13',
                      prefecture_name = 'Tokyo',
                      city_code = '13103'
-                 WHERE area_id = 'area_minato';
+                 WHERE area_id = 'area_tokyo_minato';
 
                  INSERT INTO areas (
                     area_id,
@@ -204,6 +204,23 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         assert!(unknown_line_error
             .to_string()
             .contains("unknown line_id: line_missing"));
+        let line_name_fallback_context = repo
+            .resolve_context(
+                "req-context-line-name-fallback",
+                None,
+                &ContextInput {
+                    line_id: Some("line_missing".to_string()),
+                    line_name: Some("Unlisted Line".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let line_name_fallback = line_name_fallback_context
+            .line
+            .as_ref()
+            .expect("line name fallback context");
+        assert_eq!(line_name_fallback.line_id, None);
+        assert_eq!(line_name_fallback.line_name, "Unlisted Line");
         let coded_area_context = repo
             .resolve_context(
                 "req-context-area-code",
@@ -268,7 +285,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         );
         assert_eq!(
             row.get::<_, Option<String>>("area_id"),
-            Some("area_minato".to_string())
+            Some("area_tokyo_minato".to_string())
         );
         assert_eq!(row.get::<_, Option<String>>("line_id"), None);
         assert_eq!(row.get::<_, Option<String>>("station_id"), None);
@@ -282,7 +299,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             .await?;
         assert_eq!(
             coded_area_row.get::<_, Option<String>>("area_id"),
-            Some("area_minato".to_string())
+            Some("area_tokyo_minato".to_string())
         );
         let mismatched_area_row = client
             .query_one(
