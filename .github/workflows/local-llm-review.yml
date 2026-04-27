@@ -69,6 +69,7 @@ jobs:
           marker = "<!-- local-llm-review -->"
           comment_author = "github-actions[bot]"
           github_api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+          review_fence = "~~~~~~~~~~~~"
 
           def is_diff_accept(accept):
               return ".diff" in accept or accept.endswith("+diff")
@@ -129,8 +130,12 @@ jobs:
               suffix = (
                   "\n\n_Review output truncated to fit the GitHub comment size limit._\n"
               )
-              available = max(max_comment_chars - len(suffix), 0)
-              return comment_body[:available] + suffix
+              reserve_closing_fence = len("\n" + review_fence)
+              available = max(max_comment_chars - len(suffix) - reserve_closing_fence, 0)
+              truncated = comment_body[:available]
+              if truncated.count(review_fence) % 2 == 1:
+                  truncated += "\n" + review_fence
+              return truncated + suffix
 
           def post_or_update_comment(comment_body):
               comment_body = truncate_comment_body(comment_body)
@@ -225,6 +230,10 @@ jobs:
                   result = json.loads(response.read().decode("utf-8"))
               return result.get("message", {}).get("content", "No local AI output.")
 
+          def sanitize_review_output(review_text):
+              escaped = review_text.replace("@", "@\u200b")
+              return f"{review_fence}text\n{escaped}\n{review_fence}"
+
           def fetch_pr_diff_with_limit():
               request = urllib.request.Request(
                   f"{github_api}/repos/{owner}/{repo}/pulls/{pr_number}",
@@ -304,7 +313,11 @@ jobs:
                   started_at = time.time()
                   review = ollama_review(diff)
                   elapsed_seconds = round(time.time() - started_at, 1)
-                  body = header + f"- Review elapsed seconds: `{elapsed_seconds}`\n\n" + review
+                  body = (
+                      header
+                      + f"- Review elapsed seconds: `{elapsed_seconds}`\n\n"
+                      + sanitize_review_output(review)
+                  )
 
               post_or_update_comment(body)
           except Exception as error:
