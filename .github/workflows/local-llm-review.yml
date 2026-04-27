@@ -1,3 +1,5 @@
+# cspell:ignore OLLAMA qwen pipefail urllib rstrip startswith urlopen endswith findall ollama
+
 name: Local AI PR Review
 
 on:
