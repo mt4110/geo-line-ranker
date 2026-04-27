@@ -681,10 +681,12 @@ fn stored_response_order(response: &serde_json::Value) -> Result<Vec<String>> {
     items
         .iter()
         .map(|item| {
-            let content_kind = item
-                .get("content_kind")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("school");
+            let content_kind = match item.get("content_kind") {
+                None => "school",
+                Some(value) => value
+                    .as_str()
+                    .with_context(|| "response item content_kind must be a string")?,
+            };
             let content_id = item
                 .get("content_id")
                 .and_then(serde_json::Value::as_str)
@@ -1094,6 +1096,21 @@ mod tests {
 
         assert_eq!(order, vec!["school:school_seaside", "event:event_open"]);
         assert_eq!(normalize_fallback_stage("strict"), "strict_station");
+    }
+
+    #[test]
+    fn replay_reader_rejects_non_string_content_kind() {
+        let payload = serde_json::json!({
+            "items": [
+                { "content_kind": 7, "content_id": "event_open" }
+            ]
+        });
+
+        let error = stored_response_order(&payload).expect_err("invalid content kind");
+
+        assert!(error
+            .to_string()
+            .contains("response item content_kind must be a string"));
     }
 
     #[test]
