@@ -9,6 +9,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 csv.workspace = true
+deadpool-postgres.workspace = true
 context = { path = "../context" }
 domain = { path = "../domain" }
 generic-csv = { path = "../connectors/generic-csv" }

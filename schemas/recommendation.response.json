@@ -16,11 +16,13 @@
       "score_breakdown": [
         {
           "feature": "line_match_bonus",
+          "reason_code": "geo.line_match",
           "value": 1.25,
           "reason": "JR Yamanote Line 沿線の候補です。"
         },
         {
           "feature": "featured_event_bonus",
+          "reason_code": "event.featured",
           "value": 0.45,
           "reason": "注目イベントとして運用上の優先度を反映しています。"
         }
@@ -32,11 +34,13 @@
   "score_breakdown": [
     {
       "feature": "line_match_bonus",
+      "reason_code": "geo.line_match",
       "value": 1.25,
       "reason": "JR Yamanote Line 沿線の候補です。"
     },
     {
       "feature": "featured_event_bonus",
+      "reason_code": "event.featured",
       "value": 0.45,
       "reason": "注目イベントとして運用上の優先度を反映しています。"
     }

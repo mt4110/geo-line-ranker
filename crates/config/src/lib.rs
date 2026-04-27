@@ -57,6 +57,7 @@ pub struct OpenSearchSettings {
 pub struct AppSettings {
     pub bind_addr: String,
     pub database_url: String,
+    pub postgres_pool_max_size: usize,
     pub redis_url: Option<String>,
     pub ranking_config_dir: String,
     pub fixture_dir: String,
@@ -88,6 +89,7 @@ impl AppSettings {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
                 "postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker".to_string()
             }),
+            postgres_pool_max_size: parse_env("POSTGRES_POOL_MAX_SIZE", 16)?,
             redis_url: env::var("REDIS_URL").ok().filter(|value| !value.is_empty()),
             ranking_config_dir: env::var("RANKING_CONFIG_DIR")
                 .unwrap_or_else(|_| "configs/ranking".to_string()),

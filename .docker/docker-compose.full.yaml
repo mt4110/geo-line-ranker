@@ -48,6 +48,7 @@ services:
       ALGORITHM_VERSION: ${ALGORITHM_VERSION:-phase7-search-signal-v2}
       CANDIDATE_RETRIEVAL_MODE: full
       CANDIDATE_RETRIEVAL_LIMIT: 256
+      POSTGRES_POOL_MAX_SIZE: ${POSTGRES_POOL_MAX_SIZE:-16}
       OPENSEARCH_URL: http://opensearch:9200
       OPENSEARCH_INDEX_NAME: geo_line_ranker_candidates
       RECOMMENDATION_CACHE_TTL_SECS: 120
@@ -60,6 +61,13 @@ services:
         condition: service_started
       opensearch:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     profiles: ["full"]
 
   worker:
@@ -70,6 +78,7 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/geo_line_ranker
       REDIS_URL: redis://redis:6379
       CANDIDATE_RETRIEVAL_MODE: full
+      POSTGRES_POOL_MAX_SIZE: ${POSTGRES_POOL_MAX_SIZE:-16}
       OPENSEARCH_URL: http://opensearch:9200
       OPENSEARCH_INDEX_NAME: geo_line_ranker_candidates
       WORKER_POLL_INTERVAL_MS: 1000
@@ -82,6 +91,13 @@ services:
         condition: service_started
       opensearch:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     profiles: ["full"]
 
   crawler:
@@ -90,23 +106,41 @@ services:
       dockerfile: .docker/crawler.Dockerfile
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/geo_line_ranker
-      RAW_STORAGE_DIR: .storage/raw
+      POSTGRES_POOL_MAX_SIZE: ${POSTGRES_POOL_MAX_SIZE:-8}
+      RAW_STORAGE_DIR: /tmp/geo-line-ranker/raw
     depends_on:
       postgres:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     profiles: ["full"]
 
   frontend:
     build:
       context: ..
       dockerfile: .docker/frontend.Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://api:4000}
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://api:4000
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://api:4000}
     ports:
       - "${FRONTEND_HOST_PORT:-3000}:3000"
     depends_on:
       api:
         condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     profiles: ["full"]
 
 volumes:

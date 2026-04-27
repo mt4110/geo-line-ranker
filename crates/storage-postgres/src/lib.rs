@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 use anyhow::{bail, ensure, Context, Result};
@@ -13,6 +13,10 @@ use context::{
     PrivacyLevel, RankingContext, StationContext,
 };
 use csv::Reader;
+use deadpool_postgres::{
+    Client, Config as PgPoolConfig, GenericClient, ManagerConfig, Pool, PoolConfig,
+    RecyclingMethod, Runtime,
+};
 use domain::{
     AreaAffinitySnapshot, Event, PlacementKind, PopularitySnapshot, RankingDataset, RankingQuery,
     School, SchoolStationLink, Station, UserAffinitySnapshot, UserEvent,
@@ -28,7 +32,8 @@ use storage::{
     ClaimedJob, JobType, NewJob, RecommendationRepository, RecommendationTrace,
     SnapshotRefreshStats, SnapshotTuning,
 };
-use tokio_postgres::{Client, GenericClient, NoTls, Row};
+use tokio::sync::OnceCell;
+use tokio_postgres::{NoTls, Row};
 use uuid::Uuid;
 
 static MIGRATION_PROCESS_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -56,9 +61,12 @@ const POPULARITY_REFRESH_COALESCE_LOCK_KEY: i32 = 2;
 const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
 const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
 const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference validation: ";
+pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
+
 #[derive(Debug, Clone)]
 pub struct PgRepository {
-    database_url: String,
+    pool: Arc<OnceCell<Pool>>,
+    pool_config: PgPoolConfig,
     trace_hash_salt: String,
 }
 
@@ -154,25 +162,58 @@ pub struct JobMutationSummary {
     pub updated: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecommendationTraceReplayRow {
+    pub id: i64,
+    pub request_payload: Value,
+    pub response_payload: Value,
+    pub fallback_stage: String,
+    pub algorithm_version: String,
+    pub created_at: String,
+}
+
+fn build_pool_config(database_url: String, max_size: usize) -> PgPoolConfig {
+    let mut config = PgPoolConfig::new();
+    config.url = Some(database_url);
+    config.manager = Some(ManagerConfig {
+        recycling_method: RecyclingMethod::Fast,
+    });
+    config.pool = Some(PoolConfig::new(max_size));
+    config
+}
+
 impl PgRepository {
     pub fn new(database_url: impl Into<String>) -> Self {
-        let database_url = database_url.into();
         Self {
+            pool: Arc::new(OnceCell::new()),
+            pool_config: build_pool_config(database_url.into(), DEFAULT_POSTGRES_POOL_MAX_SIZE),
             trace_hash_salt: load_trace_hash_salt(),
-            database_url,
         }
     }
 
+    pub fn with_pool_max_size(database_url: impl Into<String>, max_size: usize) -> Result<Self> {
+        ensure!(max_size > 0, "postgres pool max size must be positive");
+        Ok(Self {
+            pool: Arc::new(OnceCell::new()),
+            pool_config: build_pool_config(database_url.into(), max_size),
+            trace_hash_salt: load_trace_hash_salt(),
+        })
+    }
+
     async fn connect(&self) -> Result<Client> {
-        let (client, connection) = tokio_postgres::connect(&self.database_url, NoTls)
+        let pool_config = self.pool_config.clone();
+        let pool = self
+            .pool
+            .get_or_try_init(move || async move {
+                pool_config
+                    .create_pool(Some(Runtime::Tokio1), NoTls)
+                    .with_context(|| "failed to create PostgreSQL connection pool")
+            })
+            .await?;
+
+        pool.get()
             .await
-            .with_context(|| "failed to connect to PostgreSQL")?;
-        tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                tracing::error!(%error, "postgres connection terminated");
-            }
-        });
-        Ok(client)
+            .with_context(|| "failed to get PostgreSQL connection from pool")
     }
 
     pub async fn record_user_event_with_jobs(
@@ -219,6 +260,27 @@ impl PgRepository {
         user_id: Option<&str>,
         input: &ContextInput,
     ) -> Result<RankingContext> {
+        self.resolve_context_inner(request_id, user_id, input, true)
+            .await
+    }
+
+    pub async fn resolve_context_for_replay(
+        &self,
+        request_id: &str,
+        user_id: Option<&str>,
+        input: &ContextInput,
+    ) -> Result<RankingContext> {
+        self.resolve_context_inner(request_id, user_id, input, false)
+            .await
+    }
+
+    async fn resolve_context_inner(
+        &self,
+        request_id: &str,
+        user_id: Option<&str>,
+        input: &ContextInput,
+        record_trace: bool,
+    ) -> Result<RankingContext> {
         let client = self.connect().await?;
         if input
             .station_id
@@ -264,11 +326,13 @@ impl PgRepository {
         context
             .warnings
             .sort_by(|left, right| left.code.cmp(&right.code));
-        if let Err(error) = self
-            .record_context_trace(&client, request_id, user_id, &context)
-            .await
-        {
-            tracing::warn!(%error, request_id, "failed to record context trace");
+        if record_trace {
+            if let Err(error) = self
+                .record_context_trace(&client, request_id, user_id, &context)
+                .await
+            {
+                tracing::warn!(%error, request_id, "failed to record context trace");
+            }
         }
         Ok(context)
     }
@@ -1009,6 +1073,39 @@ impl PgRepository {
         Ok(JobQueueSnapshot { jobs, pressure })
     }
 
+    pub async fn list_recommendation_traces_for_replay(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<RecommendationTraceReplayRow>> {
+        let client = self.connect().await?;
+        let limit = limit.clamp(1, 500);
+        let rows = client
+            .query(
+                r#"SELECT id,
+                          request_payload,
+                          response_payload,
+                          fallback_stage,
+                          algorithm_version,
+                          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+                   FROM recommendation_traces
+                   ORDER BY id DESC
+                   LIMIT $1"#,
+                &[&limit],
+            )
+            .await?
+            .into_iter()
+            .map(|row| RecommendationTraceReplayRow {
+                id: row.get("id"),
+                request_payload: row.get("request_payload"),
+                response_payload: row.get("response_payload"),
+                fallback_stage: row.get("fallback_stage"),
+                algorithm_version: row.get("algorithm_version"),
+                created_at: row.get("created_at"),
+            })
+            .collect::<Vec<_>>();
+        Ok(rows)
+    }
+
     pub async fn inspect_job(&self, job_id: i64) -> Result<JobInspection> {
         let client = self.connect().await?;
         let job = client
@@ -1675,7 +1772,7 @@ pub fn user_event_reference_validation_message(error: &anyhow::Error) -> Option<
     })
 }
 
-async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEvent) -> Result<i64> {
+async fn insert_user_event(client: &impl GenericClient, event: &UserEvent) -> Result<i64> {
     let school_id = resolve_user_event_school_id(client, event).await?;
     let occurred_at = parse_rfc3339_utc("occurred_at", &event.occurred_at)?;
     let row = client
@@ -1706,7 +1803,7 @@ async fn insert_user_event(client: &(impl GenericClient + Sync), event: &UserEve
 }
 
 async fn resolve_user_event_school_id(
-    client: &(impl GenericClient + Sync),
+    client: &impl GenericClient,
     event: &UserEvent,
 ) -> Result<Option<String>> {
     let Some(event_id) = event.event_id.as_deref() else {
@@ -1756,7 +1853,7 @@ fn parse_optional_event_time(value: Option<&str>) -> Result<Option<DateTime<Utc>
     Ok(Some(Utc.from_utc_datetime(&naive)))
 }
 
-async fn insert_job(client: &(impl GenericClient + Sync), job: &NewJob) -> Result<i64> {
+async fn insert_job(client: &impl GenericClient, job: &NewJob) -> Result<i64> {
     if is_reusable_global_refresh(job) {
         return insert_or_reuse_queued_global_refresh(client, job).await;
     }
@@ -1773,7 +1870,7 @@ fn is_reusable_global_refresh(job: &NewJob) -> bool {
 }
 
 async fn insert_or_reuse_queued_global_refresh(
-    client: &(impl GenericClient + Sync),
+    client: &impl GenericClient,
     job: &NewJob,
 ) -> Result<i64> {
     client
@@ -1815,7 +1912,7 @@ async fn insert_or_reuse_queued_global_refresh(
     insert_job_row(client, job).await
 }
 
-async fn insert_job_row(client: &(impl GenericClient + Sync), job: &NewJob) -> Result<i64> {
+async fn insert_job_row(client: &impl GenericClient, job: &NewJob) -> Result<i64> {
     let row = client
         .query_one(
             "INSERT INTO job_queue (job_type, payload, max_attempts)

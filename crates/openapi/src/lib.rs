@@ -1,5 +1,5 @@
 use api_contracts::{
-    FallbackStageDto, HealthResponse, ReadyResponse, RecommendationContextDto,
+    ErrorResponse, FallbackStageDto, HealthResponse, ReadyResponse, RecommendationContextDto,
     RecommendationItemDto, RecommendationRequest, RecommendationResponse, ScoreComponentDto,
     TrackRequest, TrackResponse,
 };
@@ -37,7 +37,10 @@ fn readyz_doc() {}
     path = "/v1/recommendations",
     request_body = RecommendationRequest,
     responses(
-        (status = 200, description = "deterministic recommendations", body = RecommendationResponse)
+        (status = 200, description = "deterministic recommendations", body = RecommendationResponse),
+        (status = 400, description = "invalid recommendation request", body = ErrorResponse),
+        (status = 404, description = "no candidates available", body = ErrorResponse),
+        (status = 500, description = "recommendation service error", body = ErrorResponse)
     ),
     tag = "recommendations"
 )]
@@ -49,7 +52,9 @@ fn recommend_doc() {}
     path = "/v1/track",
     request_body = TrackRequest,
     responses(
-        (status = 202, description = "accepted tracking event", body = TrackResponse)
+        (status = 202, description = "accepted tracking event", body = TrackResponse),
+        (status = 400, description = "invalid tracking request", body = ErrorResponse),
+        (status = 500, description = "tracking service error", body = ErrorResponse)
     ),
     tag = "tracking"
 )]
@@ -68,6 +73,7 @@ fn track_doc() {}
         schemas(
             HealthResponse,
             ReadyResponse,
+            ErrorResponse,
             FallbackStageDto,
             AreaContext,
             AreaContextInput,

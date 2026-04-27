@@ -85,6 +85,36 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "invalid recommendation request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no candidates available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "recommendation service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -112,6 +142,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TrackResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid tracking request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "tracking service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -219,6 +269,21 @@
             "type": "string"
           },
           "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
             "type": "string"
           }
         }
@@ -542,6 +607,7 @@
         "type": "object",
         "required": [
           "feature",
+          "reason_code",
           "value",
           "reason"
         ],
@@ -554,6 +620,9 @@
             "type": "string"
           },
           "reason": {
+            "type": "string"
+          },
+          "reason_code": {
             "type": "string"
           },
           "value": {

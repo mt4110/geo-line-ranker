@@ -25,6 +25,8 @@ The response includes:
 - `fallback_stage`
 - `candidate_counts`
 - `items[].fallback_stage`
+- `score_breakdown[].reason_code`
+- `items[].score_breakdown[].reason_code`
 
 Fallback stages are:
 
@@ -36,6 +38,16 @@ Fallback stages are:
 - `safe_global_popular`
 
 `items[].fallback_stage` uses the same enum values as the top-level `fallback_stage`.
+Score reason codes are cataloged in `docs/REASON_CATALOG.md`.
+
+Error responses use the common shape:
+
+```json
+{
+  "error": "human readable message",
+  "code": "bad_request"
+}
+```
 
 ## `POST /v1/track`
 
@@ -47,5 +59,8 @@ Fallback stages are:
 ```
 
 `search_execute` requires `target_station_id` until context-derived tracking is persisted end-to-end.
+
+Invalid tracking requests and reference-validation failures use the common
+error response shape.
 
 Raw addresses and raw external profile payloads are outside this API boundary.

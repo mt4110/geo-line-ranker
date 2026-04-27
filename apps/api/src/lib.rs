@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Instant};
 use anyhow::Result;
 
 use api_contracts::{
-    HealthResponse, ReadyResponse, RecommendationRequest, RecommendationResponse, TrackRequest,
-    TrackResponse,
+    ErrorResponse, HealthResponse, ReadyResponse, RecommendationRequest, RecommendationResponse,
+    TrackRequest, TrackResponse,
 };
 use axum::{
     extract::State,
@@ -502,11 +502,22 @@ fn build_tracking_jobs(state: &AppState, event: &domain::UserEvent) -> Vec<NewJo
 fn error_response(status: StatusCode, message: String) -> axum::response::Response {
     (
         status,
-        Json(serde_json::json!({
-            "error": message,
-        })),
+        Json(ErrorResponse {
+            error: message,
+            code: error_code(status).to_string(),
+        }),
     )
         .into_response()
+}
+
+fn error_code(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::BAD_REQUEST => "bad_request",
+        StatusCode::NOT_FOUND => "not_found",
+        StatusCode::SERVICE_UNAVAILABLE => "service_unavailable",
+        StatusCode::INTERNAL_SERVER_ERROR => "internal_server_error",
+        _ => "http_error",
+    }
 }
 
 fn context_resolution_error_status(error: &anyhow::Error) -> StatusCode {
@@ -650,7 +661,9 @@ mod tests {
         let profiles =
             RankingProfiles::load_from_dir(repo_root().join("configs/ranking")).expect("profiles");
         AppState {
-            repository: Arc::new(PgRepository::new("postgres://unused")),
+            repository: Arc::new(PgRepository::new(
+                "postgres://postgres:postgres@example.invalid/test_db",
+            )),
             engine: RankingEngine::new(profiles.clone(), "phase7-test"),
             cache: RecommendationCache::new(
                 cache_enabled.then_some("redis://127.0.0.1:6379".to_string()),

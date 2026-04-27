@@ -14,6 +14,7 @@ fn test_settings(raw_storage_dir: &std::path::Path, database_url: &str) -> AppSe
     AppSettings {
         bind_addr: "127.0.0.1:0".to_string(),
         database_url: database_url.to_string(),
+        postgres_pool_max_size: 4,
         redis_url: None,
         ranking_config_dir: root.join("configs/ranking").display().to_string(),
         fixture_dir: root.join("storage/fixtures/minimal").display().to_string(),
