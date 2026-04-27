@@ -230,8 +230,14 @@ jobs:
                   result = json.loads(response.read().decode("utf-8"))
               return result.get("message", {}).get("content", "No local AI output.")
 
+          def _escape_review_fence(text):
+              if review_fence not in text:
+                  return text
+              safe_fence = review_fence[:-1] + "\u200b" + review_fence[-1]
+              return text.replace(review_fence, safe_fence)
+
           def sanitize_review_output(review_text):
-              escaped = review_text.replace("@", "@\u200b")
+              escaped = _escape_review_fence(review_text.replace("@", "@\u200b"))
               return f"{review_fence}text\n{escaped}\n{review_fence}"
 
           def fetch_pr_diff_with_limit():
