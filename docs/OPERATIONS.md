@@ -24,9 +24,10 @@ Live crawler flows and `full` mode stay supported as operator workflows, but the
 
 The binaries automatically read `.env` from the repository root when present.
 `POSTGRES_POOL_MAX_SIZE` controls the per-process PostgreSQL connection pool
-for API, worker, crawler, and CLI repository paths. Keep it below the database
-server's available connection budget after reserving room for migrations,
-manual `psql`, and maintenance jobs.
+for API, worker, crawler, and CLI processes, including helper-backed import,
+crawl, and migration paths. Keep it below the database server's available
+connection budget after reserving room for migrations, manual `psql`, and
+maintenance jobs.
 
 For post-launch incident triage, start with the shorter
 [POST_LAUNCH_RUNBOOK.md](POST_LAUNCH_RUNBOOK.md) and the read-only doctor:

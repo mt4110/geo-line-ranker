@@ -182,11 +182,24 @@ fn build_pool_config(database_url: String, max_size: usize) -> PgPoolConfig {
     config
 }
 
+fn parse_postgres_pool_max_size(raw: Option<&str>) -> usize {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_POSTGRES_POOL_MAX_SIZE)
+}
+
+fn load_postgres_pool_max_size() -> usize {
+    let configured = std::env::var("POSTGRES_POOL_MAX_SIZE").ok();
+    parse_postgres_pool_max_size(configured.as_deref())
+}
+
 impl PgRepository {
     pub fn new(database_url: impl Into<String>) -> Self {
         Self {
             pool: Arc::new(OnceCell::new()),
-            pool_config: build_pool_config(database_url.into(), DEFAULT_POSTGRES_POOL_MAX_SIZE),
+            pool_config: build_pool_config(database_url.into(), load_postgres_pool_max_size()),
             trace_hash_salt: load_trace_hash_salt(),
         }
     }
@@ -4786,4 +4799,35 @@ struct LinkRow {
     distance_meters: u32,
     hop_distance: u8,
     line_name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_postgres_pool_max_size, DEFAULT_POSTGRES_POOL_MAX_SIZE};
+
+    #[test]
+    fn parse_postgres_pool_max_size_uses_default_when_unset() {
+        assert_eq!(
+            parse_postgres_pool_max_size(None),
+            DEFAULT_POSTGRES_POOL_MAX_SIZE
+        );
+    }
+
+    #[test]
+    fn parse_postgres_pool_max_size_accepts_positive_values() {
+        assert_eq!(parse_postgres_pool_max_size(Some("32")), 32);
+        assert_eq!(parse_postgres_pool_max_size(Some(" 8 ")), 8);
+    }
+
+    #[test]
+    fn parse_postgres_pool_max_size_rejects_invalid_values() {
+        assert_eq!(
+            parse_postgres_pool_max_size(Some("0")),
+            DEFAULT_POSTGRES_POOL_MAX_SIZE
+        );
+        assert_eq!(
+            parse_postgres_pool_max_size(Some("invalid")),
+            DEFAULT_POSTGRES_POOL_MAX_SIZE
+        );
+    }
 }
