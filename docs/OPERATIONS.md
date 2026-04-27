@@ -23,6 +23,11 @@ The initial public-MVP operating profile is intentionally narrow:
 Live crawler flows and `full` mode stay supported as operator workflows, but they are not part of the public-MVP acceptance gate. Some crawl sources still carry manual-review expectations before production use, so the first public release should stay on the deterministic SQL-only path.
 
 The binaries automatically read `.env` from the repository root when present.
+`POSTGRES_POOL_MAX_SIZE` controls the per-process PostgreSQL connection pool
+for API, worker, crawler, and CLI processes, including helper-backed import,
+crawl, and migration paths. Keep it below the database server's available
+connection budget after reserving room for migrations, manual `psql`, and
+maintenance jobs.
 
 For post-launch incident triage, start with the shorter
 [POST_LAUNCH_RUNBOOK.md](POST_LAUNCH_RUNBOOK.md) and the read-only doctor:
@@ -135,6 +140,17 @@ The API exposes:
 
 `/readyz` reports database reachability, cache status, and OpenSearch readiness. In `sql_only` mode the OpenSearch field is `disabled`; in `full` mode readiness stays red until the configured candidate index is reachable. Cache degradation only removes the fast path.
 
+## Docker Runtime Notes
+
+The committed Dockerfiles build release binaries in a Rust builder stage, then
+run slim runtime images as a non-root user. The compose files set
+`no-new-privileges`, drop Linux capabilities for app containers, and mount
+`/tmp` as writable tmpfs while keeping the container filesystem read-only.
+
+These compose files are local/demo operational references. Do not treat them as
+managed production infrastructure, and do not add cloud resources to the fixed
+release gate without explicit review.
+
 ## Placement profile rollout
 
 Placement configs live in `configs/ranking/placement.*.yaml`.
@@ -147,6 +163,31 @@ Placement configs live in `configs/ranking/placement.*.yaml`.
 Startup validation is strict. Unknown keys, missing placement files, invalid ratios, or impossible caps fail the process before the API starts serving.
 
 When diversity caps remove otherwise high-scoring candidates, the top-level recommendation explanation calls out the affected cap family, such as same-school, same-group, or content-kind caps. This is intentionally result-level rather than a score component: the candidates are still scored deterministically first, then the final display list is shaped by policy.
+
+Score component reason codes are cataloged in
+[REASON_CATALOG.md](REASON_CATALOG.md). When adding a ranking component, add its
+feature, stable reason code, and public label before using it in explanation
+text.
+
+## Replay evaluation
+
+Replay recent persisted recommendation traces against the current SQL-only
+ranking path:
+
+```bash
+cargo run -p cli -- replay evaluate --limit 20
+```
+
+Fail the command when any trace differs from the current deterministic output:
+
+```bash
+cargo run -p cli -- replay evaluate --limit 20 --fail-on-mismatch
+```
+
+Replay evaluation compares fallback stage and item order. Use it after ranking
+profile changes, explanation integrity changes, event CSV imports, and snapshot
+refreshes. Full-mode/OpenSearch comparison remains a separate compatibility
+flow; replay evaluation intentionally exercises the SQL-only reference path.
 
 ## Event CSV import
 

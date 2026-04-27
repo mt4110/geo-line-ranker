@@ -384,6 +384,37 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             station_row.get::<_, Option<String>>("line_id"),
             Some("line_jr_yamanote_line".to_string())
         );
+        let trace_count_before_replay = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM context_resolution_traces",
+                &[],
+            )
+            .await?
+            .get::<_, i64>("count");
+        let replay_context = repo
+            .resolve_context_for_replay(
+                "req-context-replay-read-only",
+                Some("raw-user-id"),
+                &ContextInput {
+                    area: Some(AreaContextInput {
+                        city_name: Some("Minato".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(replay_context.context_source, ContextSource::RequestArea);
+        let trace_count_after_replay = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM context_resolution_traces",
+                &[],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(trace_count_after_replay, trace_count_before_replay);
 
         client
             .execute(

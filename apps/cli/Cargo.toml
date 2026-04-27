@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+api-contracts = { path = "../../crates/api-contracts" }
 cache = { path = "../../crates/cache" }
 chrono.workspace = true
 clap.workspace = true
@@ -15,6 +16,7 @@ jp-postal = { path = "../../crates/connectors/jp-postal" }
 jp-rail = { path = "../../crates/connectors/jp-rail" }
 jp-school = { path = "../../crates/connectors/jp-school" }
 openapi = { path = "../../crates/openapi" }
+ranking = { path = "../../crates/ranking" }
 serde_json.workspace = true
 storage = { path = "../../crates/storage" }
 storage-opensearch = { path = "../../crates/storage-opensearch" }

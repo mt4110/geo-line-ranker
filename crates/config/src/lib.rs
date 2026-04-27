@@ -10,6 +10,8 @@ use domain::{ContentKind, PlacementKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateRetrievalMode {
@@ -57,6 +59,7 @@ pub struct OpenSearchSettings {
 pub struct AppSettings {
     pub bind_addr: String,
     pub database_url: String,
+    pub postgres_pool_max_size: usize,
     pub redis_url: Option<String>,
     pub ranking_config_dir: String,
     pub fixture_dir: String,
@@ -88,6 +91,7 @@ impl AppSettings {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
                 "postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker".to_string()
             }),
+            postgres_pool_max_size: parse_postgres_pool_max_size_env()?,
             redis_url: env::var("REDIS_URL").ok().filter(|value| !value.is_empty()),
             ranking_config_dir: env::var("RANKING_CONFIG_DIR")
                 .unwrap_or_else(|_| "configs/ranking".to_string()),
@@ -431,6 +435,24 @@ fn parse_candidate_retrieval_mode(raw: Option<String>) -> Result<CandidateRetrie
     }
 }
 
+pub fn parse_postgres_pool_max_size(raw: Option<&str>) -> usize {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_POSTGRES_POOL_MAX_SIZE)
+}
+
+fn parse_postgres_pool_max_size_env() -> Result<usize> {
+    match env::var("POSTGRES_POOL_MAX_SIZE") {
+        Ok(raw) => Ok(parse_postgres_pool_max_size(Some(&raw))),
+        Err(env::VarError::NotPresent) => Ok(DEFAULT_POSTGRES_POOL_MAX_SIZE),
+        Err(env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("POSTGRES_POOL_MAX_SIZE must be valid unicode")
+        }
+    }
+}
+
 fn parse_env<T>(name: &str, default: T) -> Result<T>
 where
     T: std::str::FromStr,
@@ -451,7 +473,10 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{parse_candidate_retrieval_mode, CandidateRetrievalMode, RankingProfiles};
+    use super::{
+        parse_candidate_retrieval_mode, parse_postgres_pool_max_size, CandidateRetrievalMode,
+        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+    };
 
     fn repo_config_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
@@ -527,6 +552,28 @@ diversity:
         let rendered = format!("{error:#}");
         assert!(rendered.contains("failed to parse CANDIDATE_RETRIEVAL_MODE=nearest"));
         assert!(rendered.contains("unsupported CANDIDATE_RETRIEVAL_MODE"));
+    }
+
+    #[test]
+    fn postgres_pool_max_size_defaults_when_missing_or_invalid() {
+        assert_eq!(
+            parse_postgres_pool_max_size(None),
+            DEFAULT_POSTGRES_POOL_MAX_SIZE
+        );
+        assert_eq!(
+            parse_postgres_pool_max_size(Some("0")),
+            DEFAULT_POSTGRES_POOL_MAX_SIZE
+        );
+        assert_eq!(
+            parse_postgres_pool_max_size(Some("invalid")),
+            DEFAULT_POSTGRES_POOL_MAX_SIZE
+        );
+    }
+
+    #[test]
+    fn postgres_pool_max_size_accepts_positive_values() {
+        assert_eq!(parse_postgres_pool_max_size(Some("32")), 32);
+        assert_eq!(parse_postgres_pool_max_size(Some(" 8 ")), 8);
     }
 
     #[test]

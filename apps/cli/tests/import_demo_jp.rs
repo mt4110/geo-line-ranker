@@ -31,6 +31,7 @@ async fn imports_demo_jp_fixture_when_database_is_available() -> anyhow::Result<
         let settings = AppSettings {
             bind_addr: "127.0.0.1:0".to_string(),
             database_url: database_url.clone(),
+            postgres_pool_max_size: 4,
             redis_url: None,
             ranking_config_dir: repo_root.join("configs/ranking").display().to_string(),
             fixture_dir: repo_root

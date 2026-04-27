@@ -18,6 +18,7 @@ fn test_settings(
     AppSettings {
         bind_addr: "127.0.0.1:0".to_string(),
         database_url: database_url.to_string(),
+        postgres_pool_max_size: 4,
         redis_url: None,
         ranking_config_dir: ranking_config_dir.display().to_string(),
         fixture_dir: root.join("storage/fixtures/minimal").display().to_string(),

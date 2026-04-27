@@ -3,10 +3,10 @@ use std::{fs, path::PathBuf};
 use clap::{Parser, Subcommand};
 use cli::{
     format_job_enqueue_summary, format_job_inspection, format_job_list,
-    format_job_mutation_summary, format_snapshot_refresh_summary, format_summary,
-    generate_demo_jp_fixture, run_derive_school_station_links, run_event_csv_import,
-    run_import_command, run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
-    run_snapshot_refresh, ImportTarget,
+    format_job_mutation_summary, format_replay_evaluation_summary, format_snapshot_refresh_summary,
+    format_summary, generate_demo_jp_fixture, run_derive_school_station_links,
+    run_event_csv_import, run_import_command, run_job_due, run_job_enqueue, run_job_inspect,
+    run_job_list, run_job_retry, run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
 use config::AppSettings;
 use storage_opensearch::ProjectionSyncService;
@@ -49,6 +49,10 @@ enum Command {
     Snapshot {
         #[command(subcommand)]
         target: SnapshotCommand,
+    },
+    Replay {
+        #[command(subcommand)]
+        target: ReplayCommand,
     },
     #[command(about = "Inspect and recover DB-backed worker jobs")]
     Jobs {
@@ -121,6 +125,17 @@ enum ProjectionCommand {
 #[derive(Debug, Subcommand)]
 enum SnapshotCommand {
     Refresh,
+}
+
+#[derive(Debug, Subcommand)]
+enum ReplayCommand {
+    #[command(about = "Replay recent recommendation traces against the current SQL-only path")]
+    Evaluate {
+        #[arg(long, default_value_t = 20, help = "Maximum recent traces to replay")]
+        limit: i64,
+        #[arg(long, help = "Exit non-zero when any replay mismatches or fails")]
+        fail_on_mismatch: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -233,6 +248,22 @@ async fn main() -> anyhow::Result<()> {
             SnapshotCommand::Refresh => {
                 let summary = run_snapshot_refresh(&settings).await?;
                 println!("{}", format_snapshot_refresh_summary(&summary));
+            }
+        },
+        Command::Replay { target } => match target {
+            ReplayCommand::Evaluate {
+                limit,
+                fail_on_mismatch,
+            } => {
+                let summary = run_replay_evaluate(&settings, limit).await?;
+                println!("{}", format_replay_evaluation_summary(&summary));
+                if fail_on_mismatch && (summary.mismatched > 0 || summary.failed > 0) {
+                    anyhow::bail!(
+                        "replay evaluation had mismatches={} failed={}",
+                        summary.mismatched,
+                        summary.failed
+                    );
+                }
             }
         },
         Command::Jobs { target } => match target {

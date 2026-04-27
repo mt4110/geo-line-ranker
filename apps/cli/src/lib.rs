@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use api_contracts::{FallbackStageDto, RecommendationRequest, RecommendationResponse};
 use cache::RecommendationCache;
 use chrono::{DateTime, FixedOffset, NaiveDate};
 use config::{AppSettings, RankingProfiles};
@@ -17,6 +18,7 @@ use jp_school::{
     parse_school_codes, parse_school_geodata, SCHOOL_CODES_PARSER_VERSION,
     SCHOOL_GEODATA_PARSER_VERSION,
 };
+use ranking::RankingEngine;
 use serde_json::json;
 use storage::{JobType, NewJob, RecommendationRepository, SnapshotTuning};
 use storage_opensearch::ProjectionSyncService;
@@ -25,7 +27,7 @@ use storage_postgres::{
     import_jp_postal, import_jp_rail, import_jp_school_codes, import_jp_school_geodata,
     record_import_report, upsert_import_run_file, EventCsvRecord, ImportReportEntry,
     ImportRunFileAudit, ImportSummary, JobInspection, JobMutationSummary, JobQueueSnapshot,
-    PgRepository,
+    PgRepository, RecommendationTraceReplayRow,
 };
 
 const EVENT_CSV_PARSER_VERSION: &str = "event-csv-v1";
@@ -84,6 +86,44 @@ pub struct JobEnqueueSummary {
     pub job_type: JobType,
     pub payload: serde_json::Value,
     pub max_attempts: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayEvaluationSummary {
+    pub evaluated: usize,
+    pub matched: usize,
+    pub mismatched: usize,
+    pub failed: usize,
+    pub cases: Vec<ReplayEvaluationCase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayEvaluationCase {
+    pub trace_id: i64,
+    pub status: ReplayEvaluationStatus,
+    pub request_id: Option<String>,
+    pub expected_fallback_stage: Option<String>,
+    pub actual_fallback_stage: Option<String>,
+    pub expected_order: Vec<String>,
+    pub actual_order: Vec<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayEvaluationStatus {
+    Matched,
+    Mismatched,
+    Failed,
+}
+
+impl ReplayEvaluationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Matched => "matched",
+            Self::Mismatched => "mismatched",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 pub async fn run_import_command(
@@ -228,7 +268,7 @@ pub async fn run_snapshot_refresh(settings: &AppSettings) -> Result<SnapshotRefr
         search_execute_school_signal_weight: profiles.tracking.search_execute_school_signal_weight,
         search_execute_area_signal_weight: profiles.tracking.search_execute_area_signal_weight,
     };
-    let repository = storage_postgres::PgRepository::new(settings.database_url.clone());
+    let repository = pg_repository(settings)?;
     let snapshot_stats = repository.refresh_popularity_snapshots(tuning).await?;
 
     let (projection_indexed_documents, projection_deleted_documents) =
@@ -261,27 +301,19 @@ pub async fn run_snapshot_refresh(settings: &AppSettings) -> Result<SnapshotRefr
 }
 
 pub async fn run_job_list(settings: &AppSettings, limit: i64) -> Result<JobQueueSnapshot> {
-    PgRepository::new(settings.database_url.clone())
-        .list_jobs(limit)
-        .await
+    pg_repository(settings)?.list_jobs(limit).await
 }
 
 pub async fn run_job_inspect(settings: &AppSettings, job_id: i64) -> Result<JobInspection> {
-    PgRepository::new(settings.database_url.clone())
-        .inspect_job(job_id)
-        .await
+    pg_repository(settings)?.inspect_job(job_id).await
 }
 
 pub async fn run_job_retry(settings: &AppSettings, job_id: i64) -> Result<JobMutationSummary> {
-    PgRepository::new(settings.database_url.clone())
-        .retry_failed_job(job_id)
-        .await
+    pg_repository(settings)?.retry_failed_job(job_id).await
 }
 
 pub async fn run_job_due(settings: &AppSettings, job_id: i64) -> Result<JobMutationSummary> {
-    PgRepository::new(settings.database_url.clone())
-        .make_queued_job_due(job_id)
-        .await
+    pg_repository(settings)?.make_queued_job_due(job_id).await
 }
 
 pub async fn run_job_enqueue(
@@ -297,7 +329,7 @@ pub async fn run_job_enqueue(
         serde_json::from_str(payload).with_context(|| "failed to parse job payload JSON")?;
     ensure!(payload.is_object(), "job payload must be a JSON object");
 
-    let repository = PgRepository::new(settings.database_url.clone());
+    let repository = pg_repository(settings)?;
     let job_id = repository
         .enqueue_job(&NewJob {
             job_type,
@@ -311,6 +343,54 @@ pub async fn run_job_enqueue(
         job_type,
         payload,
         max_attempts,
+    })
+}
+
+pub async fn run_replay_evaluate(
+    settings: &AppSettings,
+    limit: i64,
+) -> Result<ReplayEvaluationSummary> {
+    let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
+    let neighbor_distance_cap_meters = profiles.fallback.neighbor_distance_cap_meters;
+    let engine = RankingEngine::new(profiles, settings.algorithm_version.clone());
+    let repository = pg_repository(settings)?;
+    let traces = repository
+        .list_recommendation_traces_for_replay(limit)
+        .await?;
+    let mut cases = Vec::new();
+
+    for trace in traces {
+        cases.push(
+            evaluate_replay_trace(
+                &repository,
+                &engine,
+                &trace,
+                settings.candidate_retrieval_limit,
+                neighbor_distance_cap_meters,
+            )
+            .await,
+        );
+    }
+
+    let matched = cases
+        .iter()
+        .filter(|case| case.status == ReplayEvaluationStatus::Matched)
+        .count();
+    let mismatched = cases
+        .iter()
+        .filter(|case| case.status == ReplayEvaluationStatus::Mismatched)
+        .count();
+    let failed = cases
+        .iter()
+        .filter(|case| case.status == ReplayEvaluationStatus::Failed)
+        .count();
+
+    Ok(ReplayEvaluationSummary {
+        evaluated: cases.len(),
+        matched,
+        mismatched,
+        failed,
+        cases,
     })
 }
 
@@ -415,6 +495,232 @@ pub async fn run_event_csv_import(
             let _ = finish_import_run(&settings.database_url, import_run_id, "failed", 0).await;
             Err(error)
         }
+    }
+}
+
+fn pg_repository(settings: &AppSettings) -> Result<PgRepository> {
+    PgRepository::with_pool_max_size(
+        settings.database_url.clone(),
+        settings.postgres_pool_max_size,
+    )
+}
+
+async fn evaluate_replay_trace(
+    repository: &PgRepository,
+    engine: &RankingEngine,
+    trace: &RecommendationTraceReplayRow,
+    candidate_limit: usize,
+    neighbor_distance_cap_meters: f64,
+) -> ReplayEvaluationCase {
+    let expected_order = match stored_response_order(&trace.response_payload) {
+        Ok(order) => order,
+        Err(error) => {
+            return failed_replay_case(
+                trace,
+                None,
+                Some(normalize_fallback_stage(&trace.fallback_stage)),
+                format!("failed to read stored response item order: {error}"),
+            );
+        }
+    };
+    let expected_fallback_stage = stored_response_fallback_stage(&trace.response_payload)
+        .unwrap_or_else(|| normalize_fallback_stage(&trace.fallback_stage));
+    let request =
+        match serde_json::from_value::<RecommendationRequest>(trace.request_payload.clone()) {
+            Ok(request) => request,
+            Err(error) => {
+                return failed_replay_case(
+                    trace,
+                    None,
+                    Some(expected_fallback_stage),
+                    format!("failed to parse stored request_payload: {error}"),
+                );
+            }
+        };
+    let request_id = request
+        .request_id
+        .clone()
+        .unwrap_or_else(|| format!("replay-trace-{}", trace.id));
+    let context_input = request.context_input();
+    let resolved_context = match repository
+        .resolve_context_for_replay(&request_id, request.user_id.as_deref(), &context_input)
+        .await
+    {
+        Ok(context) => context,
+        Err(error) => {
+            return failed_replay_case(
+                trace,
+                Some(request_id),
+                Some(expected_fallback_stage),
+                format!("failed to resolve replay context: {error}"),
+            );
+        }
+    };
+    let target_station = match repository.load_station_for_context(&resolved_context).await {
+        Ok(Some(station)) => station,
+        Ok(None) => {
+            return failed_replay_case(
+                trace,
+                Some(request_id),
+                Some(expected_fallback_stage),
+                "resolved context did not map to a station".to_string(),
+            );
+        }
+        Err(error) => {
+            return failed_replay_case(
+                trace,
+                Some(request_id),
+                Some(expected_fallback_stage),
+                format!("failed to load replay station: {error}"),
+            );
+        }
+    };
+    let query = request.with_resolved_context(target_station.id.clone(), resolved_context);
+    let neighbor_max_hops = engine.neighbor_max_hops(query.placement);
+    let min_candidate_count = engine.minimum_candidate_count();
+    let candidate_links = match repository
+        .load_context_candidate_links(
+            &target_station,
+            query.context.as_ref().expect("resolved context is set"),
+            candidate_limit,
+            min_candidate_count,
+            neighbor_distance_cap_meters,
+            neighbor_max_hops,
+        )
+        .await
+    {
+        Ok(candidate_links) => candidate_links,
+        Err(error) => {
+            return failed_replay_case(
+                trace,
+                Some(request_id),
+                Some(expected_fallback_stage),
+                format!("failed to load replay candidates: {error}"),
+            );
+        }
+    };
+    let dataset = match repository
+        .load_candidate_dataset(&query, &target_station, &candidate_links)
+        .await
+    {
+        Ok(dataset) => dataset,
+        Err(error) => {
+            return failed_replay_case(
+                trace,
+                Some(request_id),
+                Some(expected_fallback_stage),
+                format!("failed to load replay dataset: {error}"),
+            );
+        }
+    };
+    let actual = match engine.recommend(&dataset, &query) {
+        Ok(result) => RecommendationResponse::from(result),
+        Err(error) => {
+            return failed_replay_case(
+                trace,
+                Some(request_id),
+                Some(expected_fallback_stage),
+                format!("ranking replay failed: {error}"),
+            );
+        }
+    };
+
+    let actual_order = response_order(&actual);
+    let actual_fallback_stage = fallback_stage_label(&actual.fallback_stage);
+    let status =
+        if expected_order == actual_order && expected_fallback_stage == actual_fallback_stage {
+            ReplayEvaluationStatus::Matched
+        } else {
+            ReplayEvaluationStatus::Mismatched
+        };
+
+    ReplayEvaluationCase {
+        trace_id: trace.id,
+        status,
+        request_id: Some(request_id),
+        expected_fallback_stage: Some(expected_fallback_stage),
+        actual_fallback_stage: Some(actual_fallback_stage),
+        expected_order,
+        actual_order,
+        message: (status == ReplayEvaluationStatus::Mismatched)
+            .then_some("stored response differs from current deterministic replay".to_string()),
+    }
+}
+
+fn failed_replay_case(
+    trace: &RecommendationTraceReplayRow,
+    request_id: Option<String>,
+    expected_fallback_stage: Option<String>,
+    message: String,
+) -> ReplayEvaluationCase {
+    ReplayEvaluationCase {
+        trace_id: trace.id,
+        status: ReplayEvaluationStatus::Failed,
+        request_id,
+        expected_fallback_stage,
+        actual_fallback_stage: None,
+        expected_order: Vec::new(),
+        actual_order: Vec::new(),
+        message: Some(message),
+    }
+}
+
+fn response_order(response: &RecommendationResponse) -> Vec<String> {
+    response
+        .items
+        .iter()
+        .map(|item| format!("{}:{}", item.content_kind.as_str(), item.content_id))
+        .collect()
+}
+
+fn stored_response_order(response: &serde_json::Value) -> Result<Vec<String>> {
+    let items = response
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .with_context(|| "response_payload.items must be an array")?;
+    items
+        .iter()
+        .map(|item| {
+            let content_kind = match item.get("content_kind") {
+                None => "school",
+                Some(value) => value
+                    .as_str()
+                    .with_context(|| "response item content_kind must be a string")?,
+            };
+            let content_id = item
+                .get("content_id")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| item.get("school_id").and_then(serde_json::Value::as_str))
+                .with_context(|| "response item content_id must be a string")?;
+            Ok(format!("{content_kind}:{content_id}"))
+        })
+        .collect()
+}
+
+fn stored_response_fallback_stage(response: &serde_json::Value) -> Option<String> {
+    response
+        .get("fallback_stage")
+        .and_then(serde_json::Value::as_str)
+        .map(normalize_fallback_stage)
+}
+
+fn normalize_fallback_stage(stage: &str) -> String {
+    match stage {
+        "strict" => "strict_station",
+        other => other,
+    }
+    .to_string()
+}
+
+fn fallback_stage_label(fallback_stage: &FallbackStageDto) -> String {
+    fallback_stage.as_str().to_string()
+}
+
+fn format_order(order: &[String]) -> String {
+    if order.is_empty() {
+        "-".to_string()
+    } else {
+        order.join(",")
     }
 }
 
@@ -582,6 +888,34 @@ pub fn format_job_enqueue_summary(summary: &JobEnqueueSummary) -> String {
     )
 }
 
+pub fn format_replay_evaluation_summary(summary: &ReplayEvaluationSummary) -> String {
+    let mut lines = vec![format!(
+        "replay evaluation completed: evaluated={}, matched={}, mismatched={}, failed={}",
+        summary.evaluated, summary.matched, summary.mismatched, summary.failed
+    )];
+
+    for case in &summary.cases {
+        let expected = format_order(&case.expected_order);
+        let actual = format_order(&case.actual_order);
+        lines.push(format!(
+            "  trace_id={} status={} request_id={} fallback={}=>{} items={}=>{}{}",
+            case.trace_id,
+            case.status.as_str(),
+            case.request_id.as_deref().unwrap_or("-"),
+            case.expected_fallback_stage.as_deref().unwrap_or("-"),
+            case.actual_fallback_stage.as_deref().unwrap_or("-"),
+            expected,
+            actual,
+            case.message
+                .as_ref()
+                .map(|message| format!(" message={message}"))
+                .unwrap_or_default()
+        ));
+    }
+
+    lines.join("\n")
+}
+
 async fn register_staged_files(
     settings: &AppSettings,
     import_run_id: i64,
@@ -705,7 +1039,10 @@ fn validate_starts_at(raw: &str) -> Result<()> {
 mod tests {
     use storage_postgres::EventCsvRecord;
 
-    use super::{generate_demo_jp_fixture, validate_event_csv_records};
+    use super::{
+        generate_demo_jp_fixture, normalize_fallback_stage, stored_response_order,
+        validate_event_csv_records,
+    };
 
     #[test]
     fn writes_demo_fixture_files() {
@@ -743,6 +1080,37 @@ mod tests {
         ];
 
         validate_event_csv_records(&records).expect("valid starts_at formats");
+    }
+
+    #[test]
+    fn replay_reader_accepts_legacy_school_only_trace_shape() {
+        let payload = serde_json::json!({
+            "items": [
+                { "school_id": "school_seaside" },
+                { "content_kind": "event", "content_id": "event_open" }
+            ],
+            "fallback_stage": "strict"
+        });
+
+        let order = stored_response_order(&payload).expect("legacy order");
+
+        assert_eq!(order, vec!["school:school_seaside", "event:event_open"]);
+        assert_eq!(normalize_fallback_stage("strict"), "strict_station");
+    }
+
+    #[test]
+    fn replay_reader_rejects_non_string_content_kind() {
+        let payload = serde_json::json!({
+            "items": [
+                { "content_kind": 7, "content_id": "event_open" }
+            ]
+        });
+
+        let error = stored_response_order(&payload).expect_err("invalid content kind");
+
+        assert!(error
+            .to_string()
+            .contains("response item content_kind must be a string"));
     }
 
     #[test]

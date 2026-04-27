@@ -3,11 +3,11 @@ use std::{sync::Arc, time::Instant};
 use anyhow::Result;
 
 use api_contracts::{
-    HealthResponse, ReadyResponse, RecommendationRequest, RecommendationResponse, TrackRequest,
-    TrackResponse,
+    ErrorResponse, HealthResponse, ReadyResponse, RecommendationRequest, RecommendationResponse,
+    TrackRequest, TrackResponse,
 };
 use axum::{
-    extract::State,
+    extract::{rejection::JsonRejection, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -127,8 +127,15 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn recommend(
     State(state): State<AppState>,
-    Json(request): Json<RecommendationRequest>,
+    request: Result<Json<RecommendationRequest>, JsonRejection>,
 ) -> impl IntoResponse {
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(rejection) => {
+            return error_response(StatusCode::BAD_REQUEST, rejection.body_text());
+        }
+    };
+
     let request_id = match resolve_request_id(request.request_id.as_deref()) {
         Ok(request_id) => request_id,
         Err(message) => return error_response(StatusCode::BAD_REQUEST, message.to_string()),
@@ -353,8 +360,15 @@ async fn recommend(
 
 async fn track(
     State(state): State<AppState>,
-    Json(request): Json<TrackRequest>,
+    request: Result<Json<TrackRequest>, JsonRejection>,
 ) -> impl IntoResponse {
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(rejection) => {
+            return error_response(StatusCode::BAD_REQUEST, rejection.body_text());
+        }
+    };
+
     const UNKNOWN_TRACK_REFERENCE_MESSAGE: &str =
         "track payload references unknown school_id, event_id, or target_station_id";
 
@@ -502,11 +516,22 @@ fn build_tracking_jobs(state: &AppState, event: &domain::UserEvent) -> Vec<NewJo
 fn error_response(status: StatusCode, message: String) -> axum::response::Response {
     (
         status,
-        Json(serde_json::json!({
-            "error": message,
-        })),
+        Json(ErrorResponse {
+            error: message,
+            code: error_code(status).to_string(),
+        }),
     )
         .into_response()
+}
+
+fn error_code(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::BAD_REQUEST => "bad_request",
+        StatusCode::NOT_FOUND => "not_found",
+        StatusCode::SERVICE_UNAVAILABLE => "service_unavailable",
+        StatusCode::INTERNAL_SERVER_ERROR => "internal_server_error",
+        _ => "http_error",
+    }
 }
 
 fn context_resolution_error_status(error: &anyhow::Error) -> StatusCode {
@@ -634,8 +659,13 @@ fn generate_request_id() -> String {
 mod tests {
     use std::path::PathBuf;
 
+    use axum::{
+        body::{to_bytes, Body},
+        http::Request,
+    };
     use config::{OpenSearchSettings, RankingProfiles};
     use domain::{EventKind, PlacementKind, UserEvent};
+    use tower::ServiceExt;
 
     use super::*;
 
@@ -650,7 +680,9 @@ mod tests {
         let profiles =
             RankingProfiles::load_from_dir(repo_root().join("configs/ranking")).expect("profiles");
         AppState {
-            repository: Arc::new(PgRepository::new("postgres://unused")),
+            repository: Arc::new(PgRepository::new(
+                "postgres://postgres:postgres@example.invalid/test_db",
+            )),
             engine: RankingEngine::new(profiles.clone(), "phase7-test"),
             cache: RecommendationCache::new(
                 cache_enabled.then_some("redis://127.0.0.1:6379".to_string()),
@@ -873,5 +905,64 @@ mod tests {
             resolve_request_id(Some(&oversized)).unwrap_err(),
             "request_id must be at most 128 characters"
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_json_uses_common_error_response_shape() {
+        let app = build_app(test_state(false, CandidateRetrievalMode::SqlOnly));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{"))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body bytes");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        assert_eq!(payload["code"], "bad_request");
+        assert!(payload["error"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn missing_json_content_type_uses_common_error_response_shape() {
+        let app = build_app(test_state(false, CandidateRetrievalMode::SqlOnly));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recommendations")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "target_station_id": "st_tamachi",
+                            "placement": "search",
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body bytes");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        assert_eq!(payload["code"], "bad_request");
+        assert!(payload["error"]
+            .as_str()
+            .is_some_and(|value| value.contains("Content-Type")));
     }
 }
