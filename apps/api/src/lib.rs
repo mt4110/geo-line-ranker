@@ -662,7 +662,7 @@ mod tests {
             RankingProfiles::load_from_dir(repo_root().join("configs/ranking")).expect("profiles");
         AppState {
             repository: Arc::new(PgRepository::new(
-                "postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker",
+                "postgres://postgres:postgres@example.invalid/test_db",
             )),
             engine: RankingEngine::new(profiles.clone(), "phase7-test"),
             cache: RecommendationCache::new(

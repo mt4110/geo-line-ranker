@@ -64,7 +64,8 @@ pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct PgRepository {
-    pool: Pool,
+    pool: OnceLock<Pool>,
+    pool_config: PgPoolConfig,
     trace_hash_salt: String,
 }
 
@@ -170,33 +171,47 @@ pub struct RecommendationTraceReplayRow {
     pub created_at: String,
 }
 
+fn build_pool_config(database_url: String, max_size: usize) -> PgPoolConfig {
+    let mut config = PgPoolConfig::new();
+    config.url = Some(database_url);
+    config.manager = Some(ManagerConfig {
+        recycling_method: RecyclingMethod::Fast,
+    });
+    config.pool = Some(PoolConfig::new(max_size));
+    config
+}
+
 impl PgRepository {
     pub fn new(database_url: impl Into<String>) -> Self {
-        Self::with_pool_max_size(database_url, DEFAULT_POSTGRES_POOL_MAX_SIZE)
-            .expect("failed to create PostgreSQL connection pool")
+        Self {
+            pool: OnceLock::new(),
+            pool_config: build_pool_config(database_url.into(), DEFAULT_POSTGRES_POOL_MAX_SIZE),
+            trace_hash_salt: load_trace_hash_salt(),
+        }
     }
 
     pub fn with_pool_max_size(database_url: impl Into<String>, max_size: usize) -> Result<Self> {
         ensure!(max_size > 0, "postgres pool max size must be positive");
-        let mut config = PgPoolConfig::new();
-        config.url = Some(database_url.into());
-        config.manager = Some(ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        });
-        config.pool = Some(PoolConfig::new(max_size));
-        let pool = config
-            .create_pool(Some(Runtime::Tokio1), NoTls)
-            .with_context(|| "failed to create PostgreSQL connection pool")?;
-
         Ok(Self {
+            pool: OnceLock::new(),
+            pool_config: build_pool_config(database_url.into(), max_size),
             trace_hash_salt: load_trace_hash_salt(),
-            pool,
         })
     }
 
     async fn connect(&self) -> Result<Client> {
-        self.pool
-            .get()
+        let pool = match self.pool.get() {
+            Some(pool) => pool,
+            None => {
+                let created = self
+                    .pool_config
+                    .create_pool(Some(Runtime::Tokio1), NoTls)
+                    .with_context(|| "failed to create PostgreSQL connection pool")?;
+                self.pool.get_or_init(|| created)
+            }
+        };
+
+        pool.get()
             .await
             .with_context(|| "failed to get PostgreSQL connection from pool")
     }

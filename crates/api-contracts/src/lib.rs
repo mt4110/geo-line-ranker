@@ -51,6 +51,7 @@ impl RecommendationRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ScoreComponentDto {
     pub feature: String,
+    #[schema(required)]
     #[serde(default = "default_reason_code")]
     pub reason_code: String,
     pub value: f64,

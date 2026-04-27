@@ -607,6 +607,7 @@
         "type": "object",
         "required": [
           "feature",
+          "reason_code",
           "value",
           "reason"
         ],
