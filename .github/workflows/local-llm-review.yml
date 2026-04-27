@@ -1,4 +1,4 @@
-# cspell:ignore OLLAMA qwen pipefail urllib rstrip startswith urlopen endswith findall ollama
+# cspell:ignore OLLAMA qwen pipefail urllib rstrip startswith urlopen endswith findall ollama textwrap isinstance repr
 
 name: Local AI PR Review
 
