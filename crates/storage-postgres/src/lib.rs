@@ -8,6 +8,7 @@ use std::{
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use config::parse_postgres_pool_max_size;
 use context::{
     AreaContext, AreaContextInput, ContextInput, ContextSource, ContextWarning, LineContext,
     PrivacyLevel, RankingContext, StationContext,
@@ -61,7 +62,6 @@ const POPULARITY_REFRESH_COALESCE_LOCK_KEY: i32 = 2;
 const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
 const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
 const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference validation: ";
-pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct PgRepository {
@@ -180,14 +180,6 @@ fn build_pool_config(database_url: String, max_size: usize) -> PgPoolConfig {
     });
     config.pool = Some(PoolConfig::new(max_size));
     config
-}
-
-fn parse_postgres_pool_max_size(raw: Option<&str>) -> usize {
-    raw.map(str::trim)
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_POSTGRES_POOL_MAX_SIZE)
 }
 
 fn load_postgres_pool_max_size() -> usize {
@@ -4803,7 +4795,7 @@ struct LinkRow {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_postgres_pool_max_size, DEFAULT_POSTGRES_POOL_MAX_SIZE};
+    use config::{parse_postgres_pool_max_size, DEFAULT_POSTGRES_POOL_MAX_SIZE};
 
     #[test]
     fn parse_postgres_pool_max_size_uses_default_when_unset() {
