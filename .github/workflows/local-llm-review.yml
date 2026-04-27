@@ -75,7 +75,11 @@ jobs:
 
           def github_request(path, *, method="GET", body=None, accept="application/vnd.github+json"):
               data = None if body is None else json.dumps(body).encode("utf-8")
-              url = path if path.startswith("https://") else f"{github_api}{path}"
+              url = (
+                  path
+                  if path.startswith(("https://", "http://"))
+                  else f"{github_api}{path}"
+              )
               request = urllib.request.Request(
                   url,
                   data=data,
