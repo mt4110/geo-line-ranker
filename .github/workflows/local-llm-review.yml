@@ -284,8 +284,10 @@ jobs:
 
           def describe_error(error):
               if isinstance(error, urllib.error.HTTPError):
-                  message = error.read().decode("utf-8", errors="replace")
-                  print(f"HTTP error: {error.code}\n{message}", file=sys.stderr)
+                  response_body = error.read().decode("utf-8", errors="replace").strip()
+                  response_message = response_body or str(error.reason)
+                  message = f"HTTP {error.code} for {error.url}: {response_message}"
+                  print(message, file=sys.stderr)
                   return message
 
               message = str(error) or repr(error)
