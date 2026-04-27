@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 use anyhow::{bail, ensure, Context, Result};
@@ -32,6 +32,7 @@ use storage::{
     ClaimedJob, JobType, NewJob, RecommendationRepository, RecommendationTrace,
     SnapshotRefreshStats, SnapshotTuning,
 };
+use tokio::sync::OnceCell;
 use tokio_postgres::{NoTls, Row};
 use uuid::Uuid;
 
@@ -64,7 +65,7 @@ pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct PgRepository {
-    pool: OnceLock<Pool>,
+    pool: Arc<OnceCell<Pool>>,
     pool_config: PgPoolConfig,
     trace_hash_salt: String,
 }
@@ -184,7 +185,7 @@ fn build_pool_config(database_url: String, max_size: usize) -> PgPoolConfig {
 impl PgRepository {
     pub fn new(database_url: impl Into<String>) -> Self {
         Self {
-            pool: OnceLock::new(),
+            pool: Arc::new(OnceCell::new()),
             pool_config: build_pool_config(database_url.into(), DEFAULT_POSTGRES_POOL_MAX_SIZE),
             trace_hash_salt: load_trace_hash_salt(),
         }
@@ -193,23 +194,22 @@ impl PgRepository {
     pub fn with_pool_max_size(database_url: impl Into<String>, max_size: usize) -> Result<Self> {
         ensure!(max_size > 0, "postgres pool max size must be positive");
         Ok(Self {
-            pool: OnceLock::new(),
+            pool: Arc::new(OnceCell::new()),
             pool_config: build_pool_config(database_url.into(), max_size),
             trace_hash_salt: load_trace_hash_salt(),
         })
     }
 
     async fn connect(&self) -> Result<Client> {
-        let pool = match self.pool.get() {
-            Some(pool) => pool,
-            None => {
-                let created = self
-                    .pool_config
+        let pool_config = self.pool_config.clone();
+        let pool = self
+            .pool
+            .get_or_try_init(move || async move {
+                pool_config
                     .create_pool(Some(Runtime::Tokio1), NoTls)
-                    .with_context(|| "failed to create PostgreSQL connection pool")?;
-                self.pool.get_or_init(|| created)
-            }
-        };
+                    .with_context(|| "failed to create PostgreSQL connection pool")
+            })
+            .await?;
 
         pool.get()
             .await
