@@ -1194,13 +1194,14 @@ fn component(
 ) -> ScoreComponent {
     let feature = feature.into();
     let reason_code = reason_catalog_entry(&feature)
-        .map(|entry| entry.reason_code)
-        .unwrap_or("uncataloged")
+        .unwrap_or_else(|| {
+            panic!(
+                "score component feature must be in the reason catalog: {}",
+                feature
+            )
+        })
+        .reason_code
         .to_string();
-    debug_assert_ne!(
-        reason_code, "uncataloged",
-        "score component feature must be in the reason catalog"
-    );
     ScoreComponent {
         feature,
         reason_code,
@@ -1315,6 +1316,12 @@ mod tests {
         assert!(top_reason_labels
             .iter()
             .all(|label| result.explanation.contains(label)));
+    }
+
+    #[test]
+    #[should_panic(expected = "score component feature must be in the reason catalog")]
+    fn uncataloged_component_panics() {
+        let _ = super::component("missing_feature", 1.0, "reason", None);
     }
 
     #[test]
