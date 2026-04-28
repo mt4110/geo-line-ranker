@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Once,
 };
 
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
+pub const RANKING_CONFIG_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -131,9 +132,33 @@ fn load_dotenv() {
     });
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RankingConfigKind {
+    RankingSchools,
+    RankingEvents,
+    RankingPlacement,
+    RankingFallback,
+    RankingTracking,
+}
+
+impl RankingConfigKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RankingSchools => "ranking_schools",
+            Self::RankingEvents => "ranking_events",
+            Self::RankingPlacement => "ranking_placement",
+            Self::RankingFallback => "ranking_fallback",
+            Self::RankingTracking => "ranking_tracking",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SchoolsProfile {
+    pub schema_version: u32,
+    pub kind: RankingConfigKind,
     pub limit_default: usize,
     pub strict_min_candidates: usize,
     pub direct_station_bonus: f64,
@@ -145,6 +170,8 @@ pub struct SchoolsProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventsProfile {
+    pub schema_version: u32,
+    pub kind: RankingConfigKind,
     pub open_day_bonus: f64,
 }
 
@@ -170,6 +197,8 @@ pub struct DiversityProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlacementProfile {
+    pub schema_version: u32,
+    pub kind: RankingConfigKind,
     pub neighbor_max_hops: u8,
     pub neighbor_same_line_bonus: f64,
     pub mixed_ranking: MixedRankingProfile,
@@ -179,6 +208,8 @@ pub struct PlacementProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FallbackProfile {
+    pub schema_version: u32,
+    pub kind: RankingConfigKind,
     pub min_results: usize,
     pub neighbor_penalty: f64,
     pub neighbor_distance_cap_meters: f64,
@@ -187,6 +218,8 @@ pub struct FallbackProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrackingProfile {
+    pub schema_version: u32,
+    pub kind: RankingConfigKind,
     pub popularity_bonus_weight: f64,
     pub user_affinity_bonus_weight: f64,
     pub area_affinity_bonus_weight: f64,
@@ -211,6 +244,19 @@ pub struct RankingProfiles {
     pub placements: BTreeMap<PlacementKind, PlacementProfile>,
     pub fallback: FallbackProfile,
     pub tracking: TrackingProfile,
+    pub profile_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankingConfigLintFile {
+    pub path: PathBuf,
+    pub schema_version: u32,
+    pub kind: RankingConfigKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankingConfigLintSummary {
+    pub files: Vec<RankingConfigLintFile>,
     pub profile_version: String,
 }
 
@@ -281,6 +327,31 @@ impl RankingProfiles {
     }
 
     fn validate(&self) -> Result<()> {
+        validate_config_contract(
+            "schools.default.yaml",
+            self.schools.schema_version,
+            self.schools.kind,
+            RankingConfigKind::RankingSchools,
+        )?;
+        validate_config_contract(
+            "events.default.yaml",
+            self.events.schema_version,
+            self.events.kind,
+            RankingConfigKind::RankingEvents,
+        )?;
+        validate_config_contract(
+            "fallback.default.yaml",
+            self.fallback.schema_version,
+            self.fallback.kind,
+            RankingConfigKind::RankingFallback,
+        )?;
+        validate_config_contract(
+            "tracking.default.yaml",
+            self.tracking.schema_version,
+            self.tracking.kind,
+            RankingConfigKind::RankingTracking,
+        )?;
+
         ensure!(
             self.schools.limit_default > 0,
             "schools.limit_default must be positive"
@@ -332,6 +403,12 @@ impl RankingProfiles {
                 .placements
                 .get(&placement)
                 .with_context(|| format!("missing placement profile {}", placement.as_str()))?;
+            validate_config_contract(
+                &format!("placement.{}.yaml", placement.as_str()),
+                profile.schema_version,
+                profile.kind,
+                RankingConfigKind::RankingPlacement,
+            )?;
             ensure!(
                 profile.diversity.same_school_cap > 0,
                 "placement.{}.diversity.same_school_cap must be positive",
@@ -420,6 +497,73 @@ impl RankingProfiles {
     }
 }
 
+pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLintSummary> {
+    let path = path.as_ref();
+    let profiles = RankingProfiles::load_from_dir(path)?;
+    let mut files = vec![
+        RankingConfigLintFile {
+            path: path.join("schools.default.yaml"),
+            schema_version: profiles.schools.schema_version,
+            kind: profiles.schools.kind,
+        },
+        RankingConfigLintFile {
+            path: path.join("events.default.yaml"),
+            schema_version: profiles.events.schema_version,
+            kind: profiles.events.kind,
+        },
+        RankingConfigLintFile {
+            path: path.join("fallback.default.yaml"),
+            schema_version: profiles.fallback.schema_version,
+            kind: profiles.fallback.kind,
+        },
+        RankingConfigLintFile {
+            path: path.join("tracking.default.yaml"),
+            schema_version: profiles.tracking.schema_version,
+            kind: profiles.tracking.kind,
+        },
+    ];
+
+    for placement in [
+        PlacementKind::Home,
+        PlacementKind::Search,
+        PlacementKind::Detail,
+        PlacementKind::Mypage,
+    ] {
+        let profile = profiles.placement(placement);
+        files.push(RankingConfigLintFile {
+            path: path.join(format!("placement.{}.yaml", placement.as_str())),
+            schema_version: profile.schema_version,
+            kind: profile.kind,
+        });
+    }
+
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+
+    Ok(RankingConfigLintSummary {
+        files,
+        profile_version: profiles.profile_version,
+    })
+}
+
+fn validate_config_contract(
+    label: &str,
+    schema_version: u32,
+    kind: RankingConfigKind,
+    expected_kind: RankingConfigKind,
+) -> Result<()> {
+    ensure!(
+        schema_version == RANKING_CONFIG_SCHEMA_VERSION,
+        "{label}.schema_version {schema_version} is unsupported; expected {RANKING_CONFIG_SCHEMA_VERSION}"
+    );
+    ensure!(
+        kind == expected_kind,
+        "{label}.kind {} is invalid; expected {}",
+        kind.as_str(),
+        expected_kind.as_str()
+    );
+    Ok(())
+}
+
 fn read_raw(path: impl AsRef<Path>) -> Result<String> {
     let path = path.as_ref();
     fs::read_to_string(path)
@@ -474,8 +618,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        parse_candidate_retrieval_mode, parse_postgres_pool_max_size, CandidateRetrievalMode,
-        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        lint_ranking_config_dir, parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
+        CandidateRetrievalMode, RankingConfigKind, RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     fn repo_config_root() -> PathBuf {
@@ -505,12 +649,52 @@ mod tests {
     }
 
     #[test]
+    fn lints_default_ranking_config_contract() {
+        let summary = lint_ranking_config_dir(repo_config_root()).expect("lint");
+        assert_eq!(summary.files.len(), 8);
+        assert!(summary
+            .files
+            .iter()
+            .all(|file| file.schema_version == super::RANKING_CONFIG_SCHEMA_VERSION));
+        assert!(summary
+            .files
+            .iter()
+            .any(|file| file.kind == RankingConfigKind::RankingPlacement));
+    }
+
+    #[test]
+    fn rejects_mismatched_ranking_config_kind() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("schools.default.yaml"),
+            r#"schema_version: 1
+kind: ranking_events
+limit_default: 3
+strict_min_candidates: 2
+direct_station_bonus: 3.0
+line_match_bonus: 1.25
+distance_scale_meters: 1600.0
+walking_scale_minutes: 20.0
+"#,
+        )
+        .expect("write config");
+
+        let error = RankingProfiles::load_from_dir(temp.path()).expect_err("kind mismatch");
+        assert!(error
+            .to_string()
+            .contains("schools.default.yaml.kind ranking_events is invalid"));
+    }
+
+    #[test]
     fn rejects_article_until_runtime_support_exists() {
         let temp = tempdir().expect("tempdir");
         copy_default_configs(temp.path());
         fs::write(
             temp.path().join("placement.home.yaml"),
-            r#"neighbor_max_hops: 3
+            r#"schema_version: 1
+kind: ranking_placement
+neighbor_max_hops: 3
 neighbor_same_line_bonus: 0.9
 mixed_ranking:
   enabled_content_kinds:
@@ -582,7 +766,9 @@ diversity:
         copy_default_configs(temp.path());
         fs::write(
             temp.path().join("tracking.default.yaml"),
-            r#"popularity_bonus_weight: 0.75
+            r#"schema_version: 1
+kind: ranking_tracking
+popularity_bonus_weight: 0.75
 user_affinity_bonus_weight: 0.9
 area_affinity_bonus_weight: 0.35
 search_execute_school_signal_weight: -0.1
@@ -603,7 +789,9 @@ search_execute_area_signal_weight: 0.2
         copy_default_configs(temp.path());
         fs::write(
             temp.path().join("tracking.default.yaml"),
-            r#"popularity_bonus_weight: 0.75
+            r#"schema_version: 1
+kind: ranking_tracking
+popularity_bonus_weight: 0.75
 user_affinity_bonus_weight: 0.9
 area_affinity_bonus_weight: 0.35
 "#,

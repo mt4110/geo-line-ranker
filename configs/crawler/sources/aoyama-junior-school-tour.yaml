@@ -1,3 +1,5 @@
+schema_version: 1
+kind: crawler_source
 source_id: aoyama-junior-school-tour
 source_name: Aoyama Gakuin Junior High admissions school tours
 source_maturity: live_ready

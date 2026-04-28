@@ -13,6 +13,8 @@ Start here when choosing what to read next.
 - [API Spec](../API_SPEC.md): human-readable API boundary and response fields.
 - [Architecture](ARCHITECTURE.md): service boundaries, deterministic ranking, and storage roles.
 - [Reason Catalog](REASON_CATALOG.md): stable score reason codes used by explanations.
+- [Versioning](VERSIONING.md): config, manifest, public API, reason-code, and artifact versioning rules.
+- [Deprecation Policy](DEPRECATION_POLICY.md): removal and rename policy for API fields, config keys, manifests, and reason codes.
 
 ## Planning
 

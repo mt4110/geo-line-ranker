@@ -1,7 +1,8 @@
+schema_version: 1
+kind: ranking_schools
 limit_default: 3
 strict_min_candidates: 2
 direct_station_bonus: 3.0
 line_match_bonus: 1.25
 distance_scale_meters: 1600.0
 walking_scale_minutes: 20.0
-

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt, fs,
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -11,6 +11,8 @@ use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+
+pub const CRAWL_MANIFEST_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -120,8 +122,27 @@ pub struct ExpectedShapeCheck {
     pub summary: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CrawlManifestKind {
+    CrawlerSource,
+}
+
+impl CrawlManifestKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CrawlerSource => "crawler_source",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CrawlSourceManifest {
+    #[serde(default = "default_crawl_manifest_schema_version")]
+    pub schema_version: u32,
+    #[serde(default = "default_crawl_manifest_kind")]
+    pub kind: CrawlManifestKind,
     pub source_id: String,
     pub source_name: String,
     #[serde(default = "default_manifest_version")]
@@ -139,6 +160,22 @@ pub struct CrawlSourceManifest {
     #[serde(default)]
     pub defaults: CrawlEventDefaults,
     pub targets: Vec<CrawlTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrawlManifestLintFile {
+    pub path: PathBuf,
+    pub source_id: String,
+    pub schema_version: u32,
+    pub kind: CrawlManifestKind,
+    pub manifest_version: u32,
+    pub parser_key: String,
+    pub target_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrawlManifestLintSummary {
+    pub files: Vec<CrawlManifestLintFile>,
 }
 
 impl CrawlSourceManifest {
@@ -175,6 +212,7 @@ impl CrawlSourceManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AllowlistPolicy {
     pub allowed_domains: Vec<String>,
     pub user_agent: String,
@@ -190,6 +228,7 @@ pub struct AllowlistPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CrawlEventDefaults {
     #[serde(default)]
     pub school_id: Option<String>,
@@ -219,6 +258,7 @@ impl Default for CrawlEventDefaults {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CrawlTarget {
     pub logical_name: String,
     pub url: String,
@@ -398,6 +438,35 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<CrawlSourceManifest> {
         .with_context(|| format!("failed to parse crawl manifest {}", path.display()))?;
     validate_manifest(&manifest, path)?;
     Ok(manifest)
+}
+
+pub fn lint_manifest_file(path: impl AsRef<Path>) -> Result<CrawlManifestLintFile> {
+    let path = path.as_ref();
+    let manifest = load_manifest(path)?;
+    Ok(CrawlManifestLintFile {
+        path: path.to_path_buf(),
+        source_id: manifest.source_id,
+        schema_version: manifest.schema_version,
+        kind: manifest.kind,
+        manifest_version: manifest.manifest_version,
+        parser_key: manifest.parser_key,
+        target_count: manifest.targets.len(),
+    })
+}
+
+pub fn lint_manifest_dir(path: impl AsRef<Path>) -> Result<CrawlManifestLintSummary> {
+    let path = path.as_ref();
+    let mut files = Vec::new();
+    for manifest_path in list_yaml_paths(path)? {
+        files.push(lint_manifest_file(manifest_path)?);
+    }
+    ensure!(
+        !files.is_empty(),
+        "crawl manifest dir {} does not contain any yaml manifests",
+        path.display()
+    );
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(CrawlManifestLintSummary { files })
 }
 
 pub fn check_expected_shape(
@@ -1528,6 +1597,20 @@ fn validate_manifest(manifest: &CrawlSourceManifest, path: &Path) -> Result<()> 
     let source_maturity = manifest.effective_source_maturity();
 
     ensure!(
+        manifest.schema_version == CRAWL_MANIFEST_SCHEMA_VERSION,
+        "crawl manifest {} schema_version {} is unsupported; expected {}",
+        path.display(),
+        manifest.schema_version,
+        CRAWL_MANIFEST_SCHEMA_VERSION
+    );
+    ensure!(
+        manifest.kind == CrawlManifestKind::CrawlerSource,
+        "crawl manifest {} kind {} is invalid; expected {}",
+        path.display(),
+        manifest.kind.as_str(),
+        CrawlManifestKind::CrawlerSource.as_str()
+    );
+    ensure!(
         !manifest.source_id.trim().is_empty(),
         "crawl manifest {} is missing source_id",
         path.display()
@@ -2640,6 +2723,14 @@ fn default_manifest_version() -> u32 {
     1
 }
 
+fn default_crawl_manifest_schema_version() -> u32 {
+    CRAWL_MANIFEST_SCHEMA_VERSION
+}
+
+fn default_crawl_manifest_kind() -> CrawlManifestKind {
+    CrawlManifestKind::CrawlerSource
+}
+
 fn default_min_fetch_interval_ms() -> u64 {
     1_000
 }
@@ -2652,12 +2743,49 @@ fn default_event_category() -> String {
     "general".to_string()
 }
 
+fn list_yaml_paths(path: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    collect_yaml_paths(path, &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_yaml_paths(path: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    if path.is_file() {
+        if is_yaml_path(path) {
+            paths.push(path.to_path_buf());
+        }
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(path)
+        .with_context(|| format!("failed to read crawl manifest dir {}", path.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("failed to read entry under {}", path.display()))?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_yaml_paths(&entry_path, paths)?;
+        } else if is_yaml_path(&entry_path) {
+            paths.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn is_yaml_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("yaml" | "yml")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        check_expected_shape, dedupe_events, finalize_parsed_events, load_manifest,
-        parse_placement_kind, ParseInput, ParsedEventSeed, ParserExpectedShape, ParserRegistry,
-        ResolvedCrawlTarget, SourceMaturity, UTOKYO_EVENTS_JSON_LIMIT,
+        check_expected_shape, dedupe_events, finalize_parsed_events, lint_manifest_dir,
+        load_manifest, parse_placement_kind, ParseInput, ParsedEventSeed, ParserExpectedShape,
+        ParserRegistry, ResolvedCrawlTarget, SourceMaturity, UTOKYO_EVENTS_JSON_LIMIT,
     };
     use domain::PlacementKind;
 
@@ -2819,6 +2947,70 @@ targets:
 
         let error = load_manifest(&manifest_path).expect_err("duplicate logical_name");
         assert!(error.to_string().contains("duplicate logical_name"));
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_keys() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("crawler.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+unknown_key: true
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("unknown key");
+        assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
+    }
+
+    #[test]
+    fn lints_crawl_manifest_dir_recursively() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_dir = temp.path().join("configs").join("crawler").join("sources");
+        std::fs::create_dir_all(&manifest_dir).expect("manifest dir");
+        std::fs::write(
+            manifest_dir.join("custom.yaml"),
+            r#"
+schema_version: 1
+kind: crawler_source
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let summary = lint_manifest_dir(temp.path().join("configs")).expect("lint");
+        assert_eq!(summary.files.len(), 1);
+        assert_eq!(summary.files[0].source_id, "custom-example");
+        assert_eq!(summary.files[0].target_count, 1);
     }
 
     #[test]

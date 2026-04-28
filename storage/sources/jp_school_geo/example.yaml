@@ -1,3 +1,5 @@
+schema_version: 1
+kind: import_source
 source_id: jp-school-geodata
 source_name: Demo JP school geodata
 manifest_version: 1

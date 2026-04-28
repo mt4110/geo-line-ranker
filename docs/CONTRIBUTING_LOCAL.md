@@ -34,6 +34,9 @@ Run these from the repository root:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
+cargo run -p cli -- config lint
+cargo run -p cli -- source-manifest lint
+cargo run -p crawler -- manifest lint
 ```
 
 Convenience commands are also available:

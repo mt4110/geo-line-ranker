@@ -10,7 +10,8 @@ use chrono::{DateTime, FixedOffset, NaiveDate};
 use config::{AppSettings, RankingProfiles};
 use generic_csv::{
     count_csv_rows, load_manifest, read_csv_rows, stage_raw_files, stage_single_csv_file,
-    PreparedSourceFile, SourceFileSpec, SourceManifest,
+    PreparedSourceFile, SourceFileSpec, SourceManifest, SourceManifestKind,
+    SOURCE_MANIFEST_SCHEMA_VERSION,
 };
 use jp_postal::{parse_postal_codes, PARSER_VERSION as JP_POSTAL_PARSER_VERSION};
 use jp_rail::{parse_rail_stations, PARSER_VERSION as JP_RAIL_PARSER_VERSION};
@@ -405,6 +406,8 @@ pub async fn run_event_csv_import(
         )
     })?;
     let manifest = SourceManifest {
+        schema_version: SOURCE_MANIFEST_SCHEMA_VERSION,
+        kind: SourceManifestKind::ImportSource,
         source_id: EVENT_CSV_SOURCE_ID.to_string(),
         source_name: "Operational event CSV".to_string(),
         manifest_version: 1,

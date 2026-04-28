@@ -8,7 +8,8 @@ use cli::{
     run_event_csv_import, run_import_command, run_job_due, run_job_enqueue, run_job_inspect,
     run_job_list, run_job_retry, run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
-use config::AppSettings;
+use config::{lint_ranking_config_dir, AppSettings, RankingConfigLintSummary};
+use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
 use storage_postgres::{run_migrations, seed_fixture};
 
@@ -53,6 +54,15 @@ enum Command {
     Replay {
         #[command(subcommand)]
         target: ReplayCommand,
+    },
+    Config {
+        #[command(subcommand)]
+        target: ConfigCommand,
+    },
+    #[command(name = "source-manifest", about = "Inspect import source manifests")]
+    SourceManifest {
+        #[command(subcommand)]
+        target: SourceManifestCommand,
     },
     #[command(about = "Inspect and recover DB-backed worker jobs")]
     Jobs {
@@ -135,6 +145,31 @@ enum ReplayCommand {
         limit: i64,
         #[arg(long, help = "Exit non-zero when any replay mismatches or fails")]
         fail_on_mismatch: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    #[command(about = "Lint active ranking config files")]
+    Lint {
+        #[arg(
+            long,
+            help = "Ranking config directory to lint. Defaults to RANKING_CONFIG_DIR or configs/ranking."
+        )]
+        path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SourceManifestCommand {
+    #[command(about = "Lint import source manifest files")]
+    Lint {
+        #[arg(
+            long,
+            default_value = "storage/sources",
+            help = "Directory or YAML file containing import source manifests."
+        )]
+        path: PathBuf,
     },
 }
 
@@ -266,6 +301,19 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         },
+        Command::Config { target } => match target {
+            ConfigCommand::Lint { path } => {
+                let path = path.unwrap_or_else(|| PathBuf::from(&settings.ranking_config_dir));
+                let summary = lint_ranking_config_dir(path)?;
+                println!("{}", format_config_lint_summary(&summary));
+            }
+        },
+        Command::SourceManifest { target } => match target {
+            SourceManifestCommand::Lint { path } => {
+                let summary = lint_source_manifest_dir(path)?;
+                println!("{}", format_source_manifest_lint_summary(&summary));
+            }
+        },
         Command::Jobs { target } => match target {
             JobsCommand::List { limit } => {
                 let summary = run_job_list(&settings, limit).await?;
@@ -302,4 +350,40 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn format_config_lint_summary(summary: &RankingConfigLintSummary) -> String {
+    let mut lines = vec![format!(
+        "config lint ok: files={}, profile_version={}",
+        summary.files.len(),
+        summary.profile_version
+    )];
+    lines.extend(summary.files.iter().map(|file| {
+        format!(
+            "- {} schema_version={} kind={}",
+            file.path.display(),
+            file.schema_version,
+            file.kind.as_str()
+        )
+    }));
+    lines.join("\n")
+}
+
+fn format_source_manifest_lint_summary(summary: &SourceManifestLintSummary) -> String {
+    let mut lines = vec![format!(
+        "source manifest lint ok: files={}",
+        summary.files.len()
+    )];
+    lines.extend(summary.files.iter().map(|file| {
+        format!(
+            "- {} schema_version={} kind={} manifest_version={} source_id={} files={}",
+            file.path.display(),
+            file.schema_version,
+            file.kind.as_str(),
+            file.manifest_version,
+            file.source_id,
+            file.file_count
+        )
+    }));
+    lines.join("\n")
 }
