@@ -718,6 +718,14 @@ fn manifest_path_value(path: &Path) -> String {
 fn lexical_relative_path(from_dir: &Path, to_path: &Path) -> Result<PathBuf> {
     let from_dir = scaffold_path_for_diff(from_dir)?;
     let to_path = scaffold_path_for_diff(to_path)?;
+    let from_anchor = path_anchor(&from_dir);
+    let to_anchor = path_anchor(&to_path);
+    ensure!(
+        from_anchor == to_anchor,
+        "cannot derive relative scaffold fixture_path across different path roots: {} -> {}",
+        from_dir.display(),
+        to_path.display()
+    );
     let from = normalized_path_components(&from_dir);
     let to = normalized_path_components(&to_path);
     let common_len = from
@@ -738,6 +746,18 @@ fn lexical_relative_path(from_dir: &Path, to_path: &Path) -> Result<PathBuf> {
     } else {
         Ok(output)
     }
+}
+
+fn path_anchor(path: &Path) -> Vec<String> {
+    path.components()
+        .take_while(|component| {
+            matches!(
+                component,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect()
 }
 
 fn scaffold_path_for_diff(path: &Path) -> Result<PathBuf> {
@@ -6268,6 +6288,18 @@ targets:
             "../relative_fixture_dir/sample.html"
         );
         Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lexical_relative_path_rejects_different_windows_roots() {
+        let error = lexical_relative_path(
+            Path::new(r"C:\geo-line-ranker\configs\crawler\sources"),
+            Path::new(r"D:\geo-line-ranker\storage\fixtures\crawler\sample.html"),
+        )
+        .expect_err("different roots");
+
+        assert!(format!("{error:#}").contains("different path roots"));
     }
 
     #[test]
