@@ -621,25 +621,14 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
             manifest_path.display(),
             file.logical_name
         );
+        let normalized_path =
+            normalize_fixture_manifest_path(&manifest_path, &file.logical_name, &file.path)?;
+        let normalized_path_key = manifest_path_value(&normalized_path);
         ensure!(
-            seen_paths.insert(file.path.clone()),
+            seen_paths.insert(normalized_path_key.clone()),
             "fixture manifest {} contains duplicate path {}",
             manifest_path.display(),
-            file.path
-        );
-        ensure!(
-            !Path::new(&file.path).is_absolute(),
-            "fixture manifest {} file {} path must be relative",
-            manifest_path.display(),
-            file.logical_name
-        );
-        ensure!(
-            !Path::new(&file.path)
-                .components()
-                .any(|component| matches!(component, Component::ParentDir)),
-            "fixture manifest {} file {} path must stay inside the fixture directory",
-            manifest_path.display(),
-            file.logical_name
+            normalized_path_key
         );
         ensure!(
             matches!(file.format.as_str(), "csv" | "ndjson"),
@@ -649,7 +638,7 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
             file.format
         );
 
-        let fixture_path = manifest_dir.join(&file.path);
+        let fixture_path = manifest_dir.join(&normalized_path);
         ensure!(
             fixture_path.is_file(),
             "fixture manifest {} file {} points to missing fixture file {}",
@@ -690,6 +679,53 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
         manifest_version: manifest.manifest_version,
         files,
     })
+}
+
+fn normalize_fixture_manifest_path(
+    manifest_path: &Path,
+    logical_name: &str,
+    raw_path: &str,
+) -> Result<PathBuf> {
+    let path = Path::new(raw_path);
+    ensure!(
+        !path.is_absolute(),
+        "fixture manifest {} file {} path must be relative",
+        manifest_path.display(),
+        logical_name
+    );
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(value) => normalized.push(value),
+            Component::ParentDir => {
+                anyhow::bail!(
+                    "fixture manifest {} file {} path must stay inside the fixture directory",
+                    manifest_path.display(),
+                    logical_name
+                );
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                anyhow::bail!(
+                    "fixture manifest {} file {} path must be relative",
+                    manifest_path.display(),
+                    logical_name
+                );
+            }
+        }
+    }
+    ensure!(
+        !normalized.as_os_str().is_empty(),
+        "fixture manifest {} file {} has an empty path",
+        manifest_path.display(),
+        logical_name
+    );
+    Ok(normalized)
+}
+
+fn manifest_path_value(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn pg_repository(settings: &AppSettings) -> Result<PgRepository> {
@@ -1340,7 +1376,7 @@ mod tests {
     use storage_postgres::EventCsvRecord;
 
     use super::{
-        generate_demo_jp_fixture, normalize_fallback_stage, run_fixture_doctor,
+        checksum_file, generate_demo_jp_fixture, normalize_fallback_stage, run_fixture_doctor,
         stored_response_order, validate_event_csv_records,
     };
 
@@ -1378,6 +1414,40 @@ files:
 
         let error = run_fixture_doctor(temp.path()).expect_err("checksum mismatch");
         assert!(format!("{error:#}").contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn fixture_doctor_rejects_duplicate_paths_after_normalization() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let fixture_path = temp.path().join("data.csv");
+        std::fs::write(&fixture_path, "id,name\n1,Example\n").expect("fixture");
+        let checksum = checksum_file(&fixture_path).expect("checksum");
+        std::fs::write(
+            temp.path().join("fixture_manifest.yaml"),
+            format!(
+                r#"
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+fixture_set_id: test
+files:
+  - logical_name: data_a
+    path: data.csv
+    format: csv
+    checksum_sha256: {checksum}
+    row_count: 1
+  - logical_name: data_b
+    path: ./data.csv
+    format: csv
+    checksum_sha256: {checksum}
+    row_count: 1
+"#
+            ),
+        )
+        .expect("manifest");
+
+        let error = run_fixture_doctor(temp.path()).expect_err("duplicate normalized path");
+        assert!(format!("{error:#}").contains("duplicate path data.csv"));
     }
 
     #[test]

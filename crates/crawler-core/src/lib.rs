@@ -1767,6 +1767,7 @@ fn validate_fixture_paths(
     expected_shape: Option<ParserExpectedShape>,
 ) -> Result<()> {
     let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let allowed_root = allowed_fixture_root(manifest_dir)?;
     for target in &manifest.targets {
         let Some(fixture_path) = &target.fixture_path else {
             continue;
@@ -1779,11 +1780,27 @@ fn validate_fixture_paths(
             target.logical_name,
             resolved_path.display()
         );
+        let canonical_path = resolved_path.canonicalize().with_context(|| {
+            format!(
+                "failed to canonicalize fixture_path {} for crawl manifest {} target {}",
+                resolved_path.display(),
+                manifest_path.display(),
+                target.logical_name
+            )
+        })?;
+        ensure!(
+            canonical_path.starts_with(&allowed_root),
+            "crawl manifest {} target {} fixture_path {} must stay under {}",
+            manifest_path.display(),
+            target.logical_name,
+            resolved_path.display(),
+            allowed_root.display()
+        );
         if let Some(expected_shape) = expected_shape {
-            let body = fs::read_to_string(&resolved_path)
-                .with_context(|| format!("failed to read fixture {}", resolved_path.display()))?;
+            let body = fs::read_to_string(&canonical_path)
+                .with_context(|| format!("failed to read fixture {}", canonical_path.display()))?;
             let check =
-                check_expected_shape(expected_shape, &body, fixture_content_type(&resolved_path));
+                check_expected_shape(expected_shape, &body, fixture_content_type(&canonical_path));
             ensure!(
                 check.matched,
                 "crawl manifest {} target {} fixture_path {} does not match expected_shape {}: {}",
@@ -1796,6 +1813,27 @@ fn validate_fixture_paths(
         }
     }
     Ok(())
+}
+
+fn allowed_fixture_root(manifest_dir: &Path) -> Result<PathBuf> {
+    let canonical_manifest_dir = manifest_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize crawl manifest dir {}",
+            manifest_dir.display()
+        )
+    })?;
+    for ancestor in canonical_manifest_dir.ancestors() {
+        let candidate = ancestor.join("storage").join("fixtures");
+        if candidate.is_dir() {
+            return candidate.canonicalize().with_context(|| {
+                format!(
+                    "failed to canonicalize fixture root {}",
+                    candidate.display()
+                )
+            });
+        }
+    }
+    Ok(canonical_manifest_dir)
 }
 
 fn selector(raw: &str) -> Result<Selector> {
@@ -3273,6 +3311,50 @@ targets:
 
         let error = lint_manifest_file(&manifest_path).expect_err("shape mismatch");
         assert!(format!("{error:#}").contains("does not match parser"));
+    }
+
+    #[test]
+    fn lint_rejects_fixture_path_outside_storage_fixtures() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let manifest_dir = root.join("configs").join("crawler").join("sources");
+        std::fs::create_dir_all(&manifest_dir).expect("manifest dir");
+        std::fs::create_dir_all(root.join("storage").join("fixtures").join("crawler"))
+            .expect("fixture root");
+        std::fs::write(
+            root.join("outside_fixture.html"),
+            "<html><body><h1>Outside</h1></body></html>",
+        )
+        .expect("outside fixture");
+        let manifest_path = manifest_dir.join("custom.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: crawler_source
+manifest_version: 1
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+expected_shape: html_heading_page
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+    fixture_path: ../../../outside_fixture.html
+"#,
+        )
+        .expect("manifest");
+
+        let error = lint_manifest_file(&manifest_path).expect_err("fixture outside root");
+        assert!(format!("{error:#}").contains("must stay under"));
     }
 
     #[test]
