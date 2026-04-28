@@ -1,5 +1,6 @@
 schema_version: 1
 kind: crawler_source
+manifest_version: 1
 source_id: utokyo-events
 source_name: University of Tokyo events feed
 source_maturity: live_ready

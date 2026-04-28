@@ -139,9 +139,7 @@ impl CrawlManifestKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CrawlSourceManifest {
-    #[serde(default = "default_crawl_manifest_schema_version")]
     pub schema_version: u32,
-    #[serde(default = "default_crawl_manifest_kind")]
     pub kind: CrawlManifestKind,
     pub source_id: String,
     pub source_name: String,
@@ -460,11 +458,15 @@ pub fn lint_manifest_dir(path: impl AsRef<Path>) -> Result<CrawlManifestLintSumm
     for manifest_path in list_yaml_paths(path)? {
         files.push(lint_manifest_file(manifest_path)?);
     }
-    ensure!(
-        !files.is_empty(),
-        "crawl manifest dir {} does not contain any yaml manifests",
-        path.display()
-    );
+    if files.is_empty() {
+        if path.is_file() {
+            bail!("crawl manifest path {} is not a yaml file", path.display());
+        }
+        bail!(
+            "crawl manifest path {} does not contain any yaml manifests",
+            path.display()
+        );
+    }
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(CrawlManifestLintSummary { files })
 }
@@ -2723,14 +2725,6 @@ fn default_manifest_version() -> u32 {
     1
 }
 
-fn default_crawl_manifest_schema_version() -> u32 {
-    CRAWL_MANIFEST_SCHEMA_VERSION
-}
-
-fn default_crawl_manifest_kind() -> CrawlManifestKind {
-    CrawlManifestKind::CrawlerSource
-}
-
 fn default_min_fetch_interval_ms() -> u64 {
     1_000
 }
@@ -2804,6 +2798,8 @@ mod tests {
         std::fs::write(
             &manifest_path,
             r#"
+schema_version: 1
+kind: crawler_source
 source_id: custom-example
 source_name: Custom example
 parser_key: single_title_page_v1
@@ -2831,6 +2827,8 @@ targets:
         std::fs::write(
             &manifest_path,
             r#"
+schema_version: 1
+kind: crawler_source
 source_id: custom-example
 source_name: Custom example
 parser_key: single_title_page_v1
@@ -2861,6 +2859,8 @@ targets:
         std::fs::write(
             &manifest_path,
             r#"
+schema_version: 1
+kind: crawler_source
 source_id: custom-example
 source_name: Custom example
 parser_key: single_title_page_v1
@@ -2893,6 +2893,8 @@ targets:
         std::fs::write(
             &manifest_path,
             r#"
+schema_version: 1
+kind: crawler_source
 source_id: custom-example
 source_name: Custom example
 source_maturity: live_ready
@@ -2925,6 +2927,8 @@ targets:
         std::fs::write(
             &manifest_path,
             r#"
+schema_version: 1
+kind: crawler_source
 source_id: custom-example
 source_name: Custom example
 parser_key: single_title_page_v1
@@ -2956,6 +2960,8 @@ targets:
         std::fs::write(
             &manifest_path,
             r#"
+schema_version: 1
+kind: crawler_source
 source_id: custom-example
 source_name: Custom example
 parser_key: single_title_page_v1
@@ -2980,6 +2986,65 @@ targets:
     }
 
     #[test]
+    fn manifest_rejects_missing_schema_contract() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("crawler.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("missing schema contract");
+        assert!(format!("{error:#}").contains("missing field `schema_version`"));
+    }
+
+    #[test]
+    fn manifest_rejects_missing_kind() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("crawler.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("missing kind");
+        assert!(format!("{error:#}").contains("missing field `kind`"));
+    }
+
+    #[test]
     fn lints_crawl_manifest_dir_recursively() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_dir = temp.path().join("configs").join("crawler").join("sources");
@@ -2989,6 +3054,7 @@ targets:
             r#"
 schema_version: 1
 kind: crawler_source
+manifest_version: 1
 source_id: custom-example
 source_name: Custom example
 parser_key: single_title_page_v1

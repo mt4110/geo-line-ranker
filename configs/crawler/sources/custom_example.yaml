@@ -1,5 +1,6 @@
 schema_version: 1
 kind: crawler_source
+manifest_version: 1
 source_id: custom-example
 source_name: Custom example crawler source
 source_maturity: parser_only

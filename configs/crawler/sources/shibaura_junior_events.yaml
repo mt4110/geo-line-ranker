@@ -1,5 +1,6 @@
 schema_version: 1
 kind: crawler_source
+manifest_version: 1
 source_id: shibaura-junior-events
 source_name: Shibaura Institute of Technology Junior High admissions events
 source_maturity: live_ready

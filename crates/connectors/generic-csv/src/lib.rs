@@ -27,9 +27,7 @@ impl SourceManifestKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SourceManifest {
-    #[serde(default = "default_source_manifest_schema_version")]
     pub schema_version: u32,
-    #[serde(default = "default_source_manifest_kind")]
     pub kind: SourceManifestKind,
     pub source_id: String,
     pub source_name: String,
@@ -131,11 +129,15 @@ pub fn lint_source_manifest_dir(path: impl AsRef<Path>) -> Result<SourceManifest
     for manifest_path in list_yaml_paths(path)? {
         files.push(lint_source_manifest_file(manifest_path)?);
     }
-    ensure!(
-        !files.is_empty(),
-        "source manifest dir {} does not contain any yaml manifests",
-        path.display()
-    );
+    if files.is_empty() {
+        if path.is_file() {
+            bail!("source manifest path {} is not a yaml file", path.display());
+        }
+        bail!(
+            "source manifest path {} does not contain any yaml manifests",
+            path.display()
+        );
+    }
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(SourceManifestLintSummary { files })
 }
@@ -250,14 +252,6 @@ fn default_manifest_version() -> u32 {
     1
 }
 
-fn default_source_manifest_schema_version() -> u32 {
-    SOURCE_MANIFEST_SCHEMA_VERSION
-}
-
-fn default_source_manifest_kind() -> SourceManifestKind {
-    SourceManifestKind::ImportSource
-}
-
 fn default_format() -> String {
     "csv".to_string()
 }
@@ -315,6 +309,8 @@ mod tests {
         fs::write(
             manifest_dir.join("example.yaml"),
             r#"
+schema_version: 1
+kind: import_source
 source_id: jp-school-codes
 source_name: Demo school codes
 files:
@@ -341,6 +337,8 @@ files:
         fs::write(
             &manifest_path,
             r#"
+schema_version: 1
+kind: import_source
 source_id: jp-school-codes
 source_name: Demo school codes
 unknown_key: true
@@ -353,6 +351,47 @@ files:
 
         let error = load_manifest(&manifest_path).expect_err("unknown key");
         assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
+    }
+
+    #[test]
+    fn rejects_missing_source_manifest_schema_contract() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+source_id: jp-school-codes
+source_name: Demo school codes
+files:
+  - logical_name: school_codes
+    path: demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("missing schema contract");
+        assert!(format!("{error:#}").contains("missing field `schema_version`"));
+    }
+
+    #[test]
+    fn rejects_missing_source_manifest_kind() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+source_id: jp-school-codes
+source_name: Demo school codes
+files:
+  - logical_name: school_codes
+    path: demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("missing kind");
+        assert!(format!("{error:#}").contains("missing field `kind`"));
     }
 
     #[test]

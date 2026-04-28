@@ -1,5 +1,6 @@
 schema_version: 1
 kind: crawler_source
+manifest_version: 1
 source_id: hachioji-junior-events
 source_name: Hachioji Gakuen Hachioji Junior High admissions events
 source_maturity: live_ready

@@ -1,5 +1,6 @@
 schema_version: 1
 kind: crawler_source
+manifest_version: 1
 source_id: keio-events
 source_name: Keio University events listing
 source_maturity: policy_blocked

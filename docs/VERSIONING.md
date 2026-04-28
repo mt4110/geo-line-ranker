@@ -13,11 +13,12 @@ field removals and reason-code renames follow `docs/DEPRECATION_POLICY.md`.
 
 ## Ranking Config
 
-Active ranking config files in `configs/ranking` use:
+Active ranking config files in `configs/ranking` use `schema_version` plus
+the file-specific `kind` from the table below. Example:
 
 ```yaml
 schema_version: 1
-kind: ranking_placement
+kind: ranking_schools
 ```
 
 The supported ranking config kinds are:
@@ -73,7 +74,8 @@ manifest_version: 1
 
 `schema_version` and `kind` identify the document shape. `manifest_version`
 remains the source-authored manifest revision recorded in import and crawler
-audit tables.
+audit tables. Committed manifests must declare these fields explicitly so lint
+can catch partially migrated files.
 
 Run import source manifest lint locally:
 
