@@ -10,6 +10,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 cargo run -p cli -- config lint
 cargo run -p cli -- source-manifest lint
+cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 ```
 
@@ -24,7 +26,8 @@ RUST_TEST_THREADS=1 cargo test --workspace
 
 Pull request CI keeps the static checks and test execution separate:
 
-- `rust-quality`: formatting and clippy for the full workspace.
+- `rust-quality`: formatting, clippy, config lint, manifest lint, and fixture
+  doctor checks for the full workspace.
 - `rust-unit-tests`: DB-free packages and the mock OpenSearch compatibility
   tests.
 - `rust-postgres-tests`: PostgreSQL/Redis-backed shards for `api`, `cli`,
@@ -65,6 +68,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 cargo run -p cli -- config lint
 cargo run -p cli -- source-manifest lint
+cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 just mvp-acceptance
 git diff --check
@@ -133,6 +138,11 @@ validation set visible:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
+cargo run -p cli -- config lint
+cargo run -p cli -- source-manifest lint
+cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
+cargo run -p crawler -- manifest lint
 just mvp-acceptance
 DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
 git diff --check

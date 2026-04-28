@@ -143,7 +143,6 @@ pub struct CrawlSourceManifest {
     pub kind: CrawlManifestKind,
     pub source_id: String,
     pub source_name: String,
-    #[serde(default = "default_manifest_version")]
     pub manifest_version: u32,
     pub parser_key: String,
     #[serde(default)]
@@ -168,6 +167,7 @@ pub struct CrawlManifestLintFile {
     pub kind: CrawlManifestKind,
     pub manifest_version: u32,
     pub parser_key: String,
+    pub expected_shape: Option<ParserExpectedShape>,
     pub target_count: usize,
 }
 
@@ -261,6 +261,8 @@ pub struct CrawlTarget {
     pub logical_name: String,
     pub url: String,
     #[serde(default)]
+    pub fixture_path: Option<String>,
+    #[serde(default)]
     pub school_id: Option<String>,
     #[serde(default)]
     pub event_category: Option<String>,
@@ -293,6 +295,7 @@ impl CrawlTarget {
         Ok(ResolvedCrawlTarget {
             logical_name: self.logical_name.clone(),
             url: self.url.clone(),
+            fixture_path: self.fixture_path.clone(),
             school_id,
             event_category: self
                 .event_category
@@ -313,6 +316,7 @@ impl CrawlTarget {
 pub struct ResolvedCrawlTarget {
     pub logical_name: String,
     pub url: String,
+    pub fixture_path: Option<String>,
     pub school_id: String,
     pub event_category: String,
     pub is_open_day: bool,
@@ -441,6 +445,26 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<CrawlSourceManifest> {
 pub fn lint_manifest_file(path: impl AsRef<Path>) -> Result<CrawlManifestLintFile> {
     let path = path.as_ref();
     let manifest = load_manifest(path)?;
+    let registry = ParserRegistry::default();
+    let parser = registry.get(&manifest.parser_key).with_context(|| {
+        format!(
+            "crawl manifest {} parser_key {} is not registered",
+            path.display(),
+            manifest.parser_key
+        )
+    })?;
+    if let Some(manifest_shape) = manifest.expected_shape {
+        ensure!(
+            manifest_shape == parser.expected_shape(),
+            "crawl manifest {} expected_shape {} does not match parser {} expected_shape {}",
+            path.display(),
+            manifest_shape,
+            parser.key(),
+            parser.expected_shape()
+        );
+    }
+    let expected_shape = manifest.effective_expected_shape(Some(parser));
+    validate_fixture_paths(path, &manifest, expected_shape)?;
     Ok(CrawlManifestLintFile {
         path: path.to_path_buf(),
         source_id: manifest.source_id,
@@ -448,6 +472,7 @@ pub fn lint_manifest_file(path: impl AsRef<Path>) -> Result<CrawlManifestLintFil
         kind: manifest.kind,
         manifest_version: manifest.manifest_version,
         parser_key: manifest.parser_key,
+        expected_shape,
         target_count: manifest.targets.len(),
     })
 }
@@ -1709,8 +1734,59 @@ fn validate_manifest(manifest: &CrawlSourceManifest, path: &Path) -> Result<()> 
             path.display(),
             target.logical_name
         );
+        if let Some(fixture_path) = &target.fixture_path {
+            ensure!(
+                !fixture_path.trim().is_empty(),
+                "crawl manifest {} target {} has an empty fixture_path",
+                path.display(),
+                target.logical_name
+            );
+            ensure!(
+                !Path::new(fixture_path).is_absolute(),
+                "crawl manifest {} target {} fixture_path must be relative",
+                path.display(),
+                target.logical_name
+            );
+        }
     }
 
+    Ok(())
+}
+
+fn validate_fixture_paths(
+    manifest_path: &Path,
+    manifest: &CrawlSourceManifest,
+    expected_shape: Option<ParserExpectedShape>,
+) -> Result<()> {
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    for target in &manifest.targets {
+        let Some(fixture_path) = &target.fixture_path else {
+            continue;
+        };
+        let resolved_path = manifest_dir.join(fixture_path);
+        ensure!(
+            resolved_path.is_file(),
+            "crawl manifest {} target {} fixture_path {} does not exist",
+            manifest_path.display(),
+            target.logical_name,
+            resolved_path.display()
+        );
+        if let Some(expected_shape) = expected_shape {
+            let body = fs::read_to_string(&resolved_path)
+                .with_context(|| format!("failed to read fixture {}", resolved_path.display()))?;
+            let check =
+                check_expected_shape(expected_shape, &body, fixture_content_type(&resolved_path));
+            ensure!(
+                check.matched,
+                "crawl manifest {} target {} fixture_path {} does not match expected_shape {}: {}",
+                manifest_path.display(),
+                target.logical_name,
+                resolved_path.display(),
+                expected_shape,
+                check.summary
+            );
+        }
+    }
     Ok(())
 }
 
@@ -2721,12 +2797,16 @@ fn slugify(value: &str) -> String {
         .collect()
 }
 
-fn default_manifest_version() -> u32 {
-    1
-}
-
 fn default_min_fetch_interval_ms() -> u64 {
     1_000
+}
+
+pub fn fixture_content_type(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("json") => Some("application/json"),
+        Some("html" | "htm") => Some("text/html"),
+        _ => None,
+    }
 }
 
 fn default_live_fetch_enabled() -> bool {
@@ -2778,8 +2858,9 @@ fn is_yaml_path(path: &Path) -> bool {
 mod tests {
     use super::{
         check_expected_shape, dedupe_events, finalize_parsed_events, lint_manifest_dir,
-        load_manifest, parse_placement_kind, ParseInput, ParsedEventSeed, ParserExpectedShape,
-        ParserRegistry, ResolvedCrawlTarget, SourceMaturity, UTOKYO_EVENTS_JSON_LIMIT,
+        lint_manifest_file, load_manifest, parse_placement_kind, ParseInput, ParsedEventSeed,
+        ParserExpectedShape, ParserRegistry, ResolvedCrawlTarget, SourceMaturity,
+        UTOKYO_EVENTS_JSON_LIMIT,
     };
     use domain::PlacementKind;
 
@@ -2802,6 +2883,7 @@ schema_version: 1
 kind: crawler_source
 source_id: custom-example
 source_name: Custom example
+manifest_version: 1
 parser_key: single_title_page_v1
 allowlist:
   allowed_domains: ["example.com"]
@@ -2831,6 +2913,7 @@ schema_version: 1
 kind: crawler_source
 source_id: custom-example
 source_name: Custom example
+manifest_version: 1
 parser_key: single_title_page_v1
 allowlist:
   allowed_domains: ["example.com"]
@@ -2863,6 +2946,7 @@ schema_version: 1
 kind: crawler_source
 source_id: custom-example
 source_name: Custom example
+manifest_version: 1
 parser_key: single_title_page_v1
 allowlist:
   allowed_domains: ["example.com"]
@@ -2898,6 +2982,7 @@ kind: crawler_source
 source_id: custom-example
 source_name: Custom example
 source_maturity: live_ready
+manifest_version: 1
 parser_key: single_title_page_v1
 allowlist:
   allowed_domains: ["example.com"]
@@ -2931,6 +3016,7 @@ schema_version: 1
 kind: crawler_source
 source_id: custom-example
 source_name: Custom example
+manifest_version: 1
 parser_key: single_title_page_v1
 allowlist:
   allowed_domains: ["example.com"]
@@ -2964,6 +3050,7 @@ schema_version: 1
 kind: crawler_source
 source_id: custom-example
 source_name: Custom example
+manifest_version: 1
 parser_key: single_title_page_v1
 unknown_key: true
 allowlist:
@@ -3024,6 +3111,7 @@ targets:
 schema_version: 1
 source_id: custom-example
 source_name: Custom example
+manifest_version: 1
 parser_key: single_title_page_v1
 allowlist:
   allowed_domains: ["example.com"]
@@ -3042,6 +3130,37 @@ targets:
 
         let error = load_manifest(&manifest_path).expect_err("missing kind");
         assert!(format!("{error:#}").contains("missing field `kind`"));
+    }
+
+    #[test]
+    fn manifest_rejects_missing_manifest_version() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("crawler.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: crawler_source
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("missing manifest_version");
+        assert!(format!("{error:#}").contains("missing field `manifest_version`"));
     }
 
     #[test]
@@ -3077,6 +3196,75 @@ targets:
         assert_eq!(summary.files.len(), 1);
         assert_eq!(summary.files[0].source_id, "custom-example");
         assert_eq!(summary.files[0].target_count, 1);
+        assert_eq!(
+            summary.files[0].expected_shape,
+            Some(ParserExpectedShape::HtmlHeadingPage)
+        );
+    }
+
+    #[test]
+    fn lint_rejects_unknown_parser_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("custom.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: crawler_source
+manifest_version: 1
+source_id: custom-example
+source_name: Custom example
+parser_key: missing_parser_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let error = lint_manifest_file(&manifest_path).expect_err("unknown parser");
+        assert!(format!("{error:#}").contains("parser_key missing_parser_v1 is not registered"));
+    }
+
+    #[test]
+    fn lint_rejects_expected_shape_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("custom.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: crawler_source
+manifest_version: 1
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+expected_shape: json_feed
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let error = lint_manifest_file(&manifest_path).expect_err("shape mismatch");
+        assert!(format!("{error:#}").contains("does not match parser"));
     }
 
     #[test]
@@ -3100,6 +3288,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "example_home".to_string(),
             url: "https://example.com/".to_string(),
+            fixture_path: None,
             school_id: "school_seaside".to_string(),
             event_category: "open_campus".to_string(),
             is_open_day: true,
@@ -3129,6 +3318,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "example_cards".to_string(),
             url: "https://example.com/events".to_string(),
+            fixture_path: None,
             school_id: "school_default".to_string(),
             event_category: "open_campus".to_string(),
             is_open_day: true,
@@ -3173,6 +3363,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "example_cards".to_string(),
             url: "https://example.com/events".to_string(),
+            fixture_path: None,
             school_id: "school_seaside".to_string(),
             event_category: "open_campus".to_string(),
             is_open_day: true,
@@ -3236,6 +3427,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "focus_events_json".to_string(),
             url: "https://www.u-tokyo.ac.jp/focus/ja/events/events.json".to_string(),
+            fixture_path: None,
             school_id: "school_utokyo".to_string(),
             event_category: "general".to_string(),
             is_open_day: false,
@@ -3310,6 +3502,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "focus_events_json".to_string(),
             url: "https://www.u-tokyo.ac.jp/focus/ja/events/events.json".to_string(),
+            fixture_path: None,
             school_id: "school_utokyo".to_string(),
             event_category: "general".to_string(),
             is_open_day: false,
@@ -3363,6 +3556,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "event_page_1".to_string(),
             url: "https://www.keio.ac.jp/ja/event/".to_string(),
+            fixture_path: None,
             school_id: "school_keio".to_string(),
             event_category: "general".to_string(),
             is_open_day: false,
@@ -3412,6 +3606,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "school_tour_page".to_string(),
             url: "https://www.jh.aoyama.ed.jp/admission/explanation.html".to_string(),
+            fixture_path: None,
             school_id: "school_aoyama_gakuin_junior".to_string(),
             event_category: "admission_event".to_string(),
             is_open_day: true,
@@ -3473,6 +3668,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "junior_event_page".to_string(),
             url: "https://www.fzk.shibaura-it.ac.jp/admission/junior/event/".to_string(),
+            fixture_path: None,
             school_id: "school_shibaura_it_junior".to_string(),
             event_category: "admission_event".to_string(),
             is_open_day: false,
@@ -3568,6 +3764,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "junior_event_page".to_string(),
             url: "https://www.fzk.shibaura-it.ac.jp/admission/junior/event/".to_string(),
+            fixture_path: None,
             school_id: "school_shibaura_it_junior".to_string(),
             event_category: "admission_event".to_string(),
             is_open_day: false,
@@ -3617,6 +3814,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "junior_session_page".to_string(),
             url: "https://www.hachioji.ed.jp/junr/exam/session/".to_string(),
+            fixture_path: None,
             school_id: "school_hachioji_gakuen_junior".to_string(),
             event_category: "admission_event".to_string(),
             is_open_day: false,
@@ -3661,6 +3859,7 @@ targets:
         let target = ResolvedCrawlTarget {
             logical_name: "junior_info_session_page".to_string(),
             url: "https://www.yokohama.hs.nihon-u.ac.jp/junior/info-session/".to_string(),
+            fixture_path: None,
             school_id: "school_nihon_university_junior".to_string(),
             event_category: "admission_event".to_string(),
             is_open_day: false,

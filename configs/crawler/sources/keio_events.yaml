@@ -29,5 +29,7 @@ defaults:
 targets:
   - logical_name: event_page_1
     url: https://www.keio.ac.jp/ja/event/
+    fixture_path: ../../../storage/fixtures/crawler/keio_event_listing_page_1.html
   - logical_name: event_page_2
     url: https://www.keio.ac.jp/ja/event/?page=2
+    fixture_path: ../../../storage/fixtures/crawler/keio_event_listing_page_2.html

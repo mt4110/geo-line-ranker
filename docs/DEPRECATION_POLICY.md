@@ -59,10 +59,14 @@ underlying feature is removed, document the behavior change and update
   `kind`.
 - Import and crawler manifests carry `schema_version: 1` plus `kind`, while
   keeping `manifest_version` for audit history.
+- Committed fixture sets carry `schema_version: 1`, `kind: fixture_set`, and
+  `manifest_version: 1` plus per-file checksum and row-count metadata.
 - Local lint commands cover the active config and manifest sets:
 
 ```bash
 cargo run -p cli -- config lint
 cargo run -p cli -- source-manifest lint
+cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 ```

@@ -27,3 +27,4 @@ defaults:
 targets:
   - logical_name: junior_info_session_page
     url: https://www.yokohama.hs.nihon-u.ac.jp/junior/info-session/
+    fixture_path: ../../../storage/fixtures/crawler/nihon_university_junior_info_session.html

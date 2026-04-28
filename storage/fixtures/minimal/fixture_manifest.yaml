@@ -1,0 +1,31 @@
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+fixture_set_id: minimal
+description: Minimal deterministic SQL-only seed fixture.
+files:
+  - logical_name: stations
+    path: stations.csv
+    format: csv
+    checksum_sha256: 85aa8e8dacfd26b6d522ae98c2914bcf0a4f376aff80cb73ecf53b6328937574
+    row_count: 6
+  - logical_name: schools
+    path: schools.csv
+    format: csv
+    checksum_sha256: 27cd9a663c3bb90bb0b83b5043c3ffa818efd111a7e0d9c4b0c959f9983f568b
+    row_count: 10
+  - logical_name: events
+    path: events.csv
+    format: csv
+    checksum_sha256: f83832b5a8802579753467a80cb921cfd6f8c73fa0863703231c22663ddb79a4
+    row_count: 5
+  - logical_name: school_station_links
+    path: school_station_links.csv
+    format: csv
+    checksum_sha256: f0e7de6fdffda276b2f88119eed996fe13785070252ffe669c42e7a93bd392c7
+    row_count: 7
+  - logical_name: user_events
+    path: user_events.ndjson
+    format: ndjson
+    checksum_sha256: ca4e4c9287fa913a30e37d7c10ad1572bf149d45aaae4cbc5f49817cd6d2e552
+    row_count: 2

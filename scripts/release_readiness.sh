@@ -44,6 +44,11 @@ Required local validation:
   cargo fmt --all --check
   cargo clippy --workspace --all-targets --all-features -- -D warnings
   cargo test --workspace
+  cargo run -p cli -- config lint
+  cargo run -p cli -- source-manifest lint
+  cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+  cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
+  cargo run -p crawler -- manifest lint
   just mvp-acceptance
   git diff --check
 

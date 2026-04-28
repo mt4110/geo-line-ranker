@@ -27,5 +27,6 @@ defaults:
 targets:
   - logical_name: school_tour_page
     url: https://www.jh.aoyama.ed.jp/admission/explanation.html
+    fixture_path: ../../../storage/fixtures/crawler/aoyama_junior_school_tour.html
 
 # Fixture seed: storage/fixtures/crawler/aoyama_junior_school_tour.html

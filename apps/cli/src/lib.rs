@@ -1,6 +1,7 @@
 use std::{
+    collections::BTreeSet,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use anyhow::{ensure, Context, Result};
@@ -8,6 +9,7 @@ use api_contracts::{FallbackStageDto, RecommendationRequest, RecommendationRespo
 use cache::RecommendationCache;
 use chrono::{DateTime, FixedOffset, NaiveDate};
 use config::{AppSettings, RankingProfiles};
+use csv::Reader;
 use generic_csv::{
     count_csv_rows, load_manifest, read_csv_rows, stage_raw_files, stage_single_csv_file,
     PreparedSourceFile, SourceFileSpec, SourceManifest, SourceManifestKind,
@@ -20,7 +22,9 @@ use jp_school::{
     SCHOOL_GEODATA_PARSER_VERSION,
 };
 use ranking::RankingEngine;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use storage::{JobType, NewJob, RecommendationRepository, SnapshotTuning};
 use storage_opensearch::ProjectionSyncService;
 use storage_postgres::{
@@ -33,6 +37,7 @@ use storage_postgres::{
 
 const EVENT_CSV_PARSER_VERSION: &str = "event-csv-v1";
 const EVENT_CSV_SOURCE_ID: &str = "event-csv";
+const FIXTURE_SET_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ImportTarget {
@@ -108,6 +113,59 @@ pub struct ReplayEvaluationCase {
     pub expected_order: Vec<String>,
     pub actual_order: Vec<String>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FixtureManifestKind {
+    FixtureSet,
+}
+
+impl FixtureManifestKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FixtureSet => "fixture_set",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureSetManifest {
+    pub schema_version: u32,
+    pub kind: FixtureManifestKind,
+    pub manifest_version: u32,
+    pub fixture_set_id: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub files: Vec<FixtureFileManifest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureFileManifest {
+    pub logical_name: String,
+    pub path: String,
+    pub format: String,
+    pub checksum_sha256: String,
+    pub row_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixtureDoctorSummary {
+    pub manifest_path: PathBuf,
+    pub fixture_set_id: String,
+    pub manifest_version: u32,
+    pub files: Vec<FixtureDoctorFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixtureDoctorFile {
+    pub logical_name: String,
+    pub path: PathBuf,
+    pub format: String,
+    pub checksum_sha256: String,
+    pub row_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -501,6 +559,139 @@ pub async fn run_event_csv_import(
     }
 }
 
+pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary> {
+    let manifest_path = resolve_fixture_manifest_path(path.as_ref());
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let raw = fs::read_to_string(&manifest_path).with_context(|| {
+        format!(
+            "failed to read fixture manifest {}",
+            manifest_path.display()
+        )
+    })?;
+    let manifest: FixtureSetManifest = serde_yaml::from_str(&raw).with_context(|| {
+        format!(
+            "failed to parse fixture manifest {}",
+            manifest_path.display()
+        )
+    })?;
+
+    ensure!(
+        manifest.schema_version == FIXTURE_SET_SCHEMA_VERSION,
+        "fixture manifest {} schema_version {} is unsupported; expected {}",
+        manifest_path.display(),
+        manifest.schema_version,
+        FIXTURE_SET_SCHEMA_VERSION
+    );
+    ensure!(
+        manifest.kind == FixtureManifestKind::FixtureSet,
+        "fixture manifest {} kind {} is invalid; expected {}",
+        manifest_path.display(),
+        manifest.kind.as_str(),
+        FixtureManifestKind::FixtureSet.as_str()
+    );
+    ensure!(
+        !manifest.fixture_set_id.trim().is_empty(),
+        "fixture manifest {} is missing fixture_set_id",
+        manifest_path.display()
+    );
+    ensure!(
+        !manifest.files.is_empty(),
+        "fixture manifest {} does not list any files",
+        manifest_path.display()
+    );
+
+    let mut seen_logical_names = BTreeSet::new();
+    let mut seen_paths = BTreeSet::new();
+    let mut files = Vec::new();
+    for file in &manifest.files {
+        ensure!(
+            !file.logical_name.trim().is_empty(),
+            "fixture manifest {} contains a file with empty logical_name",
+            manifest_path.display()
+        );
+        ensure!(
+            seen_logical_names.insert(file.logical_name.clone()),
+            "fixture manifest {} contains duplicate logical_name {}",
+            manifest_path.display(),
+            file.logical_name
+        );
+        ensure!(
+            !file.path.trim().is_empty(),
+            "fixture manifest {} file {} has an empty path",
+            manifest_path.display(),
+            file.logical_name
+        );
+        ensure!(
+            seen_paths.insert(file.path.clone()),
+            "fixture manifest {} contains duplicate path {}",
+            manifest_path.display(),
+            file.path
+        );
+        ensure!(
+            !Path::new(&file.path).is_absolute(),
+            "fixture manifest {} file {} path must be relative",
+            manifest_path.display(),
+            file.logical_name
+        );
+        ensure!(
+            !Path::new(&file.path)
+                .components()
+                .any(|component| matches!(component, Component::ParentDir)),
+            "fixture manifest {} file {} path must stay inside the fixture directory",
+            manifest_path.display(),
+            file.logical_name
+        );
+        ensure!(
+            matches!(file.format.as_str(), "csv" | "ndjson"),
+            "fixture manifest {} file {} uses unsupported format {}; expected csv or ndjson",
+            manifest_path.display(),
+            file.logical_name,
+            file.format
+        );
+
+        let fixture_path = manifest_dir.join(&file.path);
+        ensure!(
+            fixture_path.is_file(),
+            "fixture manifest {} file {} points to missing fixture file {}",
+            manifest_path.display(),
+            file.logical_name,
+            fixture_path.display()
+        );
+        let checksum_sha256 = checksum_file(&fixture_path)?;
+        ensure!(
+            checksum_sha256 == file.checksum_sha256,
+            "fixture manifest {} file {} checksum mismatch: expected {}, got {}",
+            manifest_path.display(),
+            file.logical_name,
+            file.checksum_sha256,
+            checksum_sha256
+        );
+        let row_count = count_fixture_rows(&fixture_path, &file.format)?;
+        ensure!(
+            row_count == file.row_count,
+            "fixture manifest {} file {} row_count mismatch: expected {}, got {}",
+            manifest_path.display(),
+            file.logical_name,
+            file.row_count,
+            row_count
+        );
+        files.push(FixtureDoctorFile {
+            logical_name: file.logical_name.clone(),
+            path: fixture_path,
+            format: file.format.clone(),
+            checksum_sha256,
+            row_count,
+        });
+    }
+
+    Ok(FixtureDoctorSummary {
+        manifest_path,
+        fixture_set_id: manifest.fixture_set_id,
+        manifest_version: manifest.manifest_version,
+        files,
+    })
+}
+
 fn pg_repository(settings: &AppSettings) -> Result<PgRepository> {
     PgRepository::with_pool_max_size(
         settings.database_url.clone(),
@@ -734,30 +925,115 @@ pub fn generate_demo_jp_fixture(output_dir: impl AsRef<Path>) -> Result<Vec<Path
 
     let files = vec![
         (
+            "school_codes",
             output_dir.join("jp_school_codes.csv"),
             "school_code,name,prefecture_name,city_name,school_type\n13101A,Minato Science High,Tokyo,Minato,high_school\n13101B,Harbor Commerce High,Tokyo,Minato,high_school\n13103A,Shinagawa Technical College,Tokyo,Shinagawa,college\n",
         ),
         (
+            "school_geodata",
             output_dir.join("jp_school_geodata.csv"),
             "school_code,name,prefecture_name,city_name,address,school_type,latitude,longitude\n13101A,Minato Science High,Tokyo,Minato,芝浦1-1-1,high_school,35.6412,139.7487\n13101B,Harbor Commerce High,Tokyo,Minato,海岸1-2-3,high_school,35.6376,139.7604\n13103A,Shinagawa Technical College,Tokyo,Shinagawa,港南2-16-1,college,35.6289,139.7393\n",
         ),
         (
+            "rail_stations",
             output_dir.join("jp_rail_stations.csv"),
             "station_code,station_name,line_name,prefecture_name,latitude,longitude\n1130217,Tamachi,JR Yamanote Line,Tokyo,35.6456,139.7476\n1130218,Shinagawa,JR Yamanote Line,Tokyo,35.6285,139.7388\n1130104,Shimbashi,JR Yamanote Line,Tokyo,35.6663,139.7587\n",
         ),
         (
+            "postal_codes",
             output_dir.join("jp_postal_codes.csv"),
             "postal_code,prefecture_name,city_name,town_name\n1080023,Tokyo,Minato,Shibaura\n1050022,Tokyo,Minato,Kaigan\n1080075,Tokyo,Minato,Konan\n",
         ),
     ];
 
     let mut written = Vec::new();
-    for (path, contents) in files {
+    let mut manifest_files = Vec::new();
+    for (logical_name, path, contents) in files {
         fs::write(&path, contents)
             .with_context(|| format!("failed to write {}", path.display()))?;
+        manifest_files.push(fixture_file_manifest(logical_name, &path, "csv")?);
         written.push(path);
     }
+    let manifest_path = output_dir.join("fixture_manifest.yaml");
+    write_fixture_manifest(
+        &manifest_path,
+        "demo_jp",
+        "Small JP adapter fixture set for deterministic import smoke tests.",
+        manifest_files,
+    )?;
+    written.push(manifest_path);
     Ok(written)
+}
+
+fn resolve_fixture_manifest_path(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        path.join("fixture_manifest.yaml")
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn fixture_file_manifest(
+    logical_name: &str,
+    path: &Path,
+    format: &str,
+) -> Result<FixtureFileManifest> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("fixture file name is invalid for {}", path.display()))?;
+    Ok(FixtureFileManifest {
+        logical_name: logical_name.to_string(),
+        path: file_name.to_string(),
+        format: format.to_string(),
+        checksum_sha256: checksum_file(path)?,
+        row_count: count_fixture_rows(path, format)?,
+    })
+}
+
+fn write_fixture_manifest(
+    manifest_path: &Path,
+    fixture_set_id: &str,
+    description: &str,
+    files: Vec<FixtureFileManifest>,
+) -> Result<()> {
+    let manifest = FixtureSetManifest {
+        schema_version: FIXTURE_SET_SCHEMA_VERSION,
+        kind: FixtureManifestKind::FixtureSet,
+        manifest_version: 1,
+        fixture_set_id: fixture_set_id.to_string(),
+        description: Some(description.to_string()),
+        files,
+    };
+    let raw = serde_yaml::to_string(&manifest)?;
+    fs::write(manifest_path, raw)
+        .with_context(|| format!("failed to write {}", manifest_path.display()))
+}
+
+fn checksum_file(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(&bytes)))
+}
+
+fn count_fixture_rows(path: &Path, format: &str) -> Result<u64> {
+    match format {
+        "csv" => {
+            let mut reader = Reader::from_path(path)
+                .with_context(|| format!("failed to open fixture CSV {}", path.display()))?;
+            let mut count = 0_u64;
+            for row in reader.records() {
+                row.with_context(|| format!("failed to parse {}", path.display()))?;
+                count += 1;
+            }
+            Ok(count)
+        }
+        "ndjson" => {
+            let raw = fs::read_to_string(path)
+                .with_context(|| format!("failed to read fixture NDJSON {}", path.display()))?;
+            Ok(raw.lines().filter(|line| !line.trim().is_empty()).count() as u64)
+        }
+        _ => anyhow::bail!("unsupported fixture format {format}"),
+    }
 }
 
 pub fn format_summary(summary: &CommandSummary) -> String {
@@ -771,6 +1047,27 @@ pub fn format_summary(summary: &CommandSummary) -> String {
             summary.label, summary.row_count, summary.report_count
         ),
     }
+}
+
+pub fn format_fixture_doctor_summary(summary: &FixtureDoctorSummary) -> String {
+    let mut lines = vec![format!(
+        "fixture doctor ok: fixture_set_id={} manifest_version={} files={}",
+        summary.fixture_set_id,
+        summary.manifest_version,
+        summary.files.len()
+    )];
+    lines.push(format!("manifest: {}", summary.manifest_path.display()));
+    lines.extend(summary.files.iter().map(|file| {
+        format!(
+            "- {} format={} rows={} checksum_sha256={} path={}",
+            file.logical_name,
+            file.format,
+            file.row_count,
+            file.checksum_sha256,
+            file.path.display()
+        )
+    }));
+    lines.join("\n")
 }
 
 pub fn format_snapshot_refresh_summary(summary: &SnapshotRefreshSummary) -> String {
@@ -1043,16 +1340,44 @@ mod tests {
     use storage_postgres::EventCsvRecord;
 
     use super::{
-        generate_demo_jp_fixture, normalize_fallback_stage, stored_response_order,
-        validate_event_csv_records,
+        generate_demo_jp_fixture, normalize_fallback_stage, run_fixture_doctor,
+        stored_response_order, validate_event_csv_records,
     };
 
     #[test]
     fn writes_demo_fixture_files() {
         let temp = tempfile::tempdir().expect("tempdir");
         let written = generate_demo_jp_fixture(temp.path()).expect("fixture generation");
-        assert_eq!(written.len(), 4);
+        assert_eq!(written.len(), 5);
         assert!(written.iter().all(|path| path.exists()));
+        let summary = run_fixture_doctor(temp.path()).expect("fixture doctor");
+        assert_eq!(summary.fixture_set_id, "demo_jp");
+        assert_eq!(summary.files.len(), 4);
+    }
+
+    #[test]
+    fn fixture_doctor_rejects_checksum_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("data.csv"), "id,name\n1,Example\n").expect("fixture");
+        std::fs::write(
+            temp.path().join("fixture_manifest.yaml"),
+            r#"
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+fixture_set_id: test
+files:
+  - logical_name: data
+    path: data.csv
+    format: csv
+    checksum_sha256: deadbeef
+    row_count: 1
+"#,
+        )
+        .expect("manifest");
+
+        let error = run_fixture_doctor(temp.path()).expect_err("checksum mismatch");
+        assert!(format!("{error:#}").contains("checksum mismatch"));
     }
 
     #[test]

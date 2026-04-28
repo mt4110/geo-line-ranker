@@ -44,6 +44,10 @@ crawler:
 crawler-health:
   cargo run -p crawler -- health --manifest configs/crawler/sources/custom_example.yaml
 
+fixture-doctor:
+  cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+  cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
+
 mvp-env:
   [[ -f .env ]] || cp .env.example .env
 

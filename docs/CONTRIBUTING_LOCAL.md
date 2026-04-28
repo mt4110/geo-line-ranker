@@ -36,6 +36,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 cargo run -p cli -- config lint
 cargo run -p cli -- source-manifest lint
+cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 ```
 
@@ -61,6 +63,7 @@ cargo run -p cli -- seed example
 
 ```bash
 cargo run -p cli -- fixtures generate-demo-jp
+cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p cli -- import jp-rail --manifest storage/sources/jp_rail/example.yaml
 cargo run -p cli -- import jp-postal --manifest storage/sources/jp_postal/example.yaml
 cargo run -p cli -- import jp-school-codes --manifest storage/sources/jp_school/example.yaml

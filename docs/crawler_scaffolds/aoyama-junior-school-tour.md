@@ -11,6 +11,7 @@
 - target_url: `https://www.jh.aoyama.ed.jp/admission/explanation.html`
 - manifest: `configs/crawler/sources/aoyama-junior-school-tour.yaml`
 - fixture: `storage/fixtures/crawler/aoyama_junior_school_tour.html`
+- target fixture_path: `../../../storage/fixtures/crawler/aoyama_junior_school_tour.html`
 
 ## Verification
 
@@ -24,6 +25,8 @@
 - `robots.txt` resolves and is plain text, not HTML.
 - `terms_url` resolves without auth or soft blocks.
 - `expected_shape` matches the live target or the committed fixture.
+- `fixture_path` still resolves from the manifest directory to the committed
+  fixture.
 - `school_aoyama_gakuin_junior` exists in `schools` for the environment you test against.
 - `source_maturity` and `live_fetch_enabled` still say the same thing operationally.
 

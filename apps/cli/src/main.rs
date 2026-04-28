@@ -2,11 +2,12 @@ use std::{fs, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use cli::{
-    format_job_enqueue_summary, format_job_inspection, format_job_list,
-    format_job_mutation_summary, format_replay_evaluation_summary, format_snapshot_refresh_summary,
-    format_summary, generate_demo_jp_fixture, run_derive_school_station_links,
-    run_event_csv_import, run_import_command, run_job_due, run_job_enqueue, run_job_inspect,
-    run_job_list, run_job_retry, run_replay_evaluate, run_snapshot_refresh, ImportTarget,
+    format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
+    format_job_list, format_job_mutation_summary, format_replay_evaluation_summary,
+    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture,
+    run_derive_school_station_links, run_event_csv_import, run_fixture_doctor, run_import_command,
+    run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
+    run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
 use config::{lint_ranking_config_dir, AppSettings, RankingConfigLintSummary};
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
@@ -119,6 +120,14 @@ enum FixtureCommand {
     GenerateDemoJp {
         #[arg(default_value = "storage/fixtures/demo_jp")]
         output: PathBuf,
+    },
+    Doctor {
+        #[arg(
+            long,
+            default_value = "storage/fixtures/minimal",
+            help = "Fixture directory or fixture_manifest.yaml to verify."
+        )]
+        path: PathBuf,
     },
 }
 
@@ -251,6 +260,10 @@ async fn main() -> anyhow::Result<()> {
             FixtureCommand::GenerateDemoJp { output } => {
                 let files = generate_demo_jp_fixture(output)?;
                 println!("generated {} fixture files", files.len());
+            }
+            FixtureCommand::Doctor { path } => {
+                let summary = run_fixture_doctor(path)?;
+                println!("{}", format_fixture_doctor_summary(&summary));
             }
         },
         Command::Index { target } => match target {
