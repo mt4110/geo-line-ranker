@@ -142,6 +142,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 - [Documentation Index](docs/README.md)
 - [School Event JP Reference](examples/school-event-jp/README.md)
 - [Reason Catalog](docs/REASON_CATALOG.md)
+- [v0.2.1 to v0.2.5 Design Plan](docs/V0_2_1_TO_V0_2_5_DESIGN_PLAN.md)
 - [非エンジニア向け設計ドキュメント](docs/design_document/README_JA.md)
 - [Contributor Rules](AGENTS.md)
 - [Local Contributing Guide](docs/CONTRIBUTING_LOCAL.md)
