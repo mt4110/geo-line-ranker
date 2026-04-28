@@ -42,7 +42,7 @@ still owns its exact code, docs, fixtures, and validation evidence.
 |---|---|---|---|
 | v0.2.1 | Module boundary hardening | Large modules are split into reviewable files with behavior preserved. | No public API changes |
 | v0.2.2 | Contributor workflow and CI | Local commands, docs routing, Node/TS/example build checks, docs checks, and OpenAPI drift checks are visible. | No public API changes |
-| v0.2.3 | Config and versioning contract | Config files are versioned, lintable, and documented with a deprecation policy. | No public API changes |
+| v0.2.3 | Config and versioning contract | Config files are versioned, can be linted, and are documented with a deprecation policy. | No public API changes |
 | v0.2.4 | Profile-pack contract | The extension boundary, manifest shape, reason layering, and validation commands are documented and scaffolded. | Additive only |
 | v0.2.5 | Reference profile separation | School/event JP starts moving behind the profile boundary, with a generic demo path kept small and deterministic. | Additive only |
 
