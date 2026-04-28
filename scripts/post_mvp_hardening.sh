@@ -21,7 +21,7 @@ BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git_value unknown rev-parse --short HEAD)"
 
 cat <<EOF
-[post-mvp-hardening] evidence review loop command plan
+[post-mvp-hardening] maintenance command plan
 
 Repository:
   root: $ROOT_DIR
@@ -36,24 +36,10 @@ Fixed public MVP boundary:
   fixed gate: just mvp-acceptance
   outside gate: crawler graduation, full mode, OpenSearch, managed infrastructure
 
-Primary guides:
-  docs/POST_MVP_HARDENING.md
-  docs/OPTIONAL_EVIDENCE_INTAKE.md for crawler/full-mode/infra/doctor intake
-  docs/OPTIONAL_EVIDENCE_GRADUATION.md for crawler/full-mode/infra decisions
-  docs/OPTIONAL_EVIDENCE_PACKETS.md for issue, PR, and review-note packets
-
-Evidence chain:
-  docs/PUBLIC_MVP_RELEASE_READINESS.md
-  docs/POST_LAUNCH_RUNBOOK.md
-  docs/OPERATOR_FEEDBACK_LOOP.md
-  docs/PHASE11_REGRESSION_EVIDENCE.md
-
-Evidence review loop:
-  1. capture the command output, SQL sample, response body, checksum, or note
-  2. classify into exactly one primary decision lane
-  3. route to no action, accepted risk record, issue, PR, or explicit review
-  4. verify with the same command/query plus local validation when files change
-  5. record the decision, owner, and recheck date
+Public references:
+  docs/MVP_ACCEPTANCE.md
+  docs/OPERATIONS.md
+  docs/TESTING.md
 
 Local validation and evidence:
   cargo fmt --all --check
@@ -67,25 +53,7 @@ If just is unavailable:
   ./scripts/mvp_acceptance.sh
   DATA_QUALITY_FAIL_ON_WARNING=true ./scripts/data_quality_doctor.sh
 
-Doctor classification:
-  blocker: affects the fixed sql_only + event-csv behavior, or hides whether
-    just mvp-acceptance is meaningful
-  accepted risk: visible, bounded, owned, and safe to carry temporarily
-  follow-up: actionable, but outside the current public-MVP operating gate
-  optional evidence only: informative crawler/full-mode evidence that does not
-    change the fixed gate or require implementation
-  explicit review required: would change public profile, API shape, crawler
-    maturity, full-mode/OpenSearch role, managed infra, or final-ranking owner
-
-Optional evidence outside the public MVP gate:
-  command plan: just optional-evidence-review
-  intake workflow: docs/OPTIONAL_EVIDENCE_INTAKE.md
-  crawler graduation: crawler doctor, dry-run, health, policy review, rollback path
-  full-mode evaluation: SQL-only/full-mode comparison, projection sync, OpenSearch health
-  managed infrastructure: explicit review only; not a fixed-gate requirement
-  packet templates: docs/OPTIONAL_EVIDENCE_PACKETS.md
-
-Doctor review item record:
+Follow-up record fields:
   source:
   evidence command:
   evidence excerpt or SQL row:

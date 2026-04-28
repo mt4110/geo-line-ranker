@@ -16,8 +16,7 @@ The initial public-MVP operating profile is intentionally narrow:
 
 - candidate retrieval mode: `sql_only`
 - operational content path: `event-csv`
-- release readiness flow:
-  [PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md)
+- release readiness command plan: `just release-readiness`
 - fixed release gate: [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md)
 
 Live crawler flows and `full` mode stay supported as operator workflows, but they are not part of the public-MVP acceptance gate. Some crawl sources still carry manual-review expectations before production use, so the first public release should stay on the deterministic SQL-only path.
@@ -29,8 +28,7 @@ crawl, and migration paths. Keep it below the database server's available
 connection budget after reserving room for migrations, manual `psql`, and
 maintenance jobs.
 
-For post-launch incident triage, start with the shorter
-[POST_LAUNCH_RUNBOOK.md](POST_LAUNCH_RUNBOOK.md) and the read-only doctor:
+For post-launch incident triage, start with the read-only doctor:
 
 ```bash
 just post-launch-doctor
@@ -42,8 +40,8 @@ Without `just`:
 ./scripts/post_launch_doctor.sh
 ```
 
-When PostgreSQL is reachable, add the Phase 11 data quality pass and feed the
-result into [OPERATOR_FEEDBACK_LOOP.md](OPERATOR_FEEDBACK_LOOP.md):
+When PostgreSQL is reachable, add the data quality pass and review its output
+before opening implementation work:
 
 ```bash
 just data-quality-doctor
@@ -57,7 +55,8 @@ Without `just`:
 
 ## Release readiness routine
 
-Use the release readiness guide before cutting or validating a release candidate:
+Use the release readiness command plan before cutting or validating a release
+candidate:
 
 ```bash
 just release-readiness
@@ -83,21 +82,18 @@ Without `just`:
 
 This gate deliberately starts only PostgreSQL/PostGIS and Redis, forces `CANDIDATE_RETRIEVAL_MODE=sql_only`, and exercises the CLI, worker, API, snapshots, tracking jobs, and `event-csv` import semantics. Do not add live crawler or OpenSearch requirements to this gate unless the public-MVP operating profile changes through explicit review.
 
-For release candidate evidence, also capture the local validation results
+For release candidate evidence, capture the local validation results
 (`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
 `cargo test --workspace`, and `git diff --check`), CI status, release notes,
 and the required `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
-evidence using
-[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md). The data
-quality doctor is required evidence capture for release readiness; strict mode
-makes doctor warnings fail the evidence step, but it does not add cases to
-`just mvp-acceptance`.
+evidence. The data quality doctor is required evidence capture for release
+readiness; strict mode makes doctor warnings fail the evidence step, but it
+does not add cases to `just mvp-acceptance`.
 
-## Post-MVP hardening routine
+## Maintenance Command Plans
 
-Use the post-MVP hardening guide after the release gate is healthy and the
-question becomes what to improve next:
+After the release gate is healthy, print the post-MVP maintenance command plan:
 
 ```bash
 just post-mvp-hardening
@@ -109,17 +105,8 @@ Without `just`:
 ./scripts/post_mvp_hardening.sh
 ```
 
-This command plan is read-only. It keeps local and CI validation aligned while
-making optional crawler graduation, full-mode evaluation, and managed
-infrastructure review visible outside the public-MVP gate. Classify doctor
-`review_items` as blocker, accepted risk, follow-up, optional evidence only, or
-explicit review required before opening implementation work.
-
-When optional crawler, full-mode, OpenSearch, or managed infrastructure
-evidence needs packet and lane selection, print the read-only checklist. It
-points to the intake workflow in
-[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) and the packet
-templates in [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md):
+For optional crawler, full-mode, OpenSearch, or managed infrastructure review,
+print the read-only evidence command plan:
 
 ```bash
 just optional-evidence-review

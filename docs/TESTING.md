@@ -46,11 +46,9 @@ cargo run -p cli -- seed example
 
 The manual smoke sections below are intentionally broader than the public-MVP release gate. For the fixed six-case acceptance flow that excludes live crawler and `full` mode, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md).
 
-## Release and Post-MVP Validation
+## Release Validation
 
-Release readiness uses
-[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) as the
-top-level checklist. Print the command plan first:
+Print the release readiness command plan first:
 
 ```bash
 just release-readiness
@@ -79,8 +77,8 @@ not an additional acceptance-gate case. Run it with
 fail the evidence step. It does not add live crawler, full mode, OpenSearch, or
 managed infrastructure to the release gate.
 
-For Phase 11 operator feedback changes, run the read-only data quality doctor
-against a bootstrapped PostgreSQL database:
+For data quality review changes, run the read-only doctor against a
+bootstrapped PostgreSQL database:
 
 ```bash
 just mvp-up
@@ -93,11 +91,11 @@ The doctor prints review items for human classification and does not mutate
 PostgreSQL, Redis, OpenSearch, staged raw files, or crawler state.
 
 CI also runs this as a separate `data-quality-doctor` job. Keep it separate
-from `mvp-acceptance` so Phase 11 evidence improves operator review without
-expanding the public-MVP release gate. The CI job fails on doctor warnings,
-while review items stay as human-classified evidence.
+from `mvp-acceptance` so data-quality evidence improves operator review
+without expanding the public-MVP release gate. The CI job fails on doctor
+warnings, while review items stay as human-classified evidence.
 
-For post-MVP hardening, print the command plan:
+For later maintenance review, print the command plan:
 
 ```bash
 just post-mvp-hardening
@@ -109,8 +107,8 @@ Without `just`:
 ./scripts/post_mvp_hardening.sh
 ```
 
-For optional evidence intake and graduation decisions, print the read-only
-checklist:
+For optional crawler, full-mode, OpenSearch, or managed infrastructure review,
+print the read-only evidence command plan:
 
 ```bash
 just optional-evidence-review
@@ -122,10 +120,8 @@ Without `just`:
 ./scripts/optional_evidence_review.sh
 ```
 
-Use the hardening command plan before hardening reviews or follow-up PRs to
-keep the same validation set visible while the evidence review loop classifies
-findings as blocker, accepted risk, follow-up, optional evidence only, or
-explicit review required:
+Use the maintenance command plans before follow-up PRs to keep the same
+validation set visible:
 
 ```bash
 cargo fmt --all --check
@@ -136,14 +132,9 @@ DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
 git diff --check
 ```
 
-Crawler graduation and full-mode evaluation can be attached as optional
-evidence, but they remain outside the fixed public-MVP gate. The optional
-evidence checklist is read-only and points to
-[OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) for routing and
-[OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) for templates. It
-also points to `.github/ISSUE_TEMPLATE/optional_evidence.md` and
-`.github/pull_request_template.md` for GitHub records. It does not add crawler,
-full mode, OpenSearch, or managed infrastructure to local or CI release gates.
+Crawler graduation and full-mode evaluation remain outside the fixed
+public-MVP gate. Evidence review command plans do not add crawler, full mode,
+OpenSearch, or managed infrastructure to local or CI release gates.
 
 ## What gets covered
 

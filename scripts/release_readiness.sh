@@ -35,8 +35,10 @@ Fixed public MVP boundary:
   cache: Redis
   outside gate: live crawler, full mode, OpenSearch, managed infrastructure
 
-Primary guide:
-  docs/PUBLIC_MVP_RELEASE_READINESS.md
+Public references:
+  docs/MVP_ACCEPTANCE.md
+  docs/OPERATIONS.md
+  docs/TESTING.md
 
 Required local validation:
   cargo fmt --all --check
@@ -47,13 +49,8 @@ Required local validation:
 
 Required release evidence:
   DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor
-  This makes doctor warnings or command failures block release readiness.
-  Treat review items as classification evidence unless they affect the fixed
-  sql_only + event-csv gate.
-  Route optional crawler/full-mode/infra packets after the candidate is healthy
-  with: just optional-evidence-review
-  Intake workflow: docs/OPTIONAL_EVIDENCE_INTAKE.md
-  Packet templates: docs/OPTIONAL_EVIDENCE_PACKETS.md
+  Treat review items as evidence unless they affect the fixed sql_only +
+  event-csv gate or hide whether that gate is meaningful.
 
 If just is unavailable:
   ./scripts/mvp_acceptance.sh
