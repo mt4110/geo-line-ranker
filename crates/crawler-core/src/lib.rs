@@ -1821,7 +1821,7 @@ fn validate_fixture_paths(
 }
 
 pub fn resolve_manifest_fixture_path(manifest_path: &Path, fixture_path: &str) -> Result<PathBuf> {
-    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let manifest_dir = parent_or_current_dir(manifest_path);
     let resolved_path = manifest_dir.join(fixture_path);
     let allowed_root = allowed_fixture_root(manifest_dir)?;
     ensure!(
@@ -1842,6 +1842,12 @@ pub fn resolve_manifest_fixture_path(manifest_path: &Path, fixture_path: &str) -
         allowed_root.display()
     );
     Ok(canonical_path)
+}
+
+fn parent_or_current_dir(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 fn allowed_fixture_root(manifest_dir: &Path) -> Result<PathBuf> {
@@ -2933,8 +2939,8 @@ fn is_yaml_path(path: &Path) -> bool {
 mod tests {
     use super::{
         check_expected_shape, dedupe_events, finalize_parsed_events, lint_manifest_dir,
-        lint_manifest_file, load_manifest, parse_placement_kind, ParseInput, ParsedEventSeed,
-        ParserExpectedShape, ParserRegistry, ResolvedCrawlTarget, SourceMaturity,
+        lint_manifest_file, load_manifest, parent_or_current_dir, parse_placement_kind, ParseInput,
+        ParsedEventSeed, ParserExpectedShape, ParserRegistry, ResolvedCrawlTarget, SourceMaturity,
         UTOKYO_EVENTS_JSON_LIMIT,
     };
     use domain::PlacementKind;
@@ -3417,6 +3423,14 @@ targets:
 
         let error = load_manifest(&manifest_path).expect_err("windows-style fixture path");
         assert!(format!("{error:#}").contains("portable POSIX relative syntax"));
+    }
+
+    #[test]
+    fn parent_or_current_dir_treats_bare_manifest_filename_as_current_dir() {
+        assert_eq!(
+            parent_or_current_dir(std::path::Path::new("crawler.yaml")),
+            std::path::Path::new(".")
+        );
     }
 
     #[test]

@@ -561,7 +561,7 @@ pub async fn run_event_csv_import(
 
 pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary> {
     let manifest_path = resolve_fixture_manifest_path(path.as_ref());
-    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let manifest_dir = parent_or_current_dir(&manifest_path);
     let canonical_manifest_dir = manifest_dir.canonicalize().with_context(|| {
         format!(
             "failed to canonicalize fixture directory {}",
@@ -701,6 +701,12 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
         manifest_version: manifest.manifest_version,
         files,
     })
+}
+
+fn parent_or_current_dir(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 fn normalize_fixture_manifest_path(
@@ -1406,11 +1412,13 @@ fn validate_starts_at(raw: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use storage_postgres::EventCsvRecord;
 
     use super::{
-        checksum_file, generate_demo_jp_fixture, normalize_fallback_stage, run_fixture_doctor,
-        stored_response_order, validate_event_csv_records,
+        checksum_file, generate_demo_jp_fixture, normalize_fallback_stage, parent_or_current_dir,
+        run_fixture_doctor, stored_response_order, validate_event_csv_records,
     };
 
     #[test]
@@ -1538,6 +1546,14 @@ files:
 
         let error = run_fixture_doctor(&fixture_dir).expect_err("symlink escape");
         assert!(format!("{error:#}").contains("must stay inside fixture directory"));
+    }
+
+    #[test]
+    fn parent_or_current_dir_treats_bare_manifest_filename_as_current_dir() {
+        assert_eq!(
+            parent_or_current_dir(Path::new("fixture_manifest.yaml")),
+            Path::new(".")
+        );
     }
 
     #[test]
