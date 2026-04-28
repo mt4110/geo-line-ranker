@@ -21,9 +21,8 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 - Optional allowlist crawler with parser registry, raw HTML staging, differential checksum fetch, and audited fetch / parse / dedupe reports
 - Source maturity labels plus parser expected-shape metadata on crawl manifests
 - Parser health summary command for recent crawl runs, fetch outcomes, parse levels, latest parser errors, and `logical_name` red flags per manifest
-- Read-only post-launch doctor, data quality doctor, and operator feedback loop
-  for incident triage
-- Release readiness guide for public MVP release candidate evidence
+- Read-only post-launch doctor and data quality doctor for incident triage
+- Release readiness command plan for public MVP release candidate decisions
 - `crawler scaffold-domain` for manifest / fixture / guide scaffolding when adding a new crawl source, now with inferred defaults and shape-aware guidance
 - First real-domain crawl example for the University of Tokyo public events JSON feed
 - Second real-domain crawl example for the Shibaura Institute of Technology Junior High admissions event page
@@ -124,16 +123,14 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 ## Docs
 
 - [Japanese README](README.md)
+- [Documentation Index](docs/README.md)
 - [Non-engineer Friendly Design Docs](docs/design_document/README_JA.md)
 - [Contributor Rules](AGENTS.md)
 - [Local Contributing Guide](docs/CONTRIBUTING_LOCAL.md)
 - [Quickstart](docs/QUICKSTART.md)
-- [Public MVP Release Readiness](docs/PUBLIC_MVP_RELEASE_READINESS.md)
 - [MVP Acceptance](docs/MVP_ACCEPTANCE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Operations](docs/OPERATIONS.md)
-- [Post-launch Runbook](docs/POST_LAUNCH_RUNBOOK.md)
-- [Operator Feedback Loop](docs/OPERATOR_FEEDBACK_LOOP.md)
 - [Testing](docs/TESTING.md)
 - [Data Sources](docs/DATA_SOURCES.md)
 - [Data Licenses](docs/DATA_LICENSES.md)

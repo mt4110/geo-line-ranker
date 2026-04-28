@@ -22,13 +22,11 @@ jobs:
           test -f docs/QUICKSTART.md
           test -f docs/ARCHITECTURE.md
           test -f docs/MVP_ACCEPTANCE.md
-          test -f docs/PUBLIC_MVP_RELEASE_READINESS.md
-          test -f docs/POST_MVP_HARDENING.md
-          test -f docs/OPTIONAL_EVIDENCE_INTAKE.md
-          test -f docs/OPTIONAL_EVIDENCE_GRADUATION.md
-          test -f docs/OPTIONAL_EVIDENCE_PACKETS.md
-          test -f .github/ISSUE_TEMPLATE/optional_evidence.md
+          test -f docs/README.md
+          test -f docs/TESTING.md
+          test -f docs/DATA_SOURCES.md
+          test -f docs/DATA_LICENSES.md
+          test -f docs/REASON_CATALOG.md
+          test -f docs/design_document/README_JA.md
           test -f .github/pull_request_template.md
           test -f docs/OPERATIONS.md
-          test -f docs/OPERATOR_FEEDBACK_LOOP.md
-          test -f docs/PHASE11_REGRESSION_EVIDENCE.md

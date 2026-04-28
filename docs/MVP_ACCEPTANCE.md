@@ -1,9 +1,6 @@
 # MVP Acceptance
 
 This document defines the fixed public-MVP launch gate for this repository.
-For release candidate evidence, use
-[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md) as the
-top-level checklist.
 
 ## Decision Rule
 
@@ -28,10 +25,8 @@ Why the exclusion is deliberate:
 - `source_maturity` is not uniformly `live_ready`
 - the launch gate should rely on the deterministic path we can operate today without policy ambiguity
 
-For the surrounding operator guidance, see [OPERATIONS.md](OPERATIONS.md) and [DATA_LICENSES.md](DATA_LICENSES.md).
-For the release candidate routine that combines this gate with CI evidence,
-data quality doctor output, release notes, and residual risk review, see
-[PUBLIC_MVP_RELEASE_READINESS.md](PUBLIC_MVP_RELEASE_READINESS.md).
+For the surrounding operator guidance, see [OPERATIONS.md](OPERATIONS.md) and
+[DATA_LICENSES.md](DATA_LICENSES.md).
 
 Non-negotiable constraints:
 
@@ -79,13 +74,6 @@ Before marking the public MVP ready:
 - release notes describe `sql_only` as the public-MVP baseline
 - optional crawler and full-mode notes remain clearly outside the public-MVP gate
 - any public API change includes `schemas/openapi.json` and `API_SPEC.md` updates in the same change
-
-Use [OPTIONAL_EVIDENCE_INTAKE.md](OPTIONAL_EVIDENCE_INTAKE.md) after this
-gate is healthy when optional crawler, full-mode, OpenSearch, managed
-infrastructure, or doctor evidence needs packet and lane selection. Confirm
-the lane in [OPTIONAL_EVIDENCE_GRADUATION.md](OPTIONAL_EVIDENCE_GRADUATION.md),
-then use [OPTIONAL_EVIDENCE_PACKETS.md](OPTIONAL_EVIDENCE_PACKETS.md) for the
-issue, PR, or review-note template.
 
 `just data-quality-doctor` is required release evidence capture. Run it with
 `DATA_QUALITY_FAIL_ON_WARNING=true` for release readiness so warnings fail the

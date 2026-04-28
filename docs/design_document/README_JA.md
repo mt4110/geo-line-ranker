@@ -19,7 +19,6 @@
 | 8 | `07_NON_ENGINEER_QUICKSTART_JA.md` | 触ってみる人 | ローカルで試すときの道順 |
 | 9 | `08_GLOSSARY_JA.md` | 全員 | 用語集 |
 | 10 | `09_FAQ_JA.md` | 全員 | よくある質問 |
-| 11 | `10_DOCS_PROMPT_TEMPLATE.md` | 開発者 | この docs 群を再生成・移植するときのプロンプト雛形 |
 
 ## この設計で守ること
 

@@ -19,33 +19,6 @@ This PR template is a review aid, not a new acceptance gate.
 - [ ] Public API shape is unchanged, or `schemas/openapi.json` and
       `API_SPEC.md` are updated in this PR.
 
-## Optional Evidence Intake
-
-- [ ] Not applicable.
-- [ ] Optional evidence issue is linked.
-- [ ] Minimal intake header from
-      [OPTIONAL_EVIDENCE_INTAKE.md](docs/OPTIONAL_EVIDENCE_INTAKE.md#minimal-intake-header)
-      is pasted below or in the linked issue.
-- [ ] Triage lane, optional labels, owner, recheck command, and close condition
-      from [OPTIONAL_EVIDENCE_TRIAGE.md](docs/OPTIONAL_EVIDENCE_TRIAGE.md)
-      are recorded below or in the linked issue.
-- [ ] Matching packet from
-      [OPTIONAL_EVIDENCE_PACKETS.md](docs/OPTIONAL_EVIDENCE_PACKETS.md)
-      is pasted when the evidence type needs one.
-
-```text
-Optional evidence intake:
-- Evidence type:
-- Evidence source:
-- Packet template used:
-- Decision lane:
-- Owner:
-- Recheck date:
-- Recheck command:
-- Close condition:
-- Issue or PR:
-```
-
 ## Validation
 
 - [ ] `cargo fmt --all --check`
