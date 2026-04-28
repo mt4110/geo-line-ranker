@@ -562,6 +562,12 @@ pub async fn run_event_csv_import(
 pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary> {
     let manifest_path = resolve_fixture_manifest_path(path.as_ref());
     let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let canonical_manifest_dir = manifest_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize fixture directory {}",
+            manifest_dir.display()
+        )
+    })?;
     let raw = fs::read_to_string(&manifest_path).with_context(|| {
         format!(
             "failed to read fixture manifest {}",
@@ -646,7 +652,23 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
             file.logical_name,
             fixture_path.display()
         );
-        let checksum_sha256 = checksum_file(&fixture_path)?;
+        let canonical_fixture_path = fixture_path.canonicalize().with_context(|| {
+            format!(
+                "failed to canonicalize fixture manifest {} file {} path {}",
+                manifest_path.display(),
+                file.logical_name,
+                fixture_path.display()
+            )
+        })?;
+        ensure!(
+            canonical_fixture_path.starts_with(&canonical_manifest_dir),
+            "fixture manifest {} file {} path {} must stay inside fixture directory {}",
+            manifest_path.display(),
+            file.logical_name,
+            fixture_path.display(),
+            canonical_manifest_dir.display()
+        );
+        let checksum_sha256 = checksum_file(&canonical_fixture_path)?;
         ensure!(
             checksum_sha256 == file.checksum_sha256,
             "fixture manifest {} file {} checksum mismatch: expected {}, got {}",
@@ -655,7 +677,7 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
             file.checksum_sha256,
             checksum_sha256
         );
-        let row_count = count_fixture_rows(&fixture_path, &file.format)?;
+        let row_count = count_fixture_rows(&canonical_fixture_path, &file.format)?;
         ensure!(
             row_count == file.row_count,
             "fixture manifest {} file {} row_count mismatch: expected {}, got {}",
@@ -1483,6 +1505,39 @@ files:
 
         let error = run_fixture_doctor(temp.path()).expect_err("windows-style path");
         assert!(format!("{error:#}").contains("portable POSIX relative syntax"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fixture_doctor_rejects_symlink_escape() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let fixture_dir = temp.path().join("fixtures");
+        std::fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        let outside_path = temp.path().join("outside.csv");
+        std::fs::write(&outside_path, "id,name\n1,Outside\n").expect("outside fixture");
+        std::os::unix::fs::symlink(&outside_path, fixture_dir.join("data.csv")).expect("symlink");
+        let checksum = checksum_file(&outside_path).expect("checksum");
+        std::fs::write(
+            fixture_dir.join("fixture_manifest.yaml"),
+            format!(
+                r#"
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+fixture_set_id: test
+files:
+  - logical_name: data
+    path: data.csv
+    format: csv
+    checksum_sha256: {checksum}
+    row_count: 1
+"#
+            ),
+        )
+        .expect("manifest");
+
+        let error = run_fixture_doctor(&fixture_dir).expect_err("symlink escape");
+        assert!(format!("{error:#}").contains("must stay inside fixture directory"));
     }
 
     #[test]

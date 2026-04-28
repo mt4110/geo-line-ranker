@@ -9,8 +9,9 @@ use anyhow::{ensure, Context, Result};
 use config::AppSettings;
 use crawler_core::{
     check_expected_shape, dedupe_events, finalize_parsed_events, fixture_content_type,
-    load_manifest, CrawlParser, CrawlSourceManifest, DedupeReportEntry, ParsedEventRecord,
-    ParserExpectedShape, ParserRegistry, ResolvedCrawlTarget, SourceMaturity,
+    load_manifest, resolve_manifest_fixture_path, CrawlParser, CrawlSourceManifest,
+    DedupeReportEntry, ParsedEventRecord, ParserExpectedShape, ParserRegistry, ResolvedCrawlTarget,
+    SourceMaturity,
 };
 use generic_http::{
     ensure_allowed_url, evaluate_robots, fetch_robots_txt, fetch_to_raw, HttpFetchClient,
@@ -2145,7 +2146,7 @@ fn check_fixture_shape(
     fixture_path: &str,
     expected_shape: ParserExpectedShape,
 ) -> Result<(bool, String)> {
-    let resolved_path = resolve_fixture_path(manifest_path, fixture_path)?;
+    let resolved_path = resolve_manifest_fixture_path(manifest_path, fixture_path)?;
     let body = fs::read_to_string(&resolved_path)
         .with_context(|| format!("failed to read fixture {}", resolved_path.display()))?;
     let check = check_expected_shape(expected_shape, &body, fixture_content_type(&resolved_path));
@@ -2157,51 +2158,6 @@ fn check_fixture_shape(
             check.summary
         ),
     ))
-}
-
-fn resolve_fixture_path(manifest_path: &Path, fixture_path: &str) -> Result<PathBuf> {
-    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-    let resolved_path = manifest_dir.join(fixture_path);
-    let allowed_root = allowed_fixture_root(manifest_dir)?;
-    ensure!(
-        resolved_path.is_file(),
-        "fixture_path {} does not exist",
-        resolved_path.display()
-    );
-    let canonical_path = resolved_path.canonicalize().with_context(|| {
-        format!(
-            "failed to canonicalize fixture_path {}",
-            resolved_path.display(),
-        )
-    })?;
-    ensure!(
-        canonical_path.starts_with(&allowed_root),
-        "fixture_path {} resolves outside allowed fixture root {}",
-        resolved_path.display(),
-        allowed_root.display()
-    );
-    Ok(canonical_path)
-}
-
-fn allowed_fixture_root(manifest_dir: &Path) -> Result<PathBuf> {
-    let canonical_manifest_dir = manifest_dir.canonicalize().with_context(|| {
-        format!(
-            "failed to canonicalize crawl manifest dir {}",
-            manifest_dir.display()
-        )
-    })?;
-    for ancestor in canonical_manifest_dir.ancestors() {
-        let candidate = ancestor.join("storage").join("fixtures");
-        if candidate.is_dir() {
-            return candidate.canonicalize().with_context(|| {
-                format!(
-                    "failed to canonicalize fixture root {}",
-                    candidate.display()
-                )
-            });
-        }
-    }
-    Ok(canonical_manifest_dir)
 }
 
 pub async fn serve_manifest_dir(

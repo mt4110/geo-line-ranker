@@ -1789,36 +1789,18 @@ fn validate_fixture_paths(
     manifest: &CrawlSourceManifest,
     expected_shape: Option<ParserExpectedShape>,
 ) -> Result<()> {
-    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-    let allowed_root = allowed_fixture_root(manifest_dir)?;
     for target in &manifest.targets {
         let Some(fixture_path) = &target.fixture_path else {
             continue;
         };
-        let resolved_path = manifest_dir.join(fixture_path);
-        ensure!(
-            resolved_path.is_file(),
-            "crawl manifest {} target {} fixture_path {} does not exist",
-            manifest_path.display(),
-            target.logical_name,
-            resolved_path.display()
-        );
-        let canonical_path = resolved_path.canonicalize().with_context(|| {
-            format!(
-                "failed to canonicalize fixture_path {} for crawl manifest {} target {}",
-                resolved_path.display(),
-                manifest_path.display(),
-                target.logical_name
-            )
-        })?;
-        ensure!(
-            canonical_path.starts_with(&allowed_root),
-            "crawl manifest {} target {} fixture_path {} must stay under {}",
-            manifest_path.display(),
-            target.logical_name,
-            resolved_path.display(),
-            allowed_root.display()
-        );
+        let canonical_path = resolve_manifest_fixture_path(manifest_path, fixture_path)
+            .with_context(|| {
+                format!(
+                    "failed to resolve fixture_path for crawl manifest {} target {}",
+                    manifest_path.display(),
+                    target.logical_name
+                )
+            })?;
         if let Some(expected_shape) = expected_shape {
             let body = fs::read_to_string(&canonical_path)
                 .with_context(|| format!("failed to read fixture {}", canonical_path.display()))?;
@@ -1829,13 +1811,37 @@ fn validate_fixture_paths(
                 "crawl manifest {} target {} fixture_path {} does not match expected_shape {}: {}",
                 manifest_path.display(),
                 target.logical_name,
-                resolved_path.display(),
+                fixture_path,
                 expected_shape,
                 check.summary
             );
         }
     }
     Ok(())
+}
+
+pub fn resolve_manifest_fixture_path(manifest_path: &Path, fixture_path: &str) -> Result<PathBuf> {
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let resolved_path = manifest_dir.join(fixture_path);
+    let allowed_root = allowed_fixture_root(manifest_dir)?;
+    ensure!(
+        resolved_path.is_file(),
+        "fixture_path {} does not exist",
+        resolved_path.display()
+    );
+    let canonical_path = resolved_path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize fixture_path {}",
+            resolved_path.display(),
+        )
+    })?;
+    ensure!(
+        canonical_path.starts_with(&allowed_root),
+        "fixture_path {} resolves outside allowed fixture root {}",
+        resolved_path.display(),
+        allowed_root.display()
+    );
+    Ok(canonical_path)
 }
 
 fn allowed_fixture_root(manifest_dir: &Path) -> Result<PathBuf> {
@@ -3377,7 +3383,7 @@ targets:
         .expect("manifest");
 
         let error = lint_manifest_file(&manifest_path).expect_err("fixture outside root");
-        assert!(format!("{error:#}").contains("must stay under"));
+        assert!(format!("{error:#}").contains("outside allowed fixture root"));
     }
 
     #[test]
