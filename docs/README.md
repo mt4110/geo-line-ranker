@@ -14,6 +14,10 @@ Start here when choosing what to read next.
 - [Architecture](ARCHITECTURE.md): service boundaries, deterministic ranking, and storage roles.
 - [Reason Catalog](REASON_CATALOG.md): stable score reason codes used by explanations.
 
+## Planning
+
+- [v0.2.1 to v0.2.5 Design Plan](V0_2_1_TO_V0_2_5_DESIGN_PLAN.md): patch-sized goals, non-goals, PR breakdown, risks, and verification policy before v0.3.0.
+
 ## Operations
 
 - [Operations](OPERATIONS.md): service operation, profiles, replay evaluation, and Docker notes.
