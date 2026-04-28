@@ -1,3 +1,5 @@
+schema_version: 1
+kind: ranking_placement
 neighbor_max_hops: 3
 neighbor_same_line_bonus: 0.95
 mixed_ranking:

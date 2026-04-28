@@ -8,7 +8,9 @@ use crawler::{
     run_health_command, run_parse_command, scaffold_domain, serve_manifest_dir,
     ScaffoldDomainRequest,
 };
-use crawler_core::{ParserExpectedShape, SourceMaturity};
+use crawler_core::{
+    lint_manifest_dir, CrawlManifestLintSummary, ParserExpectedShape, SourceMaturity,
+};
 use observability::init_tracing;
 
 const ROOT_LONG_ABOUT: &str = "\
@@ -298,6 +300,25 @@ enum Command {
         )]
         poll_interval_secs: u64,
     },
+    #[command(about = "Inspect crawler manifests without fetching live content")]
+    Manifest {
+        #[command(subcommand)]
+        target: ManifestCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ManifestCommand {
+    #[command(about = "Lint crawler manifest files")]
+    Lint {
+        #[arg(
+            long,
+            default_value = "configs/crawler/sources",
+            help_heading = "Required Inputs",
+            help = "Directory or YAML file containing crawler manifests."
+        )]
+        manifest_dir: PathBuf,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -451,9 +472,35 @@ async fn main() -> anyhow::Result<()> {
         } => {
             serve_manifest_dir(&settings, manifest_dir, poll_interval_secs).await?;
         }
+        Command::Manifest { target } => match target {
+            ManifestCommand::Lint { manifest_dir } => {
+                let summary = lint_manifest_dir(manifest_dir)?;
+                println!("{}", format_manifest_lint_summary(&summary));
+            }
+        },
     }
 
     Ok(())
+}
+
+fn format_manifest_lint_summary(summary: &CrawlManifestLintSummary) -> String {
+    let mut lines = vec![format!(
+        "crawler manifest lint ok: files={}",
+        summary.files.len()
+    )];
+    lines.extend(summary.files.iter().map(|file| {
+        format!(
+            "- {} schema_version={} kind={} manifest_version={} source_id={} parser_key={} targets={}",
+            file.path.display(),
+            file.schema_version,
+            file.kind.as_str(),
+            file.manifest_version,
+            file.source_id,
+            file.parser_key,
+            file.target_count
+        )
+    }));
+    lines.join("\n")
 }
 
 #[cfg(test)]

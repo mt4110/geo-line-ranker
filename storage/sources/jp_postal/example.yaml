@@ -1,3 +1,5 @@
+schema_version: 1
+kind: import_source
 source_id: jp-postal
 source_name: Demo JP postal codes
 manifest_version: 1

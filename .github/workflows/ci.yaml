@@ -17,6 +17,11 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Config and manifest lint
+        run: |
+          cargo run -p cli -- config lint
+          cargo run -p cli -- source-manifest lint
+          cargo run -p crawler -- manifest lint
 
   rust-unit-tests:
     runs-on: ubuntu-latest

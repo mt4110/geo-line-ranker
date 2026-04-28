@@ -1,2 +1,3 @@
+schema_version: 1
+kind: ranking_events
 open_day_bonus: 0.6
-

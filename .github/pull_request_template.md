@@ -24,6 +24,9 @@ This PR template is a review aid, not a new acceptance gate.
 - [ ] `cargo fmt --all --check`
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - [ ] `cargo test --workspace`
+- [ ] `cargo run -p cli -- config lint`
+- [ ] `cargo run -p cli -- source-manifest lint`
+- [ ] `cargo run -p crawler -- manifest lint`
 - [ ] `just mvp-acceptance`
 - [ ] `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
 - [ ] `git diff --check`

@@ -99,7 +99,7 @@ async fn snapshot_refresh_uses_tracking_config_weights() -> anyhow::Result<()> {
         copy_default_configs(&config_dir)?;
         fs::write(
             config_dir.join("tracking.default.yaml"),
-            "popularity_bonus_weight: 0.75\nuser_affinity_bonus_weight: 0.9\narea_affinity_bonus_weight: 0.35\nsearch_execute_school_signal_weight: 0.0\nsearch_execute_area_signal_weight: 0.0\n",
+            "schema_version: 1\nkind: ranking_tracking\npopularity_bonus_weight: 0.75\nuser_affinity_bonus_weight: 0.9\narea_affinity_bonus_weight: 0.35\nsearch_execute_school_signal_weight: 0.0\nsearch_execute_area_signal_weight: 0.0\n",
         )?;
 
         let settings = test_settings(&temp.path().join("raw"), &config_dir, &database_url);

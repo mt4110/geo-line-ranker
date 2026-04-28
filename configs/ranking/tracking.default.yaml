@@ -1,3 +1,5 @@
+schema_version: 1
+kind: ranking_tracking
 popularity_bonus_weight: 0.75
 user_affinity_bonus_weight: 0.9
 area_affinity_bonus_weight: 0.35

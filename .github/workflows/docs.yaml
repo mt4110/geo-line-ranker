@@ -27,6 +27,8 @@ jobs:
           test -f docs/DATA_SOURCES.md
           test -f docs/DATA_LICENSES.md
           test -f docs/REASON_CATALOG.md
+          test -f docs/VERSIONING.md
+          test -f docs/DEPRECATION_POLICY.md
           test -f docs/design_document/README_JA.md
           test -f .github/pull_request_template.md
           test -f docs/OPERATIONS.md

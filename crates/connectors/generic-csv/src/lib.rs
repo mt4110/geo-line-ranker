@@ -8,8 +8,27 @@ use csv::Reader;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub const SOURCE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceManifestKind {
+    ImportSource,
+}
+
+impl SourceManifestKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ImportSource => "import_source",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SourceManifest {
+    pub schema_version: u32,
+    pub kind: SourceManifestKind,
     pub source_id: String,
     pub source_name: String,
     #[serde(default = "default_manifest_version")]
@@ -30,6 +49,7 @@ impl SourceManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SourceFileSpec {
     pub logical_name: String,
     pub path: String,
@@ -47,6 +67,21 @@ pub struct PreparedSourceFile {
     pub size_bytes: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceManifestLintFile {
+    pub path: PathBuf,
+    pub source_id: String,
+    pub schema_version: u32,
+    pub kind: SourceManifestKind,
+    pub manifest_version: u32,
+    pub file_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceManifestLintSummary {
+    pub files: Vec<SourceManifestLintFile>,
+}
+
 pub fn load_manifest(path: impl AsRef<Path>) -> Result<SourceManifest> {
     let path = path.as_ref();
     let raw = fs::read_to_string(path)
@@ -54,11 +89,57 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<SourceManifest> {
     let manifest: SourceManifest = serde_yaml::from_str(&raw)
         .with_context(|| format!("failed to parse source manifest {}", path.display()))?;
     ensure!(
+        manifest.schema_version == SOURCE_MANIFEST_SCHEMA_VERSION,
+        "source manifest {} schema_version {} is unsupported; expected {}",
+        path.display(),
+        manifest.schema_version,
+        SOURCE_MANIFEST_SCHEMA_VERSION
+    );
+    ensure!(
+        manifest.kind == SourceManifestKind::ImportSource,
+        "source manifest {} kind {} is invalid; expected {}",
+        path.display(),
+        manifest.kind.as_str(),
+        SourceManifestKind::ImportSource.as_str()
+    );
+    ensure!(
         !manifest.files.is_empty(),
         "source manifest {} does not list any files",
         path.display()
     );
     Ok(manifest)
+}
+
+pub fn lint_source_manifest_file(path: impl AsRef<Path>) -> Result<SourceManifestLintFile> {
+    let path = path.as_ref();
+    let manifest = load_manifest(path)?;
+    Ok(SourceManifestLintFile {
+        path: path.to_path_buf(),
+        source_id: manifest.source_id,
+        schema_version: manifest.schema_version,
+        kind: manifest.kind,
+        manifest_version: manifest.manifest_version,
+        file_count: manifest.files.len(),
+    })
+}
+
+pub fn lint_source_manifest_dir(path: impl AsRef<Path>) -> Result<SourceManifestLintSummary> {
+    let path = path.as_ref();
+    let mut files = Vec::new();
+    for manifest_path in list_yaml_paths(path)? {
+        files.push(lint_source_manifest_file(manifest_path)?);
+    }
+    if files.is_empty() {
+        if path.is_file() {
+            bail!("source manifest path {} is not a yaml file", path.display());
+        }
+        bail!(
+            "source manifest path {} does not contain any yaml manifests",
+            path.display()
+        );
+    }
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(SourceManifestLintSummary { files })
 }
 
 pub fn stage_raw_files(
@@ -175,6 +256,43 @@ fn default_format() -> String {
     "csv".to_string()
 }
 
+fn list_yaml_paths(path: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    collect_yaml_paths(path, &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_yaml_paths(path: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    if path.is_file() {
+        if is_yaml_path(path) {
+            paths.push(path.to_path_buf());
+        }
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(path)
+        .with_context(|| format!("failed to read source manifest dir {}", path.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("failed to read entry under {}", path.display()))?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_yaml_paths(&entry_path, paths)?;
+        } else if is_yaml_path(&entry_path) {
+            paths.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn is_yaml_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("yaml" | "yml")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +309,8 @@ mod tests {
         fs::write(
             manifest_dir.join("example.yaml"),
             r#"
+schema_version: 1
+kind: import_source
 source_id: jp-school-codes
 source_name: Demo school codes
 files:
@@ -208,5 +328,95 @@ files:
         assert!(files[0].staged_path.starts_with(&raw_dir));
         assert_eq!(files[0].logical_name, "school_codes");
         assert_eq!(files[0].size_bytes, 25);
+    }
+
+    #[test]
+    fn rejects_unknown_source_manifest_keys() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: import_source
+source_id: jp-school-codes
+source_name: Demo school codes
+unknown_key: true
+files:
+  - logical_name: school_codes
+    path: demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("unknown key");
+        assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
+    }
+
+    #[test]
+    fn rejects_missing_source_manifest_schema_contract() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+source_id: jp-school-codes
+source_name: Demo school codes
+files:
+  - logical_name: school_codes
+    path: demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("missing schema contract");
+        assert!(format!("{error:#}").contains("missing field `schema_version`"));
+    }
+
+    #[test]
+    fn rejects_missing_source_manifest_kind() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+source_id: jp-school-codes
+source_name: Demo school codes
+files:
+  - logical_name: school_codes
+    path: demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("missing kind");
+        assert!(format!("{error:#}").contains("missing field `kind`"));
+    }
+
+    #[test]
+    fn lints_source_manifest_dir_recursively() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_dir = temp.path().join("sources").join("jp_school");
+        fs::create_dir_all(&manifest_dir).expect("manifest dir");
+        fs::write(
+            manifest_dir.join("example.yaml"),
+            r#"
+schema_version: 1
+kind: import_source
+source_id: jp-school-codes
+source_name: Demo school codes
+manifest_version: 1
+files:
+  - logical_name: school_codes
+    path: demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let summary = lint_source_manifest_dir(temp.path().join("sources")).expect("lint");
+        assert_eq!(summary.files.len(), 1);
+        assert_eq!(summary.files[0].source_id, "jp-school-codes");
+        assert_eq!(summary.files[0].file_count, 1);
     }
 }

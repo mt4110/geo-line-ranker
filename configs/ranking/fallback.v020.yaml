@@ -1,3 +1,5 @@
+schema_version: 0
+kind: ranking_fallback
 min_results: 2
 neighbor_penalty: 0.8
 neighbor_distance_cap_meters: 2500.0

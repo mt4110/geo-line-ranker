@@ -8,6 +8,9 @@ Run the full Rust validation set from the repository root:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
+cargo run -p cli -- config lint
+cargo run -p cli -- source-manifest lint
+cargo run -p crawler -- manifest lint
 ```
 
 When the local PostgreSQL container is memory constrained, the workspace test
@@ -60,6 +63,9 @@ Then run the local release candidate validation set:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
+cargo run -p cli -- config lint
+cargo run -p cli -- source-manifest lint
+cargo run -p crawler -- manifest lint
 just mvp-acceptance
 git diff --check
 ```
