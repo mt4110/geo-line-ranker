@@ -2145,8 +2145,7 @@ fn check_fixture_shape(
     fixture_path: &str,
     expected_shape: ParserExpectedShape,
 ) -> Result<(bool, String)> {
-    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-    let resolved_path = manifest_dir.join(fixture_path);
+    let resolved_path = resolve_fixture_path(manifest_path, fixture_path)?;
     let body = fs::read_to_string(&resolved_path)
         .with_context(|| format!("failed to read fixture {}", resolved_path.display()))?;
     let check = check_expected_shape(expected_shape, &body, fixture_content_type(&resolved_path));
@@ -2158,6 +2157,51 @@ fn check_fixture_shape(
             check.summary
         ),
     ))
+}
+
+fn resolve_fixture_path(manifest_path: &Path, fixture_path: &str) -> Result<PathBuf> {
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let resolved_path = manifest_dir.join(fixture_path);
+    let allowed_root = allowed_fixture_root(manifest_dir)?;
+    ensure!(
+        resolved_path.is_file(),
+        "fixture_path {} does not exist",
+        resolved_path.display()
+    );
+    let canonical_path = resolved_path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize fixture_path {}",
+            resolved_path.display(),
+        )
+    })?;
+    ensure!(
+        canonical_path.starts_with(&allowed_root),
+        "fixture_path {} resolves outside allowed fixture root {}",
+        resolved_path.display(),
+        allowed_root.display()
+    );
+    Ok(canonical_path)
+}
+
+fn allowed_fixture_root(manifest_dir: &Path) -> Result<PathBuf> {
+    let canonical_manifest_dir = manifest_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize crawl manifest dir {}",
+            manifest_dir.display()
+        )
+    })?;
+    for ancestor in canonical_manifest_dir.ancestors() {
+        let candidate = ancestor.join("storage").join("fixtures");
+        if candidate.is_dir() {
+            return candidate.canonicalize().with_context(|| {
+                format!(
+                    "failed to canonicalize fixture root {}",
+                    candidate.display()
+                )
+            });
+        }
+    }
+    Ok(canonical_manifest_dir)
 }
 
 pub async fn serve_manifest_dir(
@@ -3249,11 +3293,11 @@ mod tests {
     use tokio_postgres::NoTls;
 
     use super::{
-        classify_fetch_error_status, crawl_manifest_dir_once, format_doctor_summary,
-        format_dry_run_summary, format_health_summary, format_scaffold_summary,
-        lexical_relative_path, manifest_path_value, run_doctor_command, run_dry_run_command,
-        run_fetch_command, run_health_command, run_parse_command, scaffold_domain,
-        ScaffoldDomainRequest,
+        check_fixture_shape, classify_fetch_error_status, crawl_manifest_dir_once,
+        format_doctor_summary, format_dry_run_summary, format_health_summary,
+        format_scaffold_summary, lexical_relative_path, manifest_path_value, run_doctor_command,
+        run_dry_run_command, run_fetch_command, run_health_command, run_parse_command,
+        scaffold_domain, ScaffoldDomainRequest,
     };
 
     #[derive(Clone)]
@@ -3333,6 +3377,31 @@ mod tests {
             classify_fetch_error_status("failed to fetch https://example.com"),
             "fetch_failed"
         );
+    }
+
+    #[test]
+    fn check_fixture_shape_rejects_fixture_path_outside_storage_fixtures() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let manifest_dir = root.join("configs").join("crawler").join("sources");
+        std::fs::create_dir_all(&manifest_dir)?;
+        std::fs::create_dir_all(root.join("storage").join("fixtures").join("crawler"))?;
+        std::fs::write(
+            root.join("outside_fixture.html"),
+            "<html><body><h1>Outside</h1></body></html>",
+        )?;
+        let manifest_path = manifest_dir.join("custom.yaml");
+        std::fs::write(&manifest_path, "placeholder")?;
+
+        let error = check_fixture_shape(
+            &manifest_path,
+            "../../../outside_fixture.html",
+            ParserExpectedShape::HtmlHeadingPage,
+        )
+        .expect_err("outside fixture");
+
+        assert!(format!("{error:#}").contains("outside allowed fixture root"));
+        Ok(())
     }
 
     #[tokio::test]

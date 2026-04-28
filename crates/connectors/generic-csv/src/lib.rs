@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use anyhow::{bail, ensure, Context, Result};
@@ -125,6 +125,27 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<SourceManifest> {
             path.display(),
             file.logical_name
         );
+        let source_path = Path::new(&file.path);
+        ensure!(
+            !file.path.contains('\\') && !has_windows_drive_prefix(&file.path),
+            "source manifest {} file {} path must use portable POSIX relative syntax",
+            path.display(),
+            file.logical_name
+        );
+        ensure!(
+            !source_path.is_absolute(),
+            "source manifest {} file {} path must be relative",
+            path.display(),
+            file.logical_name
+        );
+        ensure!(
+            !source_path.components().any(|component| {
+                matches!(component, Component::Prefix(_) | Component::RootDir)
+            }),
+            "source manifest {} file {} path must be relative without a root or prefix",
+            path.display(),
+            file.logical_name
+        );
         ensure!(
             file.format == "csv",
             "source manifest {} file {} uses unsupported format {}; expected csv",
@@ -134,6 +155,11 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<SourceManifest> {
         );
     }
     Ok(manifest)
+}
+
+fn has_windows_drive_prefix(raw_path: &str) -> bool {
+    let bytes = raw_path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 pub fn lint_source_manifest_file(path: impl AsRef<Path>) -> Result<SourceManifestLintFile> {
@@ -450,6 +476,29 @@ files:
 
         let error = load_manifest(&manifest_path).expect_err("missing manifest_version");
         assert!(format!("{error:#}").contains("missing field `manifest_version`"));
+    }
+
+    #[test]
+    fn rejects_windows_style_source_manifest_file_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: import_source
+source_id: jp-school-codes
+source_name: Demo school codes
+manifest_version: 1
+files:
+  - logical_name: school_codes
+    path: C:/fixtures/demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("windows-style source path");
+        assert!(format!("{error:#}").contains("portable POSIX relative syntax"));
     }
 
     #[test]

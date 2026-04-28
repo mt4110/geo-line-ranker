@@ -686,6 +686,12 @@ fn normalize_fixture_manifest_path(
     logical_name: &str,
     raw_path: &str,
 ) -> Result<PathBuf> {
+    ensure!(
+        !raw_path.contains('\\') && !has_windows_drive_prefix(raw_path),
+        "fixture manifest {} file {} path must use portable POSIX relative syntax",
+        manifest_path.display(),
+        logical_name
+    );
     let path = Path::new(raw_path);
     ensure!(
         !path.is_absolute(),
@@ -722,6 +728,11 @@ fn normalize_fixture_manifest_path(
         logical_name
     );
     Ok(normalized)
+}
+
+fn has_windows_drive_prefix(raw_path: &str) -> bool {
+    let bytes = raw_path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn manifest_path_value(path: &Path) -> String {
@@ -1448,6 +1459,30 @@ files:
 
         let error = run_fixture_doctor(temp.path()).expect_err("duplicate normalized path");
         assert!(format!("{error:#}").contains("duplicate path data.csv"));
+    }
+
+    #[test]
+    fn fixture_doctor_rejects_windows_style_fixture_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("fixture_manifest.yaml"),
+            r#"
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+fixture_set_id: test
+files:
+  - logical_name: data
+    path: C:/fixtures/data.csv
+    format: csv
+    checksum_sha256: deadbeef
+    row_count: 1
+"#,
+        )
+        .expect("manifest");
+
+        let error = run_fixture_doctor(temp.path()).expect_err("windows-style path");
+        assert!(format!("{error:#}").contains("portable POSIX relative syntax"));
     }
 
     #[test]

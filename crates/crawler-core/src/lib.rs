@@ -1743,6 +1743,7 @@ fn validate_manifest(manifest: &CrawlSourceManifest, path: &Path) -> Result<()> 
             target.logical_name
         );
         if let Some(fixture_path) = &target.fixture_path {
+            let fixture_path_value = Path::new(fixture_path);
             ensure!(
                 !fixture_path.trim().is_empty(),
                 "crawl manifest {} target {} has an empty fixture_path",
@@ -1750,8 +1751,25 @@ fn validate_manifest(manifest: &CrawlSourceManifest, path: &Path) -> Result<()> 
                 target.logical_name
             );
             ensure!(
-                !Path::new(fixture_path).is_absolute(),
+                !fixture_path.contains('\\') && !has_windows_drive_prefix(fixture_path),
+                "crawl manifest {} target {} fixture_path must use portable POSIX relative syntax",
+                path.display(),
+                target.logical_name
+            );
+            ensure!(
+                !fixture_path_value.is_absolute(),
                 "crawl manifest {} target {} fixture_path must be relative",
+                path.display(),
+                target.logical_name
+            );
+            ensure!(
+                !fixture_path_value.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::Prefix(_) | std::path::Component::RootDir
+                    )
+                }),
+                "crawl manifest {} target {} fixture_path must be relative without a root or prefix",
                 path.display(),
                 target.logical_name
             );
@@ -1759,6 +1777,11 @@ fn validate_manifest(manifest: &CrawlSourceManifest, path: &Path) -> Result<()> 
     }
 
     Ok(())
+}
+
+fn has_windows_drive_prefix(raw_path: &str) -> bool {
+    let bytes = raw_path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn validate_fixture_paths(
@@ -3355,6 +3378,39 @@ targets:
 
         let error = lint_manifest_file(&manifest_path).expect_err("fixture outside root");
         assert!(format!("{error:#}").contains("must stay under"));
+    }
+
+    #[test]
+    fn manifest_rejects_windows_style_fixture_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("crawler.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: crawler_source
+manifest_version: 1
+source_id: custom-example
+source_name: Custom example
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+    fixture_path: C:/fixtures/example.html
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("windows-style fixture path");
+        assert!(format!("{error:#}").contains("portable POSIX relative syntax"));
     }
 
     #[test]
