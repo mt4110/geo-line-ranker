@@ -444,8 +444,15 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<CrawlSourceManifest> {
 
 pub fn lint_manifest_file(path: impl AsRef<Path>) -> Result<CrawlManifestLintFile> {
     let path = path.as_ref();
-    let manifest = load_manifest(path)?;
     let registry = ParserRegistry::default();
+    lint_manifest_file_with_registry(path, &registry)
+}
+
+fn lint_manifest_file_with_registry(
+    path: &Path,
+    registry: &ParserRegistry,
+) -> Result<CrawlManifestLintFile> {
+    let manifest = load_manifest(path)?;
     let parser = registry.get(&manifest.parser_key).with_context(|| {
         format!(
             "crawl manifest {} parser_key {} is not registered",
@@ -479,9 +486,10 @@ pub fn lint_manifest_file(path: impl AsRef<Path>) -> Result<CrawlManifestLintFil
 
 pub fn lint_manifest_dir(path: impl AsRef<Path>) -> Result<CrawlManifestLintSummary> {
     let path = path.as_ref();
+    let registry = ParserRegistry::default();
     let mut files = Vec::new();
     for manifest_path in list_yaml_paths(path)? {
-        files.push(lint_manifest_file(manifest_path)?);
+        files.push(lint_manifest_file_with_registry(&manifest_path, &registry)?);
     }
     if files.is_empty() {
         if path.is_file() {

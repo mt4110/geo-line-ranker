@@ -1,0 +1,5 @@
+# Keep fixture checksums stable across platforms.
+storage/fixtures/**/*.csv text eol=lf
+storage/fixtures/**/*.html text eol=lf
+storage/fixtures/**/*.ndjson text eol=lf
+storage/fixtures/**/*.yaml text eol=lf

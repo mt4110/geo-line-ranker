@@ -677,10 +677,10 @@ fn build_scaffold_manifest(
 ) -> String {
     let preset = infer_scaffold_template_preset(request, host, parsed_target);
     let live_fetch_enabled = request.source_maturity == SourceMaturity::LiveReady;
-    let fixture_path = lexical_relative_path(
+    let fixture_path = manifest_path_value(&lexical_relative_path(
         &request.manifest_dir,
         &request.fixture_dir.join(fixture_name),
-    );
+    ));
     let block_reason = if live_fetch_enabled {
         String::new()
     } else {
@@ -707,8 +707,12 @@ fn build_scaffold_manifest(
         priority_weight = format_priority_weight(preset.priority_weight),
         logical_name = preset.logical_name,
         target_url = request.target_url,
-        fixture_path = fixture_path.display()
+        fixture_path = fixture_path
     )
+}
+
+fn manifest_path_value(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn lexical_relative_path(from_dir: &Path, to_path: &Path) -> PathBuf {
@@ -1588,7 +1592,10 @@ pub async fn run_doctor_command(
                                     target.logical_name, error
                                 ),
                             });
-                            (Some("fetch_failed".to_string()), Some(error.to_string()))
+                            (
+                                Some("fixture_read_failed".to_string()),
+                                Some(error.to_string()),
+                            )
                         }
                     }
                 } else {
@@ -3190,7 +3197,7 @@ async fn load_recent_reason_trend(
 #[cfg(test)]
 mod tests {
     use std::{
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
@@ -3211,9 +3218,9 @@ mod tests {
 
     use super::{
         classify_fetch_error_status, crawl_manifest_dir_once, format_doctor_summary,
-        format_dry_run_summary, format_health_summary, format_scaffold_summary, run_doctor_command,
-        run_dry_run_command, run_fetch_command, run_health_command, run_parse_command,
-        scaffold_domain, ScaffoldDomainRequest,
+        format_dry_run_summary, format_health_summary, format_scaffold_summary,
+        manifest_path_value, run_doctor_command, run_dry_run_command, run_fetch_command,
+        run_health_command, run_parse_command, scaffold_domain, ScaffoldDomainRequest,
     };
 
     #[derive(Clone)]
@@ -6227,6 +6234,12 @@ targets:
         assert!(summary_text.contains("expected_shape=html_monthly_dl_pairs"));
 
         Ok(())
+    }
+
+    #[test]
+    fn manifest_path_value_normalizes_backslashes() {
+        let value = manifest_path_value(Path::new("..\\storage\\fixtures\\crawler\\sample.html"));
+        assert_eq!(value, "../storage/fixtures/crawler/sample.html");
     }
 
     #[test]
