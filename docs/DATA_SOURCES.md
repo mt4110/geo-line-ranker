@@ -13,7 +13,9 @@ Phase 2 adds adapter paths for four Japanese public data families. Phase 6 adds 
 ## What is committed
 
 - Small demo fixtures under `storage/fixtures/demo_jp/`
-- Fixture manifests under `storage/fixtures/*/fixture_manifest.yaml`
+- Fixture manifests for fixture set directories such as
+  `storage/fixtures/minimal/fixture_manifest.yaml` and
+  `storage/fixtures/demo_jp/fixture_manifest.yaml`
 - Example manifests under `storage/sources/*/example.yaml`
 - Example crawl manifests under `configs/crawler/sources/*.yaml`
 - Generated crawl scaffold notes under `docs/crawler_scaffolds/` when you use `crawler scaffold-domain`

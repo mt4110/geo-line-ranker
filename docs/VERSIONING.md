@@ -96,7 +96,8 @@ cargo run -p crawler -- manifest lint
 
 ## Fixture Sets
 
-Committed fixture directories carry `fixture_manifest.yaml`:
+Committed fixture set directories, such as `storage/fixtures/minimal` and
+`storage/fixtures/demo_jp`, carry `fixture_manifest.yaml`:
 
 ```yaml
 schema_version: 1
