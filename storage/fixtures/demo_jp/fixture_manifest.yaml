@@ -1,0 +1,26 @@
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+fixture_set_id: demo_jp
+description: Small JP adapter fixture set for deterministic import smoke tests.
+files:
+  - logical_name: school_codes
+    path: jp_school_codes.csv
+    format: csv
+    checksum_sha256: f408144a72617d413bf1fa7e274e62a4e15e07b743d982f2d8a96b75a86672fa
+    row_count: 3
+  - logical_name: school_geodata
+    path: jp_school_geodata.csv
+    format: csv
+    checksum_sha256: 3331b9a1fc2f074d4f23351dd6c0a85a85ff9529618d75c29d9f88b3419569b4
+    row_count: 3
+  - logical_name: rail_stations
+    path: jp_rail_stations.csv
+    format: csv
+    checksum_sha256: 965edad4e7718f680c71ecd0c5471613af01117d413b2ff3fe4c3e229a206da2
+    row_count: 3
+  - logical_name: postal_codes
+    path: jp_postal_codes.csv
+    format: csv
+    checksum_sha256: 9e33ed0667665f0520c64c3afa33ca386956b2b2a8ad24d9db54813e75197dc0
+    row_count: 3

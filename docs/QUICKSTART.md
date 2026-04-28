@@ -33,11 +33,17 @@ cargo run -p cli -- seed example
 ```
 
 Fixture files live in `storage/fixtures/minimal/`.
+Verify the committed fixture manifest and checksums when fixture files change:
+
+```bash
+cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+```
 
 ## 5. Optional Phase 2 JP demo import
 
 ```bash
 cargo run -p cli -- fixtures generate-demo-jp
+cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p cli -- import jp-rail --manifest storage/sources/jp_rail/example.yaml
 cargo run -p cli -- import jp-postal --manifest storage/sources/jp_postal/example.yaml
 cargo run -p cli -- import jp-school-codes --manifest storage/sources/jp_school/example.yaml

@@ -77,6 +77,11 @@ remains the source-authored manifest revision recorded in import and crawler
 audit tables. Committed manifests must declare these fields explicitly so lint
 can catch partially migrated files.
 
+Import source lint also checks that committed manifest file paths resolve to
+local CSV files. Crawler manifest lint checks parser registration,
+`expected_shape` compatibility, and any declared target fixture paths without
+fetching live content.
+
 Run import source manifest lint locally:
 
 ```bash
@@ -87,6 +92,28 @@ Run crawler manifest lint locally:
 
 ```bash
 cargo run -p crawler -- manifest lint
+```
+
+## Fixture Sets
+
+Committed fixture set directories, such as `storage/fixtures/minimal` and
+`storage/fixtures/demo_jp`, carry `fixture_manifest.yaml`:
+
+```yaml
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+```
+
+The fixture manifest records each fixture file's relative path, format,
+checksum, and row count. `manifest_version` is the source-authored revision for
+the fixture set; bump it when the fixture contract changes.
+
+Run fixture doctor locally:
+
+```bash
+cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
+cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 ```
 
 ## Reason Codes

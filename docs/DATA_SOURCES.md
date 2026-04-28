@@ -13,6 +13,9 @@ Phase 2 adds adapter paths for four Japanese public data families. Phase 6 adds 
 ## What is committed
 
 - Small demo fixtures under `storage/fixtures/demo_jp/`
+- Fixture manifests for fixture set directories such as
+  `storage/fixtures/minimal/fixture_manifest.yaml` and
+  `storage/fixtures/demo_jp/fixture_manifest.yaml`
 - Example manifests under `storage/sources/*/example.yaml`
 - Example crawl manifests under `configs/crawler/sources/*.yaml`
 - Generated crawl scaffold notes under `docs/crawler_scaffolds/` when you use `crawler scaffold-domain`
@@ -44,10 +47,16 @@ Crawler model:
 ## Notes
 
 - The committed demo fixtures mimic the adapter shape and stay small on purpose.
+- Fixture manifests record per-file checksums and row counts; use
+  `cargo run -p cli -- fixtures doctor --path ...` before trusting a changed
+  fixture set.
 - Production usage should point manifests at separately managed source files.
 - Provenance for each run lives in `source_manifests`, `import_runs`, `import_run_files`, and `import_reports`.
 - Crawl provenance for allowlist sources lives in `source_manifests`, `crawl_runs`, `crawl_fetch_logs`, `crawl_parse_reports`, and `crawl_dedupe_reports`.
 - Crawl manifests can declare `source_maturity` and `expected_shape` so operators can separate `live_ready`, `policy_blocked`, and `parser_only` sources while keeping doctor checks shape-aware.
+- Crawl targets may declare `fixture_path` so `crawler doctor` and manifest lint
+  can verify parser shape against committed local HTML/JSON without making live
+  fetch mandatory.
 - `configs/crawler/sources/utokyo_events.yaml` points at the public `events.json` feed and keeps parser output bounded to the newest 60 dated items per run.
 - The U-Tokyo manifest uses `school_id: school_utokyo`; production import still requires a matching row in `schools`.
 - `configs/crawler/sources/keio_events.yaml` reads the public event listing pages and extracts deterministic card rows with start date, optional end date, venue, registration flag, and detail URL.

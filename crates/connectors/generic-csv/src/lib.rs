@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use anyhow::{bail, ensure, Context, Result};
@@ -31,7 +31,6 @@ pub struct SourceManifest {
     pub kind: SourceManifestKind,
     pub source_id: String,
     pub source_name: String,
-    #[serde(default = "default_manifest_version")]
     pub manifest_version: u32,
     #[serde(default)]
     pub parser_version: Option<String>,
@@ -107,12 +106,76 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<SourceManifest> {
         "source manifest {} does not list any files",
         path.display()
     );
+    let mut logical_names = std::collections::BTreeSet::new();
+    for file in &manifest.files {
+        ensure!(
+            !file.logical_name.trim().is_empty(),
+            "source manifest {} contains a file with empty logical_name",
+            path.display()
+        );
+        ensure!(
+            logical_names.insert(file.logical_name.clone()),
+            "source manifest {} contains duplicate logical_name {}",
+            path.display(),
+            file.logical_name
+        );
+        ensure!(
+            !file.path.trim().is_empty(),
+            "source manifest {} file {} has an empty path",
+            path.display(),
+            file.logical_name
+        );
+        let source_path = Path::new(&file.path);
+        ensure!(
+            !file.path.contains('\\') && !has_windows_drive_prefix(&file.path),
+            "source manifest {} file {} path must use portable POSIX relative syntax",
+            path.display(),
+            file.logical_name
+        );
+        ensure!(
+            !source_path.is_absolute(),
+            "source manifest {} file {} path must be relative",
+            path.display(),
+            file.logical_name
+        );
+        ensure!(
+            !source_path.components().any(|component| {
+                matches!(component, Component::Prefix(_) | Component::RootDir)
+            }),
+            "source manifest {} file {} path must be relative without a root or prefix",
+            path.display(),
+            file.logical_name
+        );
+        ensure!(
+            file.format == "csv",
+            "source manifest {} file {} uses unsupported format {}; expected csv",
+            path.display(),
+            file.logical_name,
+            file.format
+        );
+    }
     Ok(manifest)
+}
+
+fn has_windows_drive_prefix(raw_path: &str) -> bool {
+    let bytes = raw_path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 pub fn lint_source_manifest_file(path: impl AsRef<Path>) -> Result<SourceManifestLintFile> {
     let path = path.as_ref();
     let manifest = load_manifest(path)?;
+    let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    for file in &manifest.files {
+        let source_path = manifest_dir.join(&file.path);
+        ensure!(
+            source_path.is_file(),
+            "source manifest {} file {} points to missing source file {}",
+            path.display(),
+            file.logical_name,
+            source_path.display()
+        );
+    }
     Ok(SourceManifestLintFile {
         path: path.to_path_buf(),
         source_id: manifest.source_id,
@@ -248,10 +311,6 @@ fn prepare_csv_file(
     })
 }
 
-fn default_manifest_version() -> u32 {
-    1
-}
-
 fn default_format() -> String {
     "csv".to_string()
 }
@@ -313,6 +372,7 @@ schema_version: 1
 kind: import_source
 source_id: jp-school-codes
 source_name: Demo school codes
+manifest_version: 1
 files:
   - logical_name: school_codes
     path: ../fixtures/demo.csv
@@ -341,6 +401,7 @@ schema_version: 1
 kind: import_source
 source_id: jp-school-codes
 source_name: Demo school codes
+manifest_version: 1
 unknown_key: true
 files:
   - logical_name: school_codes
@@ -383,6 +444,7 @@ files:
 schema_version: 1
 source_id: jp-school-codes
 source_name: Demo school codes
+manifest_version: 1
 files:
   - logical_name: school_codes
     path: demo.csv
@@ -395,10 +457,56 @@ files:
     }
 
     #[test]
+    fn rejects_missing_source_manifest_version() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: import_source
+source_id: jp-school-codes
+source_name: Demo school codes
+files:
+  - logical_name: school_codes
+    path: demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("missing manifest_version");
+        assert!(format!("{error:#}").contains("missing field `manifest_version`"));
+    }
+
+    #[test]
+    fn rejects_windows_style_source_manifest_file_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: import_source
+source_id: jp-school-codes
+source_name: Demo school codes
+manifest_version: 1
+files:
+  - logical_name: school_codes
+    path: C:/fixtures/demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("windows-style source path");
+        assert!(format!("{error:#}").contains("portable POSIX relative syntax"));
+    }
+
+    #[test]
     fn lints_source_manifest_dir_recursively() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_dir = temp.path().join("sources").join("jp_school");
         fs::create_dir_all(&manifest_dir).expect("manifest dir");
+        fs::write(manifest_dir.join("demo.csv"), "id,name\n1,Example\n").expect("fixture");
         fs::write(
             manifest_dir.join("example.yaml"),
             r#"
@@ -418,5 +526,28 @@ files:
         assert_eq!(summary.files.len(), 1);
         assert_eq!(summary.files[0].source_id, "jp-school-codes");
         assert_eq!(summary.files[0].file_count, 1);
+    }
+
+    #[test]
+    fn lint_rejects_missing_source_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: import_source
+source_id: jp-school-codes
+source_name: Demo school codes
+manifest_version: 1
+files:
+  - logical_name: school_codes
+    path: missing.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = lint_source_manifest_file(&manifest_path).expect_err("missing source file");
+        assert!(format!("{error:#}").contains("points to missing source file"));
     }
 }

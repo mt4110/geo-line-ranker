@@ -85,7 +85,8 @@ This gate deliberately starts only PostgreSQL/PostGIS and Redis, forces `CANDIDA
 For release candidate evidence, capture the local validation results
 (`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --workspace`, and `git diff --check`), CI status, release notes,
+`cargo test --workspace`, config/source/crawler manifest lint, fixture doctor,
+and `git diff --check`), CI status, release notes,
 and the required `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
 evidence. The data quality doctor is required evidence capture for release
 readiness; strict mode makes doctor warnings fail the evidence step, but it
@@ -275,6 +276,9 @@ Operational notes:
 - raw HTML is checksum-staged under `.storage/raw/<source_id>/...`
 - crawler failures do not stop the API, worker, or CSV importer
 - parser selection is registry-driven per manifest `parser_key`
+- target `fixture_path` entries let `crawler doctor` verify parser shape for
+  parser-only or policy-blocked sources without turning live crawl into a
+  release requirement
 - crawl output lands in `events` with `source_type = 'crawl'`
 - `crawler health` summarizes recent run state without needing ad hoc SQL first
 - `crawler doctor` checks robots/terms redirects, content types, parser registration, school presence, and target `expected_shape` before you chase a live failure

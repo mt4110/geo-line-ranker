@@ -27,3 +27,4 @@ defaults:
 targets:
   - logical_name: junior_session_page
     url: https://www.hachioji.ed.jp/junr/exam/session/
+    fixture_path: ../../../storage/fixtures/crawler/hachioji_junior_session_tables.html
