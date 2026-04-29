@@ -1455,6 +1455,7 @@ fn env_optional_non_empty(name: &str) -> Result<Option<String>> {
 
 fn env_path(name: &str, default: PathBuf) -> Result<PathBuf> {
     match env::var(name) {
+        Ok(raw) if raw.is_empty() => Ok(default),
         Ok(raw) => Ok(resolve_runtime_path(raw)),
         Err(env::VarError::NotPresent) => Ok(default),
         Err(env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
@@ -1780,6 +1781,24 @@ files: []
         assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
         assert!(settings.profile_pack_manifest.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
+        clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_treats_empty_profile_packs_dir_as_default() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+
+        env::set_var("PROFILE_PACKS_DIR", "");
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env().expect("settings");
+
+        assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
+        assert!(settings
+            .profile_pack_manifest
+            .ends_with("configs/profiles/local-discovery-generic/profile.yaml"));
+        assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
         clear_app_env();
     }
 

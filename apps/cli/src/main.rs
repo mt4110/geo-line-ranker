@@ -343,11 +343,27 @@ async fn main() -> anyhow::Result<()> {
                     "PROFILE_PACKS_DIR",
                     PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
                 )?);
-                let active_profile = active_profile_selection_for_lint(&profiles_path)?;
-                let path = path.unwrap_or(env_path_or_default(
-                    "RANKING_CONFIG_DIR",
-                    active_profile.ranking_config_dir.clone(),
-                )?);
+                let ranking_config_dir_override =
+                    env_path_optional_non_empty("RANKING_CONFIG_DIR")?;
+                let path = path.map(resolve_runtime_path);
+                let needs_active_profile = path.is_none() && ranking_config_dir_override.is_none();
+                let active_profile = active_profile_selection_for_lint(&profiles_path)
+                    .map(Some)
+                    .or_else(|error| {
+                        if needs_active_profile {
+                            Err(error)
+                        } else {
+                            Ok(None)
+                        }
+                    })?;
+                let path = path
+                    .or(ranking_config_dir_override)
+                    .or_else(|| {
+                        active_profile
+                            .as_ref()
+                            .map(|profile| profile.ranking_config_dir.clone())
+                    })
+                    .context("active profile selection is required to choose ranking config dir")?;
                 let profile_summary = lint_profile_pack_dir(profiles_path)?;
                 let ranking_summary =
                     match cached_ranking_summary_for_path(&profile_summary, &path)? {
@@ -357,8 +373,12 @@ async fn main() -> anyhow::Result<()> {
                 println!(
                     "{}",
                     format_config_lint_summary(
-                        &active_profile.profile_id,
-                        active_profile.fixture_set_id.as_deref(),
+                        active_profile
+                            .as_ref()
+                            .map(|profile| profile.profile_id.as_str()),
+                        active_profile
+                            .as_ref()
+                            .and_then(|profile| profile.fixture_set_id.as_deref()),
                         &ranking_summary,
                         &profile_summary
                     )
@@ -431,6 +451,15 @@ fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> 
     }
 }
 
+fn env_path_optional_non_empty(name: &str) -> anyhow::Result<Option<PathBuf>> {
+    match std::env::var(name) {
+        Ok(raw) if raw.is_empty() => Ok(None),
+        Ok(raw) => Ok(Some(resolve_runtime_path(raw))),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
+}
+
 fn env_string_or_default(name: &str, default: &str) -> anyhow::Result<String> {
     match std::env::var(name) {
         Ok(raw) if raw.is_empty() => Ok(default.to_string()),
@@ -478,15 +507,16 @@ fn ranking_summary_with_base_path(
 }
 
 fn format_config_lint_summary(
-    active_profile_id: &str,
+    active_profile_id: Option<&str>,
     fixture_set_id: Option<&str>,
     ranking: &RankingConfigLintSummary,
     profiles: &ProfilePackLintSummary,
 ) -> String {
+    let active_profile = active_profile_id.unwrap_or("not-selected");
     let fixture_set = fixture_set_id.unwrap_or("none");
     let mut lines = vec![format!(
         "config lint ok: active_profile_id={}, fixture_set_id={}, ranking_files={}, profile_packs={}, profile_version={}",
-        active_profile_id,
+        active_profile,
         fixture_set,
         ranking.files.len(),
         profiles.files.len(),
