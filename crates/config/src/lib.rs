@@ -88,14 +88,30 @@ pub struct AppSettings {
 
 impl AppSettings {
     pub fn from_env() -> Result<Self> {
-        Self::from_env_with_profile_pack(ProfilePackRuntimeMode::Resolve)
+        Self::from_env_with_profile_pack(
+            ProfilePackRuntimeMode::Resolve,
+            FixtureRuntimeRequirement::Optional,
+        )
+    }
+
+    pub fn from_env_requiring_fixture() -> Result<Self> {
+        Self::from_env_with_profile_pack(
+            ProfilePackRuntimeMode::Resolve,
+            FixtureRuntimeRequirement::Required,
+        )
     }
 
     pub fn from_env_without_profile_pack() -> Result<Self> {
-        Self::from_env_with_profile_pack(ProfilePackRuntimeMode::Skip)
+        Self::from_env_with_profile_pack(
+            ProfilePackRuntimeMode::Skip,
+            FixtureRuntimeRequirement::Optional,
+        )
     }
 
-    fn from_env_with_profile_pack(profile_pack_mode: ProfilePackRuntimeMode) -> Result<Self> {
+    fn from_env_with_profile_pack(
+        profile_pack_mode: ProfilePackRuntimeMode,
+        fixture_requirement: FixtureRuntimeRequirement,
+    ) -> Result<Self> {
         load_dotenv();
 
         let (ranking_config_dir_override, fixture_dir_override, profile_id, runtime_profile) =
@@ -137,14 +153,18 @@ impl AppSettings {
             (None, None) => resolve_runtime_path(DEFAULT_RANKING_CONFIG_DIR),
         };
         let fixture_dir = match (fixture_dir_override, runtime_profile.as_ref()) {
-            (Some(path), _) => path,
-            (None, Some(profile)) => profile.fixture_dir.clone().with_context(|| {
-                format!(
-                    "profile pack {} does not declare a runtime fixture; set FIXTURE_DIR explicitly",
-                    profile.profile_pack_manifest.display()
-                )
-            })?,
-            (None, None) => resolve_runtime_path(DEFAULT_FIXTURE_DIR),
+            (Some(path), _) => Some(path),
+            (None, Some(profile)) => match profile.fixture_dir.clone() {
+                Some(path) => Some(path),
+                None if fixture_requirement == FixtureRuntimeRequirement::Required => {
+                    anyhow::bail!(
+                        "profile pack {} does not declare a runtime fixture; set FIXTURE_DIR explicitly",
+                        profile.profile_pack_manifest.display()
+                    );
+                }
+                None => None,
+            },
+            (None, None) => Some(resolve_runtime_path(DEFAULT_FIXTURE_DIR)),
         };
 
         let candidate_retrieval_mode =
@@ -176,7 +196,9 @@ impl AppSettings {
                 .as_ref()
                 .and_then(|profile| profile.fixture_set_id.clone()),
             ranking_config_dir: ranking_config_dir.display().to_string(),
-            fixture_dir: fixture_dir.display().to_string(),
+            fixture_dir: fixture_dir
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
             raw_storage_dir: env_string("RAW_STORAGE_DIR", ".storage/raw".to_string())?,
             algorithm_version: env_string(
                 "ALGORITHM_VERSION",
@@ -206,6 +228,12 @@ impl AppSettings {
 enum ProfilePackRuntimeMode {
     Resolve,
     Skip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FixtureRuntimeRequirement {
+    Optional,
+    Required,
 }
 
 pub fn load_dotenv() {
@@ -764,10 +792,12 @@ pub fn resolve_profile_pack_runtime_selection(
         profile_id,
         PROFILE_ID_RULE_DESCRIPTION
     );
-    let profile_pack_manifest = profile_packs_dir
-        .as_ref()
-        .join(profile_id)
-        .join("profile.yaml");
+    let profile_pack_path = profile_packs_dir.as_ref();
+    let profile_pack_manifest = if profile_pack_path.is_file() {
+        profile_pack_path.to_path_buf()
+    } else {
+        profile_pack_path.join(profile_id).join("profile.yaml")
+    };
     let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
         format!(
             "failed to canonicalize profile pack manifest {}",
@@ -1753,6 +1783,46 @@ files: []
     }
 
     #[test]
+    fn resolves_runtime_selection_from_profile_yaml_file() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "example-profile",
+        );
+
+        let selection = resolve_profile_pack_runtime_selection(
+            profile_dir.join("profile.yaml"),
+            "example-profile",
+            None,
+        )
+        .expect("runtime selection");
+
+        assert_eq!(selection.profile_id, "example-profile");
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().expect("ranking dir")
+        );
+        assert_eq!(
+            selection.fixture_dir,
+            Some(fixture_dir.canonicalize().expect("fixture dir"))
+        );
+    }
+
+    #[test]
     fn runtime_selection_does_not_require_fixture_files_until_used() {
         let temp = tempdir().expect("tempdir");
         let profiles_dir = temp.path().join("profiles");
@@ -1878,7 +1948,7 @@ files: []
     }
 
     #[test]
-    fn app_settings_requires_fixture_override_for_profile_without_fixtures() {
+    fn app_settings_allows_ranking_only_profile_without_fixtures() {
         let _env_guard = env_lock().lock().expect("env lock");
         clear_app_env();
         let temp = tempdir().expect("tempdir");
@@ -1914,7 +1984,20 @@ article_support: reserved
         env::set_var("FIXTURE_DIR", "");
         env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
 
-        let error = AppSettings::from_env().expect_err("fixture override required");
+        let settings = AppSettings::from_env().expect("ranking-only settings");
+
+        assert_eq!(
+            settings.ranking_config_dir,
+            ranking_dir
+                .canonicalize()
+                .expect("ranking dir")
+                .display()
+                .to_string()
+        );
+        assert!(settings.fixture_dir.is_empty());
+
+        let error =
+            AppSettings::from_env_requiring_fixture().expect_err("fixture override required");
 
         assert!(format!("{error:#}").contains("does not declare a runtime fixture"));
         clear_app_env();

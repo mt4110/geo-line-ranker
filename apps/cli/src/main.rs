@@ -14,9 +14,10 @@ use cli::{
     run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
 use config::{
-    lint_profile_pack_dir, lint_ranking_config_dir, resolve_profile_pack_runtime_selection,
-    resolve_runtime_path, AppSettings, ProfilePackLintSummary, RankingConfigLintSummary,
-    DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
+    lint_profile_pack_dir, lint_ranking_config_dir, load_profile_pack_manifest,
+    resolve_profile_pack_runtime_selection, resolve_runtime_path, AppSettings,
+    ProfilePackLintSummary, RankingConfigLintSummary, DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_PACKS_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
@@ -243,7 +244,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Seed { target } => match target {
             SeedTarget::Example => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_requiring_fixture()?;
                 seed_fixture(&settings.database_url, &settings.fixture_dir).await?
             }
         },
@@ -438,9 +439,20 @@ async fn main() -> anyhow::Result<()> {
 fn active_profile_selection_for_lint(
     profiles_path: &Path,
 ) -> anyhow::Result<config::ProfilePackRuntimeSelection> {
-    let profile_id = env_string_or_default("PROFILE_ID", DEFAULT_PROFILE_ID)?;
+    let profile_id = profile_id_for_lint(profiles_path)?;
     let fixture_set_id = env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
     resolve_profile_pack_runtime_selection(profiles_path, &profile_id, fixture_set_id.as_deref())
+}
+
+fn profile_id_for_lint(profiles_path: &Path) -> anyhow::Result<String> {
+    match std::env::var("PROFILE_ID") {
+        Ok(raw) => Ok(raw),
+        Err(std::env::VarError::NotPresent) if profiles_path.is_file() => {
+            Ok(load_profile_pack_manifest(profiles_path)?.profile_id)
+        }
+        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_PROFILE_ID.to_string()),
+        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("PROFILE_ID must be valid unicode"),
+    }
 }
 
 fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> {
@@ -457,14 +469,6 @@ fn env_path_optional_non_empty(name: &str) -> anyhow::Result<Option<PathBuf>> {
         Ok(raw) if raw.is_empty() => Ok(None),
         Ok(raw) => Ok(Some(resolve_runtime_path(raw))),
         Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
-    }
-}
-
-fn env_string_or_default(name: &str, default: &str) -> anyhow::Result<String> {
-    match std::env::var(name) {
-        Ok(raw) => Ok(raw),
-        Err(std::env::VarError::NotPresent) => Ok(default.to_string()),
         Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
     }
 }

@@ -53,6 +53,8 @@ mode: the explicit directory is used, the other directory falls back to its
 built-in default, and startup does not require profile pack IO.
 `PROFILE_FIXTURE_SET_ID` is optional; when omitted, the first fixture declared
 by the selected profile is used.
+Profiles may omit fixtures for ranking-only runtimes. Commands that consume
+fixtures require either a selected profile fixture or an explicit `FIXTURE_DIR`.
 
 CLI commands that do not consume ranking configs or fixtures, such as
 `migrate`, explicit-manifest imports, `derive`, `index`, `projection`, and
