@@ -38,7 +38,7 @@ cargo run -p cli -- config lint
 
 ## Runtime Selection
 
-API, worker, CLI, and most crawler commands select
+API, worker, and ranking/fixture-consuming CLI commands select
 `local-discovery-generic` by default:
 
 ```bash
@@ -58,7 +58,8 @@ fixtures require either a selected profile fixture or an explicit `FIXTURE_DIR`.
 
 CLI commands that do not consume ranking configs or fixtures, such as
 `migrate`, explicit-manifest imports, `derive`, `index`, `projection`, and
-`jobs`, avoid profile pack IO.
+`jobs`, avoid profile pack IO. Crawler commands also avoid profile pack IO
+because crawler manifests carry their own source inputs.
 
 ## Boundary
 

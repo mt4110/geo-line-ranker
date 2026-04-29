@@ -425,32 +425,32 @@ async fn main() -> anyhow::Result<()> {
         poll_interval_secs: 300,
     }) {
         Command::Fetch { manifest } => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = run_fetch_command(&settings, manifest).await?;
             println!("{}", format_summary(&summary));
         }
         Command::Parse { manifest } => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = run_parse_command(&settings, manifest).await?;
             println!("{}", format_summary(&summary));
         }
         Command::Run { manifest } => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = run_crawl_command(&settings, manifest).await?;
             println!("{}", format_summary(&summary));
         }
         Command::Health { manifest, limit } => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = run_health_command(&settings, manifest, limit).await?;
             println!("{}", format_health_summary(&summary));
         }
         Command::Doctor { manifest } => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = run_doctor_command(&settings, manifest).await?;
             println!("{}", format_doctor_summary(&summary));
         }
         Command::DryRun { manifest } => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = run_dry_run_command(&settings, manifest).await?;
             println!("{}", format_dry_run_summary(&summary));
         }
@@ -475,7 +475,7 @@ async fn main() -> anyhow::Result<()> {
             manifest_dir,
             poll_interval_secs,
         } => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             serve_manifest_dir(&settings, manifest_dir, poll_interval_secs).await?;
         }
         Command::Manifest { target } => match target {
