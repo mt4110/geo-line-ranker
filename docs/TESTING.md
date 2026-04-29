@@ -15,6 +15,9 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 ```
 
+`config lint` covers both active ranking config and committed profile pack
+manifests under `configs/profiles`.
+
 When the local PostgreSQL container is memory constrained, the workspace test
 can also be run with serialized Rust test execution:
 

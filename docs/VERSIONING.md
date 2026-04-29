@@ -45,10 +45,15 @@ Run the active ranking config lint locally:
 cargo run -p cli -- config lint
 ```
 
+The same command also validates committed profile pack manifests under
+`configs/profiles`, including their profile reason catalogs and referenced
+fixture/source/example paths.
+
 Use a custom directory when testing migrations:
 
 ```bash
 cargo run -p cli -- config lint --path /path/to/ranking-config
+cargo run -p cli -- config lint --path /path/to/ranking-config --profiles-path /path/to/profiles
 ```
 
 `configs/ranking/fallback.v020.yaml` is a legacy reference artifact, not part of
@@ -106,8 +111,9 @@ manifest_version: 1
 ```
 
 The fixture manifest records each fixture file's relative path, format,
-checksum, and row count. `manifest_version` is the source-authored revision for
-the fixture set; bump it when the fixture contract changes.
+checksum, row count, and optional `profile_id`. `manifest_version` is the
+source-authored revision for the fixture set; bump it when the fixture contract
+changes.
 
 Run fixture doctor locally:
 

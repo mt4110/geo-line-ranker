@@ -1,0 +1,22 @@
+schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: local-discovery-generic
+display_name: Local Discovery Generic
+description: Small deterministic local-discovery profile backed only by committed minimal fixtures.
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+  - line
+  - area
+fallback_policy: geo_line_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+fixtures:
+  - fixture_set_id: minimal
+    path: ../../../storage/fixtures/minimal
+examples:
+  - ../../../examples/local-discovery-generic/README.md

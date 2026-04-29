@@ -1,0 +1,32 @@
+schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: school-event-jp
+display_name: School Event JP Reference
+description: Reference profile for deterministic JP school and event discovery.
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+  - line
+  - area
+  - user_profile
+fallback_policy: school_event_jp_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+fixtures:
+  - fixture_set_id: demo_jp
+    path: ../../../storage/fixtures/demo_jp
+source_manifests:
+  - ../../../storage/sources/jp_rail/example.yaml
+  - ../../../storage/sources/jp_postal/example.yaml
+  - ../../../storage/sources/jp_school/example.yaml
+  - ../../../storage/sources/jp_school_geo/example.yaml
+event_csv_examples:
+  - ../../../examples/import/events.sample.csv
+optional_crawler_manifests:
+  - ../../../configs/crawler/sources/custom_example.yaml
+examples:
+  - ../../../examples/school-event-jp/README.md

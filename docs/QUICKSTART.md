@@ -39,6 +39,9 @@ Verify the committed fixture manifest and checksums when fixture files change:
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 ```
 
+The minimal fixture is owned by the `local-discovery-generic` profile pack in
+`configs/profiles/local-discovery-generic/`.
+
 ## 5. Optional Phase 2 JP demo import
 
 ```bash
@@ -50,6 +53,9 @@ cargo run -p cli -- import jp-school-codes --manifest storage/sources/jp_school/
 cargo run -p cli -- import jp-school-geodata --manifest storage/sources/jp_school_geo/example.yaml
 cargo run -p cli -- derive school-station-links
 ```
+
+The JP adapter fixture path is owned by the `school-event-jp` reference profile
+pack in `configs/profiles/school-event-jp/`.
 
 ## 6. Import operational event CSV
 

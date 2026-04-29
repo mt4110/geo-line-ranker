@@ -1,7 +1,8 @@
 schema_version: 1
 kind: fixture_set
-manifest_version: 1
+manifest_version: 2
 fixture_set_id: demo_jp
+profile_id: school-event-jp
 description: Small JP adapter fixture set for deterministic import smoke tests.
 files:
   - logical_name: school_codes

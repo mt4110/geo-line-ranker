@@ -9,7 +9,10 @@ use cli::{
     run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
     run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
-use config::{lint_ranking_config_dir, AppSettings, RankingConfigLintSummary};
+use config::{
+    lint_profile_pack_dir, lint_ranking_config_dir, AppSettings, ProfilePackLintSummary,
+    RankingConfigLintSummary,
+};
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
 use storage_postgres::{run_migrations, seed_fixture};
@@ -159,13 +162,19 @@ enum ReplayCommand {
 
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
-    #[command(about = "Lint active ranking config files")]
+    #[command(about = "Lint active ranking config files and profile packs")]
     Lint {
         #[arg(
             long,
             help = "Ranking config directory to lint. Defaults to RANKING_CONFIG_DIR or configs/ranking."
         )]
         path: Option<PathBuf>,
+        #[arg(
+            long,
+            default_value = "configs/profiles",
+            help = "Profile pack directory to lint."
+        )]
+        profiles_path: PathBuf,
     },
 }
 
@@ -315,10 +324,17 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Command::Config { target } => match target {
-            ConfigCommand::Lint { path } => {
+            ConfigCommand::Lint {
+                path,
+                profiles_path,
+            } => {
                 let path = path.unwrap_or_else(|| PathBuf::from(&settings.ranking_config_dir));
-                let summary = lint_ranking_config_dir(path)?;
-                println!("{}", format_config_lint_summary(&summary));
+                let ranking_summary = lint_ranking_config_dir(path)?;
+                let profile_summary = lint_profile_pack_dir(profiles_path)?;
+                println!(
+                    "{}",
+                    format_config_lint_summary(&ranking_summary, &profile_summary)
+                );
             }
         },
         Command::SourceManifest { target } => match target {
@@ -365,18 +381,45 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn format_config_lint_summary(summary: &RankingConfigLintSummary) -> String {
+fn format_config_lint_summary(
+    ranking: &RankingConfigLintSummary,
+    profiles: &ProfilePackLintSummary,
+) -> String {
     let mut lines = vec![format!(
-        "config lint ok: files={}, profile_version={}",
-        summary.files.len(),
-        summary.profile_version
+        "config lint ok: ranking_files={}, profile_packs={}, profile_version={}",
+        ranking.files.len(),
+        profiles.files.len(),
+        ranking.profile_version
     )];
-    lines.extend(summary.files.iter().map(|file| {
+    lines.push("ranking files:".to_string());
+    lines.extend(ranking.files.iter().map(|file| {
         format!(
             "- {} schema_version={} kind={}",
             file.path.display(),
             file.schema_version,
             file.kind.as_str()
+        )
+    }));
+    lines.push("profile packs:".to_string());
+    lines.extend(profiles.files.iter().map(|file| {
+        let content_kinds = file
+            .supported_content_kinds
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "- {} profile_id={} schema_version={} kind={} manifest_version={} content_kinds={} reasons={} fixtures={} source_manifests={} optional_crawler_manifests={}",
+            file.path.display(),
+            file.profile_id,
+            file.schema_version,
+            file.kind.as_str(),
+            file.manifest_version,
+            content_kinds,
+            file.reason_count,
+            file.fixture_count,
+            file.source_manifest_count,
+            file.optional_crawler_manifest_count
         )
     }));
     lines.join("\n")
