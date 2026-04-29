@@ -238,7 +238,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Migrate => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             run_migrations(&settings.database_url, "storage/migrations/postgres").await?;
         }
         Command::Seed { target } => match target {
@@ -248,7 +248,7 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Command::Import { target } => {
-            let settings = AppSettings::from_env()?;
+            let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = match target {
                 ImportCommand::Rail { manifest } => {
                     run_import_command(&settings, ImportTarget::JpRail, manifest).await?
@@ -268,7 +268,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Derive { target } => match target {
             DeriveCommand::SchoolStationLinks => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_derive_school_station_links(&settings).await?;
                 println!("{}", format_summary(&summary));
             }
@@ -285,7 +285,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Index { target } => match target {
             IndexCommand::Rebuild => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let service = ProjectionSyncService::new(
                     settings.database_url.clone(),
                     &settings.opensearch,
@@ -299,7 +299,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Projection { target } => match target {
             ProjectionCommand::Sync => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let service = ProjectionSyncService::new(
                     settings.database_url.clone(),
                     &settings.opensearch,
@@ -394,22 +394,22 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Jobs { target } => match target {
             JobsCommand::List { limit } => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_job_list(&settings, limit).await?;
                 println!("{}", format_job_list(&summary));
             }
             JobsCommand::Inspect { id } => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let inspection = run_job_inspect(&settings, id).await?;
                 println!("{}", format_job_inspection(&inspection));
             }
             JobsCommand::Retry { id } => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_job_retry(&settings, id).await?;
                 println!("{}", format_job_mutation_summary("retry", &summary));
             }
             JobsCommand::Due { id } => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_job_due(&settings, id).await?;
                 println!("{}", format_job_mutation_summary("due", &summary));
             }
@@ -418,7 +418,7 @@ async fn main() -> anyhow::Result<()> {
                 payload,
                 max_attempts,
             } => {
-                let settings = AppSettings::from_env()?;
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_job_enqueue(&settings, &job_type, &payload, max_attempts).await?;
                 println!("{}", format_job_enqueue_summary(&summary));
             }

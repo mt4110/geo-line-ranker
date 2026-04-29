@@ -88,26 +88,48 @@ pub struct AppSettings {
 
 impl AppSettings {
     pub fn from_env() -> Result<Self> {
+        Self::from_env_with_profile_pack(ProfilePackRuntimeMode::Resolve)
+    }
+
+    pub fn from_env_without_profile_pack() -> Result<Self> {
+        Self::from_env_with_profile_pack(ProfilePackRuntimeMode::Skip)
+    }
+
+    fn from_env_with_profile_pack(profile_pack_mode: ProfilePackRuntimeMode) -> Result<Self> {
         load_dotenv();
-        let ranking_config_dir_override = env_path_optional("RANKING_CONFIG_DIR")?;
-        let fixture_dir_override = env_path_optional("FIXTURE_DIR")?;
-        let profile_packs_dir = env_path(
-            "PROFILE_PACKS_DIR",
-            resolve_runtime_path(DEFAULT_PROFILE_PACKS_DIR),
-        )?;
-        let profile_id = env_string("PROFILE_ID", DEFAULT_PROFILE_ID.to_string())?;
-        let requested_fixture_set_id = env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
-        let legacy_path_mode =
-            ranking_config_dir_override.is_some() || fixture_dir_override.is_some();
-        let runtime_profile = if legacy_path_mode {
-            None
-        } else {
-            Some(resolve_profile_pack_runtime_selection(
-                profile_packs_dir,
-                &profile_id,
-                requested_fixture_set_id.as_deref(),
-            )?)
-        };
+
+        let (ranking_config_dir_override, fixture_dir_override, profile_id, runtime_profile) =
+            match profile_pack_mode {
+                ProfilePackRuntimeMode::Resolve => {
+                    let ranking_config_dir_override = env_path_optional("RANKING_CONFIG_DIR")?;
+                    let fixture_dir_override = env_path_optional("FIXTURE_DIR")?;
+                    let profile_packs_dir = env_path(
+                        "PROFILE_PACKS_DIR",
+                        resolve_runtime_path(DEFAULT_PROFILE_PACKS_DIR),
+                    )?;
+                    let profile_id = env_string("PROFILE_ID", DEFAULT_PROFILE_ID.to_string())?;
+                    let requested_fixture_set_id =
+                        env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
+                    let legacy_path_mode =
+                        ranking_config_dir_override.is_some() || fixture_dir_override.is_some();
+                    let runtime_profile = if legacy_path_mode {
+                        None
+                    } else {
+                        Some(resolve_profile_pack_runtime_selection(
+                            profile_packs_dir,
+                            &profile_id,
+                            requested_fixture_set_id.as_deref(),
+                        )?)
+                    };
+                    (
+                        ranking_config_dir_override,
+                        fixture_dir_override,
+                        profile_id,
+                        runtime_profile,
+                    )
+                }
+                ProfilePackRuntimeMode::Skip => (None, None, DEFAULT_PROFILE_ID.to_string(), None),
+            };
 
         let ranking_config_dir = match (ranking_config_dir_override, runtime_profile.as_ref()) {
             (Some(path), _) => path,
@@ -178,6 +200,12 @@ impl AppSettings {
             worker_max_attempts: parse_env("WORKER_MAX_ATTEMPTS", 3)?,
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfilePackRuntimeMode {
+    Resolve,
+    Skip,
 }
 
 pub fn load_dotenv() {
@@ -1808,6 +1836,27 @@ files: []
     }
 
     #[test]
+    fn app_settings_can_skip_profile_pack_for_db_only_commands() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+
+        env::set_var("PROFILE_PACKS_DIR", temp.path().join("missing-profiles"));
+        env::set_var("PROFILE_ID", "missing-profile");
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env_without_profile_pack().expect("settings");
+
+        assert!(settings
+            .ranking_config_dir
+            .ends_with(super::DEFAULT_RANKING_CONFIG_DIR));
+        assert!(settings.fixture_dir.ends_with(super::DEFAULT_FIXTURE_DIR));
+        assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_fixture_set_id.is_none());
+        clear_app_env();
+    }
+
+    #[test]
     fn app_settings_treats_empty_profile_packs_dir_as_default() {
         let _env_guard = env_lock().lock().expect("env lock");
         clear_app_env();
@@ -1826,7 +1875,7 @@ files: []
     }
 
     #[test]
-    fn app_settings_requires_fixture_override_for_fixtureless_profile() {
+    fn app_settings_requires_fixture_override_for_profile_without_fixtures() {
         let _env_guard = env_lock().lock().expect("env lock");
         clear_app_env();
         let temp = tempdir().expect("tempdir");

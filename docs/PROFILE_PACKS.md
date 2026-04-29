@@ -54,6 +54,10 @@ built-in default, and startup does not require profile pack IO.
 `PROFILE_FIXTURE_SET_ID` is optional; when omitted, the first fixture declared
 by the selected profile is used.
 
+CLI commands that do not consume ranking configs or fixtures, such as
+`migrate`, explicit-manifest imports, `derive`, `index`, `projection`, and
+`jobs`, avoid profile pack IO.
+
 ## Boundary
 
 Core ranking remains deterministic Rust over canonical records. A connector
