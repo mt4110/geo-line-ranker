@@ -606,8 +606,9 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
     if let Some(profile_id) = manifest.profile_id.as_deref() {
         ensure!(
             is_profile_id(profile_id),
-            "fixture manifest {} profile_id {}",
+            "fixture manifest {} invalid profile_id '{}': {}",
             manifest_path.display(),
+            profile_id,
             PROFILE_ID_RULE_DESCRIPTION
         );
     }
@@ -1472,6 +1473,28 @@ files:
 
         let error = run_fixture_doctor(temp.path()).expect_err("checksum mismatch");
         assert!(format!("{error:#}").contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn fixture_doctor_invalid_profile_id_error_includes_value() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("fixture_manifest.yaml"),
+            r#"
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+fixture_set_id: test
+profile_id: "school-event-jp "
+files: []
+"#,
+        )
+        .expect("manifest");
+
+        let error = run_fixture_doctor(temp.path()).expect_err("invalid profile id");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("invalid profile_id 'school-event-jp '"));
+        assert!(rendered.contains("must be non-empty and trimmed"));
     }
 
     #[test]

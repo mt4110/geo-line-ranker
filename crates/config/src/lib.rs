@@ -15,8 +15,7 @@ pub const RANKING_CONFIG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_REASON_CATALOG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_FIXTURE_SET_SCHEMA_VERSION: u32 = 1;
-pub const PROFILE_ID_RULE_DESCRIPTION: &str =
-    "must use lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
+pub const PROFILE_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -916,8 +915,9 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
     );
     ensure!(
         is_profile_id(&manifest.profile_id),
-        "profile pack {} profile_id {}",
+        "profile pack {} invalid profile_id '{}': {}",
         path.display(),
+        manifest.profile_id,
         PROFILE_ID_RULE_DESCRIPTION
     );
     ensure!(
@@ -1005,8 +1005,9 @@ fn validate_profile_reason_catalog(path: &Path, catalog: &ProfileReasonCatalog) 
     );
     ensure!(
         is_profile_id(&catalog.profile_id),
-        "profile reason catalog {} profile_id {}",
+        "profile reason catalog {} invalid profile_id '{}': {}",
         path.display(),
+        catalog.profile_id,
         PROFILE_ID_RULE_DESCRIPTION
     );
     ensure!(
@@ -1282,9 +1283,14 @@ mod tests {
     use super::{
         is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
         parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
-        validate_portable_relative_path, CandidateRetrievalMode, RankingConfigKind,
-        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        validate_portable_relative_path, validate_profile_pack_contract,
+        validate_profile_reason_catalog, ArticleSupport, CandidateRetrievalMode,
+        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfileReasonCatalog,
+        ProfileReasonCatalogKind, RankingConfigKind, RankingProfiles,
+        DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
+
+    use domain::ContentKind;
 
     fn repo_config_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
@@ -1426,6 +1432,47 @@ files: []
         assert!(!is_profile_id("school-event-jp-"));
         assert!(!is_profile_id("school_event_jp"));
         assert!(!is_profile_id("School-Event-Jp"));
+    }
+
+    #[test]
+    fn invalid_profile_id_errors_include_value_and_full_rule() {
+        let manifest_path = PathBuf::from("configs/profiles/example/profile.yaml");
+        let manifest = ProfilePackManifest {
+            schema_version: super::PROFILE_PACK_SCHEMA_VERSION,
+            kind: ProfilePackKind::ProfilePack,
+            manifest_version: 1,
+            profile_id: "school-event-jp ".to_string(),
+            display_name: "Example".to_string(),
+            description: None,
+            supported_content_kinds: vec![ContentKind::School],
+            context_inputs: vec![ProfileContextInput::Station],
+            fallback_policy: "example_default".to_string(),
+            ranking_config_dir: "../../ranking".to_string(),
+            reason_catalog: "reasons.yaml".to_string(),
+            article_support: ArticleSupport::Reserved,
+            fixtures: vec![],
+            source_manifests: vec![],
+            event_csv_examples: vec![],
+            optional_crawler_manifests: vec![],
+            examples: vec![],
+        };
+        let error = validate_profile_pack_contract(&manifest_path, &manifest)
+            .expect_err("invalid profile id");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("invalid profile_id 'school-event-jp '"));
+        assert!(rendered.contains("must be non-empty and trimmed"));
+
+        let catalog = ProfileReasonCatalog {
+            schema_version: super::PROFILE_REASON_CATALOG_SCHEMA_VERSION,
+            kind: ProfileReasonCatalogKind::ProfileReasonCatalog,
+            profile_id: "School-Event-Jp".to_string(),
+            reasons: vec![],
+        };
+        let error = validate_profile_reason_catalog(&manifest_path, &catalog)
+            .expect_err("invalid catalog profile id");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("invalid profile_id 'School-Event-Jp'"));
+        assert!(rendered.contains("lowercase letters"));
     }
 
     #[test]
