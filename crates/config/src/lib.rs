@@ -180,7 +180,7 @@ impl AppSettings {
     }
 }
 
-fn load_dotenv() {
+pub fn load_dotenv() {
     static DOTENV: Once = Once::new();
     DOTENV.call_once(|| {
         let _ = dotenvy::dotenv();

@@ -233,6 +233,7 @@ enum JobsCommand {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    config::load_dotenv();
     let cli = Cli::parse();
 
     match cli.command {
@@ -462,7 +463,6 @@ fn env_path_optional_non_empty(name: &str) -> anyhow::Result<Option<PathBuf>> {
 
 fn env_string_or_default(name: &str, default: &str) -> anyhow::Result<String> {
     match std::env::var(name) {
-        Ok(raw) if raw.is_empty() => Ok(default.to_string()),
         Ok(raw) => Ok(raw),
         Err(std::env::VarError::NotPresent) => Ok(default.to_string()),
         Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
