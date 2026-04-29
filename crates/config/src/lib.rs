@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
 pub const DEFAULT_PROFILE_PACKS_DIR: &str = "configs/profiles";
 pub const DEFAULT_PROFILE_ID: &str = "local-discovery-generic";
+pub const DEFAULT_RANKING_CONFIG_DIR: &str = "configs/ranking";
 pub const DEFAULT_FIXTURE_DIR: &str = "storage/fixtures/minimal";
 pub const RANKING_CONFIG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 1;
@@ -96,23 +97,22 @@ impl AppSettings {
         )?;
         let profile_id = env_string("PROFILE_ID", DEFAULT_PROFILE_ID.to_string())?;
         let requested_fixture_set_id = env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
-        let runtime_profile =
-            if ranking_config_dir_override.is_some() && fixture_dir_override.is_some() {
-                None
-            } else {
-                Some(resolve_profile_pack_runtime_selection(
-                    profile_packs_dir,
-                    &profile_id,
-                    requested_fixture_set_id.as_deref(),
-                )?)
-            };
+        let legacy_path_mode =
+            ranking_config_dir_override.is_some() || fixture_dir_override.is_some();
+        let runtime_profile = if legacy_path_mode {
+            None
+        } else {
+            Some(resolve_profile_pack_runtime_selection(
+                profile_packs_dir,
+                &profile_id,
+                requested_fixture_set_id.as_deref(),
+            )?)
+        };
 
         let ranking_config_dir = match (ranking_config_dir_override, runtime_profile.as_ref()) {
             (Some(path), _) => path,
             (None, Some(profile)) => profile.ranking_config_dir.clone(),
-            (None, None) => anyhow::bail!(
-                "RANKING_CONFIG_DIR is required when profile pack resolution is skipped"
-            ),
+            (None, None) => resolve_runtime_path(DEFAULT_RANKING_CONFIG_DIR),
         };
         let fixture_dir = match (fixture_dir_override, runtime_profile.as_ref()) {
             (Some(path), _) => path,
@@ -122,9 +122,7 @@ impl AppSettings {
                     profile.profile_pack_manifest.display()
                 )
             })?,
-            (None, None) => {
-                anyhow::bail!("FIXTURE_DIR is required when profile pack resolution is skipped")
-            }
+            (None, None) => resolve_runtime_path(DEFAULT_FIXTURE_DIR),
         };
 
         let candidate_retrieval_mode =
@@ -1779,6 +1777,31 @@ files: []
         );
         assert_eq!(settings.fixture_dir, fixture_dir.display().to_string());
         assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
+        assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_fixture_set_id.is_none());
+        clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_honors_partial_legacy_override_without_profile_pack() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+
+        env::set_var("PROFILE_PACKS_DIR", temp.path().join("missing-profiles"));
+        env::set_var("RANKING_CONFIG_DIR", &ranking_dir);
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env().expect("settings");
+
+        assert_eq!(
+            settings.ranking_config_dir,
+            ranking_dir.display().to_string()
+        );
+        assert!(settings.fixture_dir.ends_with(super::DEFAULT_FIXTURE_DIR));
         assert!(settings.profile_pack_manifest.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();

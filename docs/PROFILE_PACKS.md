@@ -48,8 +48,9 @@ PROFILE_PACKS_DIR=configs/profiles
 
 `PROFILE_ID` resolves `configs/profiles/<profile_id>/profile.yaml`, then uses
 that manifest's `ranking_config_dir` and selected fixture path as runtime
-defaults. `RANKING_CONFIG_DIR` and `FIXTURE_DIR` remain explicit overrides for
-local experiments and compatibility with older runbooks.
+defaults. Setting either `RANKING_CONFIG_DIR` or `FIXTURE_DIR` keeps legacy path
+mode: the explicit directory is used, the other directory falls back to its
+built-in default, and startup does not require profile pack IO.
 `PROFILE_FIXTURE_SET_ID` is optional; when omitted, the first fixture declared
 by the selected profile is used.
 
