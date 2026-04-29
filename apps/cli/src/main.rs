@@ -1,5 +1,9 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use cli::{
     format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
@@ -329,8 +333,12 @@ async fn main() -> anyhow::Result<()> {
                 profiles_path,
             } => {
                 let path = path.unwrap_or_else(|| PathBuf::from(&settings.ranking_config_dir));
-                let ranking_summary = lint_ranking_config_dir(path)?;
                 let profile_summary = lint_profile_pack_dir(profiles_path)?;
+                let ranking_summary =
+                    match cached_ranking_summary_for_path(&profile_summary, &path)? {
+                        Some(summary) => ranking_summary_with_base_path(summary, &path),
+                        None => lint_ranking_config_dir(&path)?,
+                    };
                 println!(
                     "{}",
                     format_config_lint_summary(&ranking_summary, &profile_summary)
@@ -379,6 +387,35 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn cached_ranking_summary_for_path(
+    profiles: &ProfilePackLintSummary,
+    path: &Path,
+) -> anyhow::Result<Option<RankingConfigLintSummary>> {
+    let canonical_path = path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            path.display()
+        )
+    })?;
+    Ok(profiles
+        .ranking_configs
+        .iter()
+        .find(|summary| summary.path == canonical_path)
+        .cloned())
+}
+
+fn ranking_summary_with_base_path(
+    mut summary: RankingConfigLintSummary,
+    path: &Path,
+) -> RankingConfigLintSummary {
+    for file in &mut summary.files {
+        if let Some(file_name) = file.path.file_name() {
+            file.path = path.join(file_name);
+        }
+    }
+    summary
 }
 
 fn format_config_lint_summary(

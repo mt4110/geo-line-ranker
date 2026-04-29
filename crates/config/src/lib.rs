@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
     sync::Once,
@@ -261,6 +261,7 @@ pub struct RankingConfigLintFile {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RankingConfigLintSummary {
+    pub path: PathBuf,
     pub files: Vec<RankingConfigLintFile>,
     pub profile_version: String,
 }
@@ -425,6 +426,7 @@ pub struct ProfilePackLintFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfilePackLintSummary {
     pub files: Vec<ProfilePackLintFile>,
+    pub ranking_configs: Vec<RankingConfigLintSummary>,
 }
 
 impl RankingProfiles {
@@ -666,6 +668,12 @@ impl RankingProfiles {
 
 pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLintSummary> {
     let path = path.as_ref();
+    let canonical_path = path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            path.display()
+        )
+    })?;
     let profiles = RankingProfiles::load_from_dir(path)?;
     let mut files = vec![
         RankingConfigLintFile {
@@ -707,6 +715,7 @@ pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLi
     files.sort_by(|left, right| left.path.cmp(&right.path));
 
     Ok(RankingConfigLintSummary {
+        path: canonical_path,
         files,
         profile_version: profiles.profile_version,
     })
@@ -723,7 +732,13 @@ pub fn load_profile_pack_manifest(path: impl AsRef<Path>) -> Result<ProfilePackM
 }
 
 pub fn lint_profile_pack_file(path: impl AsRef<Path>) -> Result<ProfilePackLintFile> {
-    let path = path.as_ref();
+    lint_profile_pack_file_with_cache(path.as_ref(), None)
+}
+
+fn lint_profile_pack_file_with_cache(
+    path: &Path,
+    ranking_config_cache: Option<&mut BTreeMap<PathBuf, RankingConfigLintSummary>>,
+) -> Result<ProfilePackLintFile> {
     let manifest = load_profile_pack_manifest(path)?;
     let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
 
@@ -735,7 +750,11 @@ pub fn lint_profile_pack_file(path: impl AsRef<Path>) -> Result<ProfilePackLintF
         path.display(),
         ranking_config_dir.display()
     );
-    lint_ranking_config_dir(&ranking_config_dir)?;
+    if let Some(cache) = ranking_config_cache {
+        lint_ranking_config_dir_cached(&ranking_config_dir, cache)?;
+    } else {
+        lint_ranking_config_dir(&ranking_config_dir)?;
+    }
 
     let reason_catalog_path =
         resolve_profile_ref(path, "reason_catalog", &manifest.reason_catalog)?;
@@ -824,12 +843,33 @@ pub fn lint_profile_pack_file(path: impl AsRef<Path>) -> Result<ProfilePackLintF
     })
 }
 
+fn lint_ranking_config_dir_cached(
+    path: &Path,
+    cache: &mut BTreeMap<PathBuf, RankingConfigLintSummary>,
+) -> Result<()> {
+    let canonical_path = path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            path.display()
+        )
+    })?;
+    match cache.entry(canonical_path) {
+        Entry::Occupied(_) => Ok(()),
+        Entry::Vacant(entry) => {
+            entry.insert(lint_ranking_config_dir(path)?);
+            Ok(())
+        }
+    }
+}
+
 pub fn lint_profile_pack_dir(path: impl AsRef<Path>) -> Result<ProfilePackLintSummary> {
     let path = path.as_ref();
     let mut files = Vec::new();
     let mut seen_profile_ids = BTreeSet::new();
+    let mut ranking_config_cache = BTreeMap::new();
     for manifest_path in list_profile_manifest_paths(path)? {
-        let file = lint_profile_pack_file(manifest_path)?;
+        let file =
+            lint_profile_pack_file_with_cache(&manifest_path, Some(&mut ranking_config_cache))?;
         ensure!(
             seen_profile_ids.insert(file.profile_id.clone()),
             "profile pack path {} contains duplicate profile_id {}",
@@ -844,7 +884,10 @@ pub fn lint_profile_pack_dir(path: impl AsRef<Path>) -> Result<ProfilePackLintSu
         path.display()
     );
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(ProfilePackLintSummary { files })
+    Ok(ProfilePackLintSummary {
+        files,
+        ranking_configs: ranking_config_cache.into_values().collect(),
+    })
 }
 
 fn load_profile_reason_catalog(path: &Path) -> Result<ProfileReasonCatalog> {
@@ -1238,8 +1281,9 @@ mod tests {
 
     use super::{
         is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
-        parse_candidate_retrieval_mode, parse_postgres_pool_max_size, CandidateRetrievalMode,
-        RankingConfigKind, RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
+        validate_portable_relative_path, CandidateRetrievalMode, RankingConfigKind,
+        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     fn repo_config_root() -> PathBuf {
@@ -1370,6 +1414,7 @@ files: []
             vec!["local-discovery-generic", "school-event-jp"]
         );
         assert!(summary.files.iter().all(|file| file.reason_count > 0));
+        assert_eq!(summary.ranking_configs.len(), 1);
     }
 
     #[test]
@@ -1392,6 +1437,46 @@ files: []
         let error = lint_profile_pack_dir(&path).expect_err("non-profile manifest file");
 
         assert!(format!("{error:#}").contains("expected profile manifest file named profile.yaml"));
+    }
+
+    #[test]
+    fn profile_refs_validate_portable_relative_paths() {
+        let manifest_path = PathBuf::from("configs/profiles/example/profile.yaml");
+        assert_eq!(
+            validate_portable_relative_path(&manifest_path, "ranking_config_dir", "../../ranking")
+                .expect("relative path"),
+            PathBuf::from("../../ranking")
+        );
+        assert_eq!(
+            validate_portable_relative_path(
+                &manifest_path,
+                "profile file reference",
+                "requests/station.request.json"
+            )
+            .expect("nested relative path"),
+            PathBuf::from("requests/station.request.json")
+        );
+
+        for raw_path in ["", " "] {
+            let error = validate_portable_relative_path(&manifest_path, "reason_catalog", raw_path)
+                .expect_err("empty path");
+            assert!(format!("{error:#}").contains("path must not be empty"));
+        }
+
+        for raw_path in ["C:/configs/ranking", r"..\ranking"] {
+            let error =
+                validate_portable_relative_path(&manifest_path, "ranking_config_dir", raw_path)
+                    .expect_err("non-portable path");
+            assert!(format!("{error:#}").contains("portable POSIX relative syntax"));
+        }
+
+        let error = validate_portable_relative_path(
+            &manifest_path,
+            "ranking_config_dir",
+            "/configs/ranking",
+        )
+        .expect_err("absolute path");
+        assert!(format!("{error:#}").contains("path must be relative"));
     }
 
     #[test]
