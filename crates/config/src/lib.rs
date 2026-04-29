@@ -1539,7 +1539,7 @@ where
 mod tests {
     use std::{
         env, fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{Mutex, OnceLock},
     };
 
@@ -1829,7 +1829,7 @@ files: []
             settings.ranking_config_dir,
             ranking_dir.display().to_string()
         );
-        assert!(settings.fixture_dir.ends_with(super::DEFAULT_FIXTURE_DIR));
+        assert!(Path::new(&settings.fixture_dir).ends_with(super::DEFAULT_FIXTURE_DIR));
         assert!(settings.profile_pack_manifest.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();
@@ -1847,10 +1847,10 @@ files: []
 
         let settings = AppSettings::from_env_without_profile_pack().expect("settings");
 
-        assert!(settings
-            .ranking_config_dir
-            .ends_with(super::DEFAULT_RANKING_CONFIG_DIR));
-        assert!(settings.fixture_dir.ends_with(super::DEFAULT_FIXTURE_DIR));
+        assert!(
+            Path::new(&settings.ranking_config_dir).ends_with(super::DEFAULT_RANKING_CONFIG_DIR)
+        );
+        assert!(Path::new(&settings.fixture_dir).ends_with(super::DEFAULT_FIXTURE_DIR));
         assert!(settings.profile_pack_manifest.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();
@@ -1867,9 +1867,12 @@ files: []
         let settings = AppSettings::from_env().expect("settings");
 
         assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
-        assert!(settings
-            .profile_pack_manifest
-            .ends_with("configs/profiles/local-discovery-generic/profile.yaml"));
+        assert!(Path::new(&settings.profile_pack_manifest).ends_with(
+            Path::new("configs")
+                .join("profiles")
+                .join("local-discovery-generic")
+                .join("profile.yaml")
+        ));
         assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
         clear_app_env();
     }

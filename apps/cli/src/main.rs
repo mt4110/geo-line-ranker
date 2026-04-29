@@ -171,7 +171,7 @@ enum ConfigCommand {
     Lint {
         #[arg(
             long,
-            help = "Ranking config directory to lint. Defaults to RANKING_CONFIG_DIR or configs/ranking."
+            help = "Ranking config directory to lint. Defaults to RANKING_CONFIG_DIR or the selected profile pack."
         )]
         path: Option<PathBuf>,
         #[arg(
