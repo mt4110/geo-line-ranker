@@ -8,7 +8,7 @@ use anyhow::{ensure, Context, Result};
 use api_contracts::{FallbackStageDto, RecommendationRequest, RecommendationResponse};
 use cache::RecommendationCache;
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use config::{AppSettings, RankingProfiles};
+use config::{is_profile_id, AppSettings, RankingProfiles, PROFILE_ID_RULE_DESCRIPTION};
 use csv::Reader;
 use generic_csv::{
     count_csv_rows, load_manifest, read_csv_rows, stage_raw_files, stage_single_csv_file,
@@ -137,6 +137,8 @@ pub struct FixtureSetManifest {
     pub manifest_version: u32,
     pub fixture_set_id: String,
     #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
     pub description: Option<String>,
     pub files: Vec<FixtureFileManifest>,
 }
@@ -155,6 +157,7 @@ pub struct FixtureFileManifest {
 pub struct FixtureDoctorSummary {
     pub manifest_path: PathBuf,
     pub fixture_set_id: String,
+    pub profile_id: Option<String>,
     pub manifest_version: u32,
     pub files: Vec<FixtureDoctorFile>,
 }
@@ -600,6 +603,15 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
         "fixture manifest {} is missing fixture_set_id",
         manifest_path.display()
     );
+    if let Some(profile_id) = manifest.profile_id.as_deref() {
+        ensure!(
+            is_profile_id(profile_id),
+            "fixture manifest {} invalid profile_id '{}': {}",
+            manifest_path.display(),
+            profile_id,
+            PROFILE_ID_RULE_DESCRIPTION
+        );
+    }
     ensure!(
         !manifest.files.is_empty(),
         "fixture manifest {} does not list any files",
@@ -698,6 +710,7 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
     Ok(FixtureDoctorSummary {
         manifest_path,
         fixture_set_id: manifest.fixture_set_id,
+        profile_id: manifest.profile_id,
         manifest_version: manifest.manifest_version,
         files,
     })
@@ -1033,6 +1046,7 @@ pub fn generate_demo_jp_fixture(output_dir: impl AsRef<Path>) -> Result<Vec<Path
     write_fixture_manifest(
         &manifest_path,
         "demo_jp",
+        Some("school-event-jp"),
         "Small JP adapter fixture set for deterministic import smoke tests.",
         manifest_files,
     )?;
@@ -1069,14 +1083,16 @@ fn fixture_file_manifest(
 fn write_fixture_manifest(
     manifest_path: &Path,
     fixture_set_id: &str,
+    profile_id: Option<&str>,
     description: &str,
     files: Vec<FixtureFileManifest>,
 ) -> Result<()> {
     let manifest = FixtureSetManifest {
         schema_version: FIXTURE_SET_SCHEMA_VERSION,
         kind: FixtureManifestKind::FixtureSet,
-        manifest_version: 1,
+        manifest_version: 2,
         fixture_set_id: fixture_set_id.to_string(),
+        profile_id: profile_id.map(str::to_string),
         description: Some(description.to_string()),
         files,
     };
@@ -1126,8 +1142,9 @@ pub fn format_summary(summary: &CommandSummary) -> String {
 
 pub fn format_fixture_doctor_summary(summary: &FixtureDoctorSummary) -> String {
     let mut lines = vec![format!(
-        "fixture doctor ok: fixture_set_id={} manifest_version={} files={}",
+        "fixture doctor ok: fixture_set_id={} profile_id={} manifest_version={} files={}",
         summary.fixture_set_id,
+        summary.profile_id.as_deref().unwrap_or("-"),
         summary.manifest_version,
         summary.files.len()
     )];
@@ -1429,6 +1446,7 @@ mod tests {
         assert!(written.iter().all(|path| path.exists()));
         let summary = run_fixture_doctor(temp.path()).expect("fixture doctor");
         assert_eq!(summary.fixture_set_id, "demo_jp");
+        assert_eq!(summary.profile_id.as_deref(), Some("school-event-jp"));
         assert_eq!(summary.files.len(), 4);
     }
 
@@ -1455,6 +1473,28 @@ files:
 
         let error = run_fixture_doctor(temp.path()).expect_err("checksum mismatch");
         assert!(format!("{error:#}").contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn fixture_doctor_invalid_profile_id_error_includes_value() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("fixture_manifest.yaml"),
+            r#"
+schema_version: 1
+kind: fixture_set
+manifest_version: 1
+fixture_set_id: test
+profile_id: "school-event-jp "
+files: []
+"#,
+        )
+        .expect("manifest");
+
+        let error = run_fixture_doctor(temp.path()).expect_err("invalid profile id");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("invalid profile_id 'school-event-jp '"));
+        assert!(rendered.contains("must be non-empty and trimmed"));
     }
 
     #[test]

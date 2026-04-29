@@ -2,6 +2,12 @@
 
 This profile shows how to use `geo-line-ranker` for school and event discovery without hardcoding school-specific rules into the generic ranking core.
 
+## Profile Manifest
+
+- `configs/profiles/school-event-jp/profile.yaml`
+- `configs/profiles/school-event-jp/reasons.yaml`
+- `storage/fixtures/demo_jp/fixture_manifest.yaml`
+
 ## Data Inputs
 
 Use the existing demo fixtures and source manifests:

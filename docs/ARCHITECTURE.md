@@ -4,6 +4,9 @@
 
 - PostgreSQL/PostGIS remains the source of truth.
 - Placement profiles are config-driven and loaded at startup.
+- Reference profile packs in `configs/profiles` own demo/source mapping,
+  reason-label layering, and profile fixture references without changing runtime
+  ranking semantics.
 - Redis stays cache only and can be disabled without changing correctness.
 - OpenSearch remains optional and candidate-retrieval-only.
 - Allowlist crawl is optional and does not gate API, worker, or CSV import availability.
@@ -88,6 +91,15 @@ Selection happens after scoring.
   Limits how much of the final list can be occupied by one content kind.
 
 The ranker may return fewer than the requested limit when the hard caps would otherwise be violated.
+
+## Reference profile packs
+
+- `local-discovery-generic` is the small SQL-only demo profile backed by
+  `storage/fixtures/minimal`.
+- `school-event-jp` is the maintained JP school/event reference profile backed
+  by JP adapter manifests, event CSV examples, and optional crawler examples.
+- Profile packs are validated local manifests, not dynamic plugins. They do not
+  make crawling, full mode, OpenSearch, or managed infrastructure mandatory.
 
 ## Import model
 

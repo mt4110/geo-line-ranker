@@ -1,0 +1,60 @@
+schema_version: 1
+kind: profile_reason_catalog
+profile_id: local-discovery-generic
+reasons:
+  - feature: direct_station_bonus
+    reason_code: geo.direct_station
+    label: Direct station
+    layer: core
+  - feature: line_match_bonus
+    reason_code: geo.line_match
+    label: Line match
+    layer: core
+  - feature: school_station_distance
+    reason_code: geo.station_distance
+    label: Station distance
+    layer: core
+  - feature: walking_minutes
+    reason_code: geo.walking_minutes
+    label: Walking minutes
+    layer: core
+  - feature: neighbor_station_proximity
+    reason_code: geo.neighbor_station_proximity
+    label: Neighbor station proximity
+    layer: core
+  - feature: open_day_bonus
+    reason_code: event.open_day
+    label: Open local event
+    layer: profile
+  - feature: featured_event_bonus
+    reason_code: event.featured
+    label: Featured local event
+    layer: profile
+  - feature: event_priority_boost
+    reason_code: event.priority
+    label: Event priority
+    layer: profile
+  - feature: popularity_snapshot_bonus
+    reason_code: behavior.popularity
+    label: Recent popularity
+    layer: core
+  - feature: area_affinity_bonus
+    reason_code: behavior.area_affinity
+    label: Area affinity
+    layer: core
+  - feature: user_affinity_bonus
+    reason_code: behavior.user_affinity
+    label: User affinity
+    layer: core
+  - feature: content_kind_boost
+    reason_code: placement.content_kind_boost
+    label: Placement adjustment
+    layer: core
+  - feature: neighbor_area_penalty
+    reason_code: fallback.neighbor_area_penalty
+    label: Neighbor area adjustment
+    layer: core
+  - feature: safe_global_distance_penalty
+    reason_code: fallback.safe_global_distance_penalty
+    label: Safe global distance penalty
+    layer: core

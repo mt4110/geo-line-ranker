@@ -1,0 +1,9 @@
+{
+  "request_id": "req_local_discovery_line",
+  "context": {
+    "line_name": "JR Yamanote Line"
+  },
+  "placement": "search",
+  "limit": 5,
+  "debug": false
+}

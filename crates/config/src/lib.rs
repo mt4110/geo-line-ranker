@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
     sync::Once,
@@ -12,6 +12,10 @@ use sha2::{Digest, Sha256};
 
 pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
 pub const RANKING_CONFIG_SCHEMA_VERSION: u32 = 1;
+pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 1;
+pub const PROFILE_REASON_CATALOG_SCHEMA_VERSION: u32 = 1;
+pub const PROFILE_FIXTURE_SET_SCHEMA_VERSION: u32 = 1;
+pub const PROFILE_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -256,8 +260,172 @@ pub struct RankingConfigLintFile {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RankingConfigLintSummary {
+    pub path: PathBuf,
     pub files: Vec<RankingConfigLintFile>,
     pub profile_version: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfilePackKind {
+    ProfilePack,
+}
+
+impl ProfilePackKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ProfilePack => "profile_pack",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileContextInput {
+    Station,
+    Line,
+    Area,
+    UserProfile,
+}
+
+impl ProfileContextInput {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Station => "station",
+            Self::Line => "line",
+            Self::Area => "area",
+            Self::UserProfile => "user_profile",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArticleSupport {
+    Reserved,
+    Implemented,
+}
+
+impl ArticleSupport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reserved => "reserved",
+            Self::Implemented => "implemented",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfilePackManifest {
+    pub schema_version: u32,
+    pub kind: ProfilePackKind,
+    pub manifest_version: u32,
+    pub profile_id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub supported_content_kinds: Vec<ContentKind>,
+    pub context_inputs: Vec<ProfileContextInput>,
+    pub fallback_policy: String,
+    pub ranking_config_dir: String,
+    pub reason_catalog: String,
+    pub article_support: ArticleSupport,
+    #[serde(default)]
+    pub fixtures: Vec<ProfileFixtureRef>,
+    #[serde(default)]
+    pub source_manifests: Vec<String>,
+    #[serde(default)]
+    pub event_csv_examples: Vec<String>,
+    #[serde(default)]
+    pub optional_crawler_manifests: Vec<String>,
+    #[serde(default)]
+    pub examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileFixtureRef {
+    pub fixture_set_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ProfileFixtureManifestHeader {
+    schema_version: u32,
+    kind: String,
+    manifest_version: u32,
+    fixture_set_id: String,
+    #[serde(default)]
+    profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileReasonCatalogKind {
+    ProfileReasonCatalog,
+}
+
+impl ProfileReasonCatalogKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ProfileReasonCatalog => "profile_reason_catalog",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileReasonLayer {
+    Core,
+    Profile,
+}
+
+impl ProfileReasonLayer {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Core => "core",
+            Self::Profile => "profile",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileReasonCatalog {
+    pub schema_version: u32,
+    pub kind: ProfileReasonCatalogKind,
+    pub profile_id: String,
+    pub reasons: Vec<ProfileReason>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileReason {
+    pub feature: String,
+    pub reason_code: String,
+    pub label: String,
+    pub layer: ProfileReasonLayer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfilePackLintFile {
+    pub path: PathBuf,
+    pub profile_id: String,
+    pub schema_version: u32,
+    pub kind: ProfilePackKind,
+    pub manifest_version: u32,
+    pub supported_content_kinds: Vec<ContentKind>,
+    pub reason_count: usize,
+    pub fixture_count: usize,
+    pub source_manifest_count: usize,
+    pub optional_crawler_manifest_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfilePackLintSummary {
+    pub files: Vec<ProfilePackLintFile>,
+    pub ranking_configs: Vec<RankingConfigLintSummary>,
 }
 
 impl RankingProfiles {
@@ -499,6 +667,12 @@ impl RankingProfiles {
 
 pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLintSummary> {
     let path = path.as_ref();
+    let canonical_path = path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            path.display()
+        )
+    })?;
     let profiles = RankingProfiles::load_from_dir(path)?;
     let mut files = vec![
         RankingConfigLintFile {
@@ -540,9 +714,498 @@ pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLi
     files.sort_by(|left, right| left.path.cmp(&right.path));
 
     Ok(RankingConfigLintSummary {
+        path: canonical_path,
         files,
         profile_version: profiles.profile_version,
     })
+}
+
+pub fn load_profile_pack_manifest(path: impl AsRef<Path>) -> Result<ProfilePackManifest> {
+    let path = path.as_ref();
+    let raw = read_raw(path)
+        .with_context(|| format!("failed to read profile pack manifest {}", path.display()))?;
+    let manifest: ProfilePackManifest = serde_yaml::from_str(&raw)
+        .with_context(|| format!("failed to parse profile pack manifest {}", path.display()))?;
+    validate_profile_pack_contract(path, &manifest)?;
+    Ok(manifest)
+}
+
+pub fn lint_profile_pack_file(path: impl AsRef<Path>) -> Result<ProfilePackLintFile> {
+    lint_profile_pack_file_with_cache(path.as_ref(), None)
+}
+
+fn lint_profile_pack_file_with_cache(
+    path: &Path,
+    ranking_config_cache: Option<&mut BTreeMap<PathBuf, RankingConfigLintSummary>>,
+) -> Result<ProfilePackLintFile> {
+    let manifest = load_profile_pack_manifest(path)?;
+    let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
+
+    let ranking_config_dir =
+        resolve_profile_ref(path, "ranking_config_dir", &manifest.ranking_config_dir)?;
+    ensure!(
+        ranking_config_dir.is_dir(),
+        "profile pack {} ranking_config_dir {} is missing or not a directory",
+        path.display(),
+        ranking_config_dir.display()
+    );
+    if let Some(cache) = ranking_config_cache {
+        lint_ranking_config_dir_cached(&ranking_config_dir, cache)?;
+    } else {
+        lint_ranking_config_dir(&ranking_config_dir)?;
+    }
+
+    let reason_catalog_path =
+        resolve_profile_ref(path, "reason_catalog", &manifest.reason_catalog)?;
+    ensure!(
+        reason_catalog_path.is_file(),
+        "profile pack {} reason_catalog {} is missing or not a file",
+        path.display(),
+        reason_catalog_path.display()
+    );
+    let reason_catalog = load_profile_reason_catalog(&reason_catalog_path)?;
+    ensure!(
+        reason_catalog.profile_id == manifest.profile_id,
+        "profile pack {} reason_catalog profile_id {} does not match {}",
+        path.display(),
+        reason_catalog.profile_id,
+        manifest.profile_id
+    );
+
+    let mut fixture_ids = BTreeSet::new();
+    for fixture in &manifest.fixtures {
+        ensure!(
+            !fixture.fixture_set_id.trim().is_empty(),
+            "profile pack {} contains a fixture with empty fixture_set_id",
+            path.display()
+        );
+        ensure!(
+            fixture_ids.insert(fixture.fixture_set_id.clone()),
+            "profile pack {} contains duplicate fixture_set_id {}",
+            path.display(),
+            fixture.fixture_set_id
+        );
+        let fixture_dir = resolve_profile_ref(path, "fixtures.path", &fixture.path)?;
+        ensure!(
+            fixture_dir.is_dir(),
+            "profile pack {} fixture {} path {} is missing or not a directory",
+            path.display(),
+            fixture.fixture_set_id,
+            fixture_dir.display()
+        );
+        ensure!(
+            fixture_dir.join("fixture_manifest.yaml").is_file(),
+            "profile pack {} fixture {} path {} is missing fixture_manifest.yaml",
+            path.display(),
+            fixture.fixture_set_id,
+            fixture_dir.display()
+        );
+        validate_profile_fixture_ref(
+            path,
+            &manifest.profile_id,
+            fixture,
+            &fixture_dir.join("fixture_manifest.yaml"),
+        )?;
+    }
+
+    for referenced_file in manifest
+        .source_manifests
+        .iter()
+        .chain(manifest.event_csv_examples.iter())
+        .chain(manifest.optional_crawler_manifests.iter())
+        .chain(manifest.examples.iter())
+    {
+        let resolved = manifest_dir.join(validate_portable_relative_path(
+            path,
+            "profile file reference",
+            referenced_file,
+        )?);
+        ensure!(
+            resolved.is_file(),
+            "profile pack {} file reference {} is missing or not a file",
+            path.display(),
+            resolved.display()
+        );
+    }
+
+    Ok(ProfilePackLintFile {
+        path: path.to_path_buf(),
+        profile_id: manifest.profile_id,
+        schema_version: manifest.schema_version,
+        kind: manifest.kind,
+        manifest_version: manifest.manifest_version,
+        supported_content_kinds: manifest.supported_content_kinds,
+        reason_count: reason_catalog.reasons.len(),
+        fixture_count: manifest.fixtures.len(),
+        source_manifest_count: manifest.source_manifests.len(),
+        optional_crawler_manifest_count: manifest.optional_crawler_manifests.len(),
+    })
+}
+
+fn lint_ranking_config_dir_cached(
+    path: &Path,
+    cache: &mut BTreeMap<PathBuf, RankingConfigLintSummary>,
+) -> Result<()> {
+    let canonical_path = path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            path.display()
+        )
+    })?;
+    match cache.entry(canonical_path) {
+        Entry::Occupied(_) => Ok(()),
+        Entry::Vacant(entry) => {
+            entry.insert(lint_ranking_config_dir(path)?);
+            Ok(())
+        }
+    }
+}
+
+pub fn lint_profile_pack_dir(path: impl AsRef<Path>) -> Result<ProfilePackLintSummary> {
+    let path = path.as_ref();
+    let mut files = Vec::new();
+    let mut seen_profile_ids = BTreeSet::new();
+    let mut ranking_config_cache = BTreeMap::new();
+    for manifest_path in list_profile_manifest_paths(path)? {
+        let file =
+            lint_profile_pack_file_with_cache(&manifest_path, Some(&mut ranking_config_cache))?;
+        ensure!(
+            seen_profile_ids.insert(file.profile_id.clone()),
+            "profile pack path {} contains duplicate profile_id {}",
+            path.display(),
+            file.profile_id
+        );
+        files.push(file);
+    }
+    ensure!(
+        !files.is_empty(),
+        "profile pack path {} does not contain any profile.yaml manifests",
+        path.display()
+    );
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(ProfilePackLintSummary {
+        files,
+        ranking_configs: ranking_config_cache.into_values().collect(),
+    })
+}
+
+fn load_profile_reason_catalog(path: &Path) -> Result<ProfileReasonCatalog> {
+    let raw = read_raw(path)
+        .with_context(|| format!("failed to read profile reason catalog {}", path.display()))?;
+    let catalog: ProfileReasonCatalog = serde_yaml::from_str(&raw)
+        .with_context(|| format!("failed to parse profile reason catalog {}", path.display()))?;
+    validate_profile_reason_catalog(path, &catalog)?;
+    Ok(catalog)
+}
+
+fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -> Result<()> {
+    ensure!(
+        manifest.schema_version == PROFILE_PACK_SCHEMA_VERSION,
+        "profile pack {} schema_version {} is unsupported; expected {}",
+        path.display(),
+        manifest.schema_version,
+        PROFILE_PACK_SCHEMA_VERSION
+    );
+    ensure!(
+        manifest.kind == ProfilePackKind::ProfilePack,
+        "profile pack {} kind {} is invalid; expected {}",
+        path.display(),
+        manifest.kind.as_str(),
+        ProfilePackKind::ProfilePack.as_str()
+    );
+    ensure!(
+        is_profile_id(&manifest.profile_id),
+        "profile pack {} invalid profile_id '{}': {}",
+        path.display(),
+        manifest.profile_id,
+        PROFILE_ID_RULE_DESCRIPTION
+    );
+    ensure!(
+        !manifest.display_name.trim().is_empty(),
+        "profile pack {} display_name must not be empty",
+        path.display()
+    );
+    ensure!(
+        !manifest.fallback_policy.trim().is_empty(),
+        "profile pack {} fallback_policy must not be empty",
+        path.display()
+    );
+    validate_portable_relative_path(path, "ranking_config_dir", &manifest.ranking_config_dir)?;
+    validate_portable_relative_path(path, "reason_catalog", &manifest.reason_catalog)?;
+
+    let mut seen_content_kinds = BTreeSet::new();
+    ensure!(
+        !manifest.supported_content_kinds.is_empty(),
+        "profile pack {} supported_content_kinds must not be empty",
+        path.display()
+    );
+    for kind in &manifest.supported_content_kinds {
+        ensure!(
+            seen_content_kinds.insert(*kind),
+            "profile pack {} supported_content_kinds contains duplicate {}",
+            path.display(),
+            kind.as_str()
+        );
+    }
+    ensure!(
+        manifest.article_support == ArticleSupport::Implemented
+            || !manifest
+                .supported_content_kinds
+                .contains(&ContentKind::Article),
+        "profile pack {} cannot enable article while article_support is {}",
+        path.display(),
+        manifest.article_support.as_str()
+    );
+
+    let mut seen_context_inputs = BTreeSet::new();
+    ensure!(
+        !manifest.context_inputs.is_empty(),
+        "profile pack {} context_inputs must not be empty",
+        path.display()
+    );
+    for input in &manifest.context_inputs {
+        ensure!(
+            seen_context_inputs.insert(*input),
+            "profile pack {} context_inputs contains duplicate {}",
+            path.display(),
+            input.as_str()
+        );
+    }
+
+    for fixture in &manifest.fixtures {
+        validate_portable_relative_path(path, "fixtures.path", &fixture.path)?;
+    }
+    for referenced_file in manifest
+        .source_manifests
+        .iter()
+        .chain(manifest.event_csv_examples.iter())
+        .chain(manifest.optional_crawler_manifests.iter())
+        .chain(manifest.examples.iter())
+    {
+        validate_portable_relative_path(path, "profile file reference", referenced_file)?;
+    }
+
+    Ok(())
+}
+
+fn validate_profile_reason_catalog(path: &Path, catalog: &ProfileReasonCatalog) -> Result<()> {
+    ensure!(
+        catalog.schema_version == PROFILE_REASON_CATALOG_SCHEMA_VERSION,
+        "profile reason catalog {} schema_version {} is unsupported; expected {}",
+        path.display(),
+        catalog.schema_version,
+        PROFILE_REASON_CATALOG_SCHEMA_VERSION
+    );
+    ensure!(
+        catalog.kind == ProfileReasonCatalogKind::ProfileReasonCatalog,
+        "profile reason catalog {} kind {} is invalid; expected {}",
+        path.display(),
+        catalog.kind.as_str(),
+        ProfileReasonCatalogKind::ProfileReasonCatalog.as_str()
+    );
+    ensure!(
+        is_profile_id(&catalog.profile_id),
+        "profile reason catalog {} invalid profile_id '{}': {}",
+        path.display(),
+        catalog.profile_id,
+        PROFILE_ID_RULE_DESCRIPTION
+    );
+    ensure!(
+        !catalog.reasons.is_empty(),
+        "profile reason catalog {} reasons must not be empty",
+        path.display()
+    );
+    let mut seen_features = BTreeSet::new();
+    let mut seen_reason_codes = BTreeSet::new();
+    for reason in &catalog.reasons {
+        ensure!(
+            !reason.feature.trim().is_empty(),
+            "profile reason catalog {} contains an empty feature",
+            path.display()
+        );
+        ensure!(
+            seen_features.insert(reason.feature.clone()),
+            "profile reason catalog {} contains duplicate feature {}",
+            path.display(),
+            reason.feature
+        );
+        ensure!(
+            !reason.reason_code.trim().is_empty(),
+            "profile reason catalog {} feature {} has empty reason_code",
+            path.display(),
+            reason.feature
+        );
+        ensure!(
+            seen_reason_codes.insert(reason.reason_code.clone()),
+            "profile reason catalog {} contains duplicate reason_code {}",
+            path.display(),
+            reason.reason_code
+        );
+        ensure!(
+            !reason.label.trim().is_empty(),
+            "profile reason catalog {} feature {} has empty label",
+            path.display(),
+            reason.feature
+        );
+    }
+    Ok(())
+}
+
+fn validate_profile_fixture_ref(
+    profile_path: &Path,
+    profile_id: &str,
+    fixture: &ProfileFixtureRef,
+    fixture_manifest_path: &Path,
+) -> Result<()> {
+    let raw = read_raw(fixture_manifest_path).with_context(|| {
+        format!(
+            "failed to read profile pack {} fixture {} manifest {}",
+            profile_path.display(),
+            fixture.fixture_set_id,
+            fixture_manifest_path.display()
+        )
+    })?;
+    let fixture_manifest: ProfileFixtureManifestHeader =
+        serde_yaml::from_str(&raw).with_context(|| {
+            format!(
+                "failed to parse profile pack {} fixture {} manifest {}",
+                profile_path.display(),
+                fixture.fixture_set_id,
+                fixture_manifest_path.display()
+            )
+        })?;
+    ensure!(
+        fixture_manifest.schema_version == PROFILE_FIXTURE_SET_SCHEMA_VERSION,
+        "profile pack {} fixture {} schema_version {} is unsupported; expected {}",
+        profile_path.display(),
+        fixture.fixture_set_id,
+        fixture_manifest.schema_version,
+        PROFILE_FIXTURE_SET_SCHEMA_VERSION
+    );
+    ensure!(
+        fixture_manifest.kind == "fixture_set",
+        "profile pack {} fixture {} kind {} is invalid; expected fixture_set",
+        profile_path.display(),
+        fixture.fixture_set_id,
+        fixture_manifest.kind
+    );
+    ensure!(
+        fixture_manifest.fixture_set_id == fixture.fixture_set_id,
+        "profile pack {} fixture reference {} points to fixture_set_id {}",
+        profile_path.display(),
+        fixture.fixture_set_id,
+        fixture_manifest.fixture_set_id
+    );
+    if let Some(fixture_profile_id) = fixture_manifest.profile_id.as_deref() {
+        ensure!(
+            fixture_profile_id == profile_id,
+            "profile pack {} profile_id {} does not match fixture {} profile_id {}",
+            profile_path.display(),
+            profile_id,
+            fixture.fixture_set_id,
+            fixture_profile_id
+        );
+    }
+    Ok(())
+}
+
+fn resolve_profile_ref(manifest_path: &Path, label: &str, raw_path: &str) -> Result<PathBuf> {
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    Ok(manifest_dir.join(validate_portable_relative_path(
+        manifest_path,
+        label,
+        raw_path,
+    )?))
+}
+
+fn validate_portable_relative_path(
+    manifest_path: &Path,
+    label: &str,
+    raw_path: &str,
+) -> Result<PathBuf> {
+    ensure!(
+        !raw_path.trim().is_empty(),
+        "profile pack {} {} path must not be empty",
+        manifest_path.display(),
+        label
+    );
+    ensure!(
+        !raw_path.contains('\\') && !has_windows_drive_prefix(raw_path),
+        "profile pack {} {} path must use portable POSIX relative syntax",
+        manifest_path.display(),
+        label
+    );
+    let path = Path::new(raw_path);
+    ensure!(
+        !path.is_absolute(),
+        "profile pack {} {} path must be relative",
+        manifest_path.display(),
+        label
+    );
+    ensure!(
+        !path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        }),
+        "profile pack {} {} path must be relative without a root or prefix",
+        manifest_path.display(),
+        label
+    );
+    Ok(path.to_path_buf())
+}
+
+fn has_windows_drive_prefix(raw_path: &str) -> bool {
+    let bytes = raw_path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+pub fn is_profile_id(value: &str) -> bool {
+    !value.is_empty()
+        && value == value.trim()
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn list_profile_manifest_paths(path: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    collect_profile_manifest_paths(path, &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_profile_manifest_paths(path: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    if path.is_file() {
+        ensure!(
+            path.file_name().and_then(|file_name| file_name.to_str()) == Some("profile.yaml"),
+            "expected profile manifest file named profile.yaml, got {}",
+            path.display()
+        );
+        paths.push(path.to_path_buf());
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(path)
+        .with_context(|| format!("failed to read profile pack dir {}", path.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("failed to read entry under {}", path.display()))?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_profile_manifest_paths(&entry_path, paths)?;
+        } else if entry_path
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            == Some("profile.yaml")
+        {
+            paths.push(entry_path);
+        }
+    }
+    Ok(())
 }
 
 fn validate_config_contract(
@@ -618,9 +1281,16 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        lint_ranking_config_dir, parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
-        CandidateRetrievalMode, RankingConfigKind, RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
+        parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
+        validate_portable_relative_path, validate_profile_pack_contract,
+        validate_profile_reason_catalog, ArticleSupport, CandidateRetrievalMode,
+        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfileReasonCatalog,
+        ProfileReasonCatalogKind, RankingConfigKind, RankingProfiles,
+        DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
+
+    use domain::ContentKind;
 
     fn repo_config_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
@@ -639,6 +1309,81 @@ mod tests {
         ] {
             fs::copy(repo_config_root().join(name), target.join(name)).expect("copy config");
         }
+    }
+
+    fn repo_profile_root() -> PathBuf {
+        repo_config_root()
+            .parent()
+            .expect("configs dir")
+            .join("profiles")
+    }
+
+    fn write_minimal_reason_catalog(path: &std::path::Path, profile_id: &str) {
+        fs::write(
+            path,
+            format!(
+                r#"schema_version: 1
+kind: profile_reason_catalog
+profile_id: {profile_id}
+reasons:
+  - feature: direct_station_bonus
+    reason_code: geo.direct_station
+    label: Direct station
+    layer: core
+"#
+            ),
+        )
+        .expect("reason catalog");
+    }
+
+    fn write_minimal_profile_manifest(
+        path: &std::path::Path,
+        profile_id: &str,
+        fixture_set_id: &str,
+    ) {
+        fs::write(
+            path,
+            format!(
+                r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: {profile_id}
+display_name: Example Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+fixtures:
+  - fixture_set_id: {fixture_set_id}
+    path: ../../fixtures/minimal
+"#
+            ),
+        )
+        .expect("profile");
+    }
+
+    fn write_minimal_fixture_manifest(
+        path: &std::path::Path,
+        fixture_set_id: &str,
+        profile_id: &str,
+    ) {
+        fs::write(
+            path,
+            format!(
+                r#"schema_version: 1
+kind: fixture_set
+manifest_version: 2
+fixture_set_id: {fixture_set_id}
+profile_id: {profile_id}
+files: []
+"#
+            ),
+        )
+        .expect("fixture manifest");
     }
 
     #[test]
@@ -660,6 +1405,222 @@ mod tests {
             .files
             .iter()
             .any(|file| file.kind == RankingConfigKind::RankingPlacement));
+    }
+
+    #[test]
+    fn lints_default_profile_pack_contracts() {
+        let summary = lint_profile_pack_dir(repo_profile_root()).expect("profile lint");
+        let profile_ids = summary
+            .files
+            .iter()
+            .map(|file| file.profile_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            profile_ids,
+            vec!["local-discovery-generic", "school-event-jp"]
+        );
+        assert!(summary.files.iter().all(|file| file.reason_count > 0));
+        assert_eq!(summary.ranking_configs.len(), 1);
+    }
+
+    #[test]
+    fn profile_id_rejects_whitespace_and_edge_hyphens() {
+        assert!(is_profile_id("school-event-jp"));
+        assert!(!is_profile_id("school-event-jp "));
+        assert!(!is_profile_id(" school-event-jp"));
+        assert!(!is_profile_id("-school-event-jp"));
+        assert!(!is_profile_id("school-event-jp-"));
+        assert!(!is_profile_id("school_event_jp"));
+        assert!(!is_profile_id("School-Event-Jp"));
+    }
+
+    #[test]
+    fn invalid_profile_id_errors_include_value_and_full_rule() {
+        let manifest_path = PathBuf::from("configs/profiles/example/profile.yaml");
+        let manifest = ProfilePackManifest {
+            schema_version: super::PROFILE_PACK_SCHEMA_VERSION,
+            kind: ProfilePackKind::ProfilePack,
+            manifest_version: 1,
+            profile_id: "school-event-jp ".to_string(),
+            display_name: "Example".to_string(),
+            description: None,
+            supported_content_kinds: vec![ContentKind::School],
+            context_inputs: vec![ProfileContextInput::Station],
+            fallback_policy: "example_default".to_string(),
+            ranking_config_dir: "../../ranking".to_string(),
+            reason_catalog: "reasons.yaml".to_string(),
+            article_support: ArticleSupport::Reserved,
+            fixtures: vec![],
+            source_manifests: vec![],
+            event_csv_examples: vec![],
+            optional_crawler_manifests: vec![],
+            examples: vec![],
+        };
+        let error = validate_profile_pack_contract(&manifest_path, &manifest)
+            .expect_err("invalid profile id");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("invalid profile_id 'school-event-jp '"));
+        assert!(rendered.contains("must be non-empty and trimmed"));
+
+        let catalog = ProfileReasonCatalog {
+            schema_version: super::PROFILE_REASON_CATALOG_SCHEMA_VERSION,
+            kind: ProfileReasonCatalogKind::ProfileReasonCatalog,
+            profile_id: "School-Event-Jp".to_string(),
+            reasons: vec![],
+        };
+        let error = validate_profile_reason_catalog(&manifest_path, &catalog)
+            .expect_err("invalid catalog profile id");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("invalid profile_id 'School-Event-Jp'"));
+        assert!(rendered.contains("lowercase letters"));
+    }
+
+    #[test]
+    fn lint_profile_pack_dir_rejects_non_profile_yaml_file_input() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("reasons.yaml");
+        fs::write(&path, "schema_version: 1\n").expect("write file");
+
+        let error = lint_profile_pack_dir(&path).expect_err("non-profile manifest file");
+
+        assert!(format!("{error:#}").contains("expected profile manifest file named profile.yaml"));
+    }
+
+    #[test]
+    fn profile_refs_validate_portable_relative_paths() {
+        let manifest_path = PathBuf::from("configs/profiles/example/profile.yaml");
+        assert_eq!(
+            validate_portable_relative_path(&manifest_path, "ranking_config_dir", "../../ranking")
+                .expect("relative path"),
+            PathBuf::from("../../ranking")
+        );
+        assert_eq!(
+            validate_portable_relative_path(
+                &manifest_path,
+                "profile file reference",
+                "requests/station.request.json"
+            )
+            .expect("nested relative path"),
+            PathBuf::from("requests/station.request.json")
+        );
+
+        for raw_path in ["", " "] {
+            let error = validate_portable_relative_path(&manifest_path, "reason_catalog", raw_path)
+                .expect_err("empty path");
+            assert!(format!("{error:#}").contains("path must not be empty"));
+        }
+
+        for raw_path in ["C:/configs/ranking", r"..\ranking"] {
+            let error =
+                validate_portable_relative_path(&manifest_path, "ranking_config_dir", raw_path)
+                    .expect_err("non-portable path");
+            assert!(format!("{error:#}").contains("portable POSIX relative syntax"));
+        }
+
+        let error = validate_portable_relative_path(
+            &manifest_path,
+            "ranking_config_dir",
+            "/configs/ranking",
+        )
+        .expect_err("absolute path");
+        assert!(format!("{error:#}").contains("path must be relative"));
+    }
+
+    #[test]
+    fn rejects_article_without_profile_support() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        fs::write(
+            fixture_dir.join("fixture_manifest.yaml"),
+            "schema_version: 1\n",
+        )
+        .expect("fixture manifest");
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+supported_content_kinds:
+  - school
+  - article
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+fixtures:
+  - fixture_set_id: minimal
+    path: ../../fixtures/minimal
+"#,
+        )
+        .expect("profile");
+
+        let error = lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("article");
+        assert!(format!("{error:#}").contains("cannot enable article"));
+    }
+
+    #[test]
+    fn rejects_fixture_set_id_mismatch_in_profile_pack() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "other-fixture",
+            "example-profile",
+        );
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("fixture mismatch");
+        assert!(format!("{error:#}").contains("points to fixture_set_id other-fixture"));
+    }
+
+    #[test]
+    fn rejects_fixture_profile_id_mismatch_in_profile_pack() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "other-profile",
+        );
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("profile mismatch");
+        assert!(format!("{error:#}").contains("does not match fixture minimal profile_id"));
     }
 
     #[test]

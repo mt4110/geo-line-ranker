@@ -4,6 +4,10 @@ Recommendation explanations are generated from cataloged score components. The
 catalog keeps deterministic score math, public labels, and explanation text in
 one vocabulary.
 
+Profile-owned reason catalogs live under `configs/profiles/*/reasons.yaml`.
+They layer current reason codes into `core` and `profile` ownership without
+changing the public `reason_code` values listed here.
+
 ## Contract
 
 - `score_breakdown[].feature` is the internal component name.
