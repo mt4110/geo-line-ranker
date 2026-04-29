@@ -38,7 +38,8 @@ cargo run -p cli -- config lint
 
 ## Runtime Selection
 
-API, worker, and CLI commands select `local-discovery-generic` by default:
+API, worker, CLI, and most crawler commands select
+`local-discovery-generic` by default:
 
 ```bash
 PROFILE_ID=local-discovery-generic

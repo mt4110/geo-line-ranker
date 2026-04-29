@@ -88,15 +88,44 @@ pub struct AppSettings {
 impl AppSettings {
     pub fn from_env() -> Result<Self> {
         load_dotenv();
-        let profile_packs_dir =
-            env_path("PROFILE_PACKS_DIR", runtime_path(DEFAULT_PROFILE_PACKS_DIR))?;
+        let ranking_config_dir_override = env_path_optional("RANKING_CONFIG_DIR")?;
+        let fixture_dir_override = env_path_optional("FIXTURE_DIR")?;
+        let profile_packs_dir = env_path(
+            "PROFILE_PACKS_DIR",
+            resolve_runtime_path(DEFAULT_PROFILE_PACKS_DIR),
+        )?;
         let profile_id = env_string("PROFILE_ID", DEFAULT_PROFILE_ID.to_string())?;
         let requested_fixture_set_id = env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
-        let runtime_profile = resolve_profile_pack_runtime_selection(
-            profile_packs_dir,
-            &profile_id,
-            requested_fixture_set_id.as_deref(),
-        )?;
+        let runtime_profile =
+            if ranking_config_dir_override.is_some() && fixture_dir_override.is_some() {
+                None
+            } else {
+                Some(resolve_profile_pack_runtime_selection(
+                    profile_packs_dir,
+                    &profile_id,
+                    requested_fixture_set_id.as_deref(),
+                )?)
+            };
+
+        let ranking_config_dir = match (ranking_config_dir_override, runtime_profile.as_ref()) {
+            (Some(path), _) => path,
+            (None, Some(profile)) => profile.ranking_config_dir.clone(),
+            (None, None) => anyhow::bail!(
+                "RANKING_CONFIG_DIR is required when profile pack resolution is skipped"
+            ),
+        };
+        let fixture_dir = match (fixture_dir_override, runtime_profile.as_ref()) {
+            (Some(path), _) => path,
+            (None, Some(profile)) => profile.fixture_dir.clone().with_context(|| {
+                format!(
+                    "profile pack {} does not declare a runtime fixture; set FIXTURE_DIR explicitly",
+                    profile.profile_pack_manifest.display()
+                )
+            })?,
+            (None, None) => {
+                anyhow::bail!("FIXTURE_DIR is required when profile pack resolution is skipped")
+            }
+        };
 
         let candidate_retrieval_mode =
             parse_candidate_retrieval_mode(match env::var("CANDIDATE_RETRIEVAL_MODE") {
@@ -115,20 +144,19 @@ impl AppSettings {
             )?,
             postgres_pool_max_size: parse_postgres_pool_max_size_env()?,
             redis_url: env_optional_non_empty("REDIS_URL")?,
-            profile_id: runtime_profile.profile_id,
-            profile_pack_manifest: runtime_profile.profile_pack_manifest.display().to_string(),
-            profile_fixture_set_id: runtime_profile.fixture_set_id,
-            ranking_config_dir: env_path("RANKING_CONFIG_DIR", runtime_profile.ranking_config_dir)?
-                .display()
-                .to_string(),
-            fixture_dir: env_path(
-                "FIXTURE_DIR",
-                runtime_profile
-                    .fixture_dir
-                    .unwrap_or_else(|| runtime_path(DEFAULT_FIXTURE_DIR)),
-            )?
-            .display()
-            .to_string(),
+            profile_id: runtime_profile
+                .as_ref()
+                .map(|profile| profile.profile_id.clone())
+                .unwrap_or(profile_id),
+            profile_pack_manifest: runtime_profile
+                .as_ref()
+                .map(|profile| profile.profile_pack_manifest.display().to_string())
+                .unwrap_or_default(),
+            profile_fixture_set_id: runtime_profile
+                .as_ref()
+                .and_then(|profile| profile.fixture_set_id.clone()),
+            ranking_config_dir: ranking_config_dir.display().to_string(),
+            fixture_dir: fixture_dir.display().to_string(),
             raw_storage_dir: env_string("RAW_STORAGE_DIR", ".storage/raw".to_string())?,
             algorithm_version: env_string(
                 "ALGORITHM_VERSION",
@@ -1427,13 +1455,23 @@ fn env_optional_non_empty(name: &str) -> Result<Option<String>> {
 
 fn env_path(name: &str, default: PathBuf) -> Result<PathBuf> {
     match env::var(name) {
-        Ok(raw) => Ok(runtime_path(raw)),
+        Ok(raw) => Ok(resolve_runtime_path(raw)),
         Err(env::VarError::NotPresent) => Ok(default),
         Err(env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
     }
 }
 
-fn runtime_path(path: impl AsRef<Path>) -> PathBuf {
+fn env_path_optional(name: &str) -> Result<Option<PathBuf>> {
+    match env::var(name) {
+        Ok(raw) => Ok(Some(raw)
+            .filter(|value| !value.is_empty())
+            .map(resolve_runtime_path)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
+}
+
+pub fn resolve_runtime_path(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     if path.is_absolute() {
         return path.to_path_buf();
@@ -1472,7 +1510,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{
+        env, fs,
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+    };
 
     use tempfile::tempdir;
 
@@ -1480,10 +1522,10 @@ mod tests {
         is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
         parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
         resolve_profile_pack_runtime_selection, validate_portable_relative_path,
-        validate_profile_pack_contract, validate_profile_reason_catalog, ArticleSupport,
-        CandidateRetrievalMode, ProfileContextInput, ProfilePackKind, ProfilePackManifest,
-        ProfileReasonCatalog, ProfileReasonCatalogKind, RankingConfigKind, RankingProfiles,
-        DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        validate_profile_pack_contract, validate_profile_reason_catalog, AppSettings,
+        ArticleSupport, CandidateRetrievalMode, ProfileContextInput, ProfilePackKind,
+        ProfilePackManifest, ProfileReasonCatalog, ProfileReasonCatalogKind, RankingConfigKind,
+        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     use domain::ContentKind;
@@ -1512,6 +1554,24 @@ mod tests {
             .parent()
             .expect("configs dir")
             .join("profiles")
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_app_env() {
+        for name in [
+            "PROFILE_PACKS_DIR",
+            "PROFILE_ID",
+            "PROFILE_FIXTURE_SET_ID",
+            "RANKING_CONFIG_DIR",
+            "FIXTURE_DIR",
+            "CANDIDATE_RETRIEVAL_MODE",
+        ] {
+            env::remove_var(name);
+        }
     }
 
     fn write_minimal_reason_catalog(path: &std::path::Path, profile_id: &str) {
@@ -1692,6 +1752,78 @@ files: []
             .expect("fixture dir")
             .join("fixture_manifest.yaml")
             .exists());
+    }
+
+    #[test]
+    fn app_settings_honors_legacy_overrides_without_profile_pack() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("legacy");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+
+        env::set_var("PROFILE_PACKS_DIR", temp.path().join("missing-profiles"));
+        env::set_var("RANKING_CONFIG_DIR", &ranking_dir);
+        env::set_var("FIXTURE_DIR", &fixture_dir);
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env().expect("settings");
+
+        assert_eq!(
+            settings.ranking_config_dir,
+            ranking_dir.display().to_string()
+        );
+        assert_eq!(settings.fixture_dir, fixture_dir.display().to_string());
+        assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
+        assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_fixture_set_id.is_none());
+        clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_requires_fixture_override_for_fixtureless_profile() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        env::set_var("PROFILE_PACKS_DIR", &profiles_dir);
+        env::set_var("PROFILE_ID", "example-profile");
+        env::set_var("RANKING_CONFIG_DIR", "");
+        env::set_var("FIXTURE_DIR", "");
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let error = AppSettings::from_env().expect_err("fixture override required");
+
+        assert!(format!("{error:#}").contains("does not declare a runtime fixture"));
+        clear_app_env();
     }
 
     #[test]

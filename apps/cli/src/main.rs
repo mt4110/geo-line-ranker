@@ -15,8 +15,8 @@ use cli::{
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, resolve_profile_pack_runtime_selection,
-    AppSettings, ProfilePackLintSummary, RankingConfigLintSummary, DEFAULT_PROFILE_ID,
-    DEFAULT_PROFILE_PACKS_DIR,
+    resolve_runtime_path, AppSettings, ProfilePackLintSummary, RankingConfigLintSummary,
+    DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
@@ -424,9 +424,9 @@ fn active_profile_selection_for_lint(
 
 fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> {
     match std::env::var(name) {
-        Ok(raw) if raw.is_empty() => Ok(default),
-        Ok(raw) => Ok(PathBuf::from(raw)),
-        Err(std::env::VarError::NotPresent) => Ok(default),
+        Ok(raw) if raw.is_empty() => Ok(resolve_runtime_path(default)),
+        Ok(raw) => Ok(resolve_runtime_path(raw)),
+        Err(std::env::VarError::NotPresent) => Ok(resolve_runtime_path(default)),
         Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
     }
 }
