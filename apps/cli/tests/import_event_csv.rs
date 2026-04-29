@@ -16,6 +16,12 @@ fn test_settings(raw_storage_dir: &std::path::Path, database_url: &str) -> AppSe
         database_url: database_url.to_string(),
         postgres_pool_max_size: 4,
         redis_url: None,
+        profile_id: "local-discovery-generic".to_string(),
+        profile_pack_manifest: root
+            .join("configs/profiles/local-discovery-generic/profile.yaml")
+            .display()
+            .to_string(),
+        profile_fixture_set_id: Some("minimal".to_string()),
         ranking_config_dir: root.join("configs/ranking").display().to_string(),
         fixture_dir: root.join("storage/fixtures/minimal").display().to_string(),
         raw_storage_dir: raw_storage_dir.display().to_string(),

@@ -36,6 +36,22 @@ reason catalog.
 cargo run -p cli -- config lint
 ```
 
+## Runtime Selection
+
+API, worker, and CLI commands select `local-discovery-generic` by default:
+
+```bash
+PROFILE_ID=local-discovery-generic
+PROFILE_PACKS_DIR=configs/profiles
+```
+
+`PROFILE_ID` resolves `configs/profiles/<profile_id>/profile.yaml`, then uses
+that manifest's `ranking_config_dir` and selected fixture path as runtime
+defaults. `RANKING_CONFIG_DIR` and `FIXTURE_DIR` remain explicit overrides for
+local experiments and compatibility with older runbooks.
+`PROFILE_FIXTURE_SET_ID` is optional; when omitted, the first fixture declared
+by the selected profile is used.
+
 ## Boundary
 
 Core ranking remains deterministic Rust over canonical records. A connector

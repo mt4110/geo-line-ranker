@@ -14,8 +14,9 @@ use cli::{
     run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
 use config::{
-    lint_profile_pack_dir, lint_ranking_config_dir, AppSettings, ProfilePackLintSummary,
-    RankingConfigLintSummary,
+    lint_profile_pack_dir, lint_ranking_config_dir, resolve_profile_pack_runtime_selection,
+    AppSettings, ProfilePackLintSummary, RankingConfigLintSummary, DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_PACKS_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
@@ -175,10 +176,9 @@ enum ConfigCommand {
         path: Option<PathBuf>,
         #[arg(
             long,
-            default_value = "configs/profiles",
-            help = "Profile pack directory to lint."
+            help = "Profile pack directory to lint. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
-        profiles_path: PathBuf,
+        profiles_path: Option<PathBuf>,
     },
 }
 
@@ -233,19 +233,21 @@ enum JobsCommand {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let settings = AppSettings::from_env()?;
     let cli = Cli::parse();
 
     match cli.command {
         Command::Migrate => {
+            let settings = AppSettings::from_env()?;
             run_migrations(&settings.database_url, "storage/migrations/postgres").await?;
         }
         Command::Seed { target } => match target {
             SeedTarget::Example => {
+                let settings = AppSettings::from_env()?;
                 seed_fixture(&settings.database_url, &settings.fixture_dir).await?
             }
         },
         Command::Import { target } => {
+            let settings = AppSettings::from_env()?;
             let summary = match target {
                 ImportCommand::Rail { manifest } => {
                     run_import_command(&settings, ImportTarget::JpRail, manifest).await?
@@ -265,6 +267,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Derive { target } => match target {
             DeriveCommand::SchoolStationLinks => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_derive_school_station_links(&settings).await?;
                 println!("{}", format_summary(&summary));
             }
@@ -281,6 +284,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Index { target } => match target {
             IndexCommand::Rebuild => {
+                let settings = AppSettings::from_env()?;
                 let service = ProjectionSyncService::new(
                     settings.database_url.clone(),
                     &settings.opensearch,
@@ -294,6 +298,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Projection { target } => match target {
             ProjectionCommand::Sync => {
+                let settings = AppSettings::from_env()?;
                 let service = ProjectionSyncService::new(
                     settings.database_url.clone(),
                     &settings.opensearch,
@@ -307,6 +312,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Snapshot { target } => match target {
             SnapshotCommand::Refresh => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_snapshot_refresh(&settings).await?;
                 println!("{}", format_snapshot_refresh_summary(&summary));
             }
@@ -316,6 +322,7 @@ async fn main() -> anyhow::Result<()> {
                 limit,
                 fail_on_mismatch,
             } => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_replay_evaluate(&settings, limit).await?;
                 println!("{}", format_replay_evaluation_summary(&summary));
                 if fail_on_mismatch && (summary.mismatched > 0 || summary.failed > 0) {
@@ -332,7 +339,15 @@ async fn main() -> anyhow::Result<()> {
                 path,
                 profiles_path,
             } => {
-                let path = path.unwrap_or_else(|| PathBuf::from(&settings.ranking_config_dir));
+                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                    "PROFILE_PACKS_DIR",
+                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                )?);
+                let active_profile = active_profile_selection_for_lint(&profiles_path)?;
+                let path = path.unwrap_or(env_path_or_default(
+                    "RANKING_CONFIG_DIR",
+                    active_profile.ranking_config_dir.clone(),
+                )?);
                 let profile_summary = lint_profile_pack_dir(profiles_path)?;
                 let ranking_summary =
                     match cached_ranking_summary_for_path(&profile_summary, &path)? {
@@ -341,7 +356,12 @@ async fn main() -> anyhow::Result<()> {
                     };
                 println!(
                     "{}",
-                    format_config_lint_summary(&ranking_summary, &profile_summary)
+                    format_config_lint_summary(
+                        &active_profile.profile_id,
+                        active_profile.fixture_set_id.as_deref(),
+                        &ranking_summary,
+                        &profile_summary
+                    )
                 );
             }
         },
@@ -353,18 +373,22 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Jobs { target } => match target {
             JobsCommand::List { limit } => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_job_list(&settings, limit).await?;
                 println!("{}", format_job_list(&summary));
             }
             JobsCommand::Inspect { id } => {
+                let settings = AppSettings::from_env()?;
                 let inspection = run_job_inspect(&settings, id).await?;
                 println!("{}", format_job_inspection(&inspection));
             }
             JobsCommand::Retry { id } => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_job_retry(&settings, id).await?;
                 println!("{}", format_job_mutation_summary("retry", &summary));
             }
             JobsCommand::Due { id } => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_job_due(&settings, id).await?;
                 println!("{}", format_job_mutation_summary("due", &summary));
             }
@@ -373,6 +397,7 @@ async fn main() -> anyhow::Result<()> {
                 payload,
                 max_attempts,
             } => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_job_enqueue(&settings, &job_type, &payload, max_attempts).await?;
                 println!("{}", format_job_enqueue_summary(&summary));
             }
@@ -387,6 +412,40 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn active_profile_selection_for_lint(
+    profiles_path: &Path,
+) -> anyhow::Result<config::ProfilePackRuntimeSelection> {
+    let profile_id = env_string_or_default("PROFILE_ID", DEFAULT_PROFILE_ID)?;
+    let fixture_set_id = env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
+    resolve_profile_pack_runtime_selection(profiles_path, &profile_id, fixture_set_id.as_deref())
+}
+
+fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> {
+    match std::env::var(name) {
+        Ok(raw) if raw.is_empty() => Ok(default),
+        Ok(raw) => Ok(PathBuf::from(raw)),
+        Err(std::env::VarError::NotPresent) => Ok(default),
+        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
+}
+
+fn env_string_or_default(name: &str, default: &str) -> anyhow::Result<String> {
+    match std::env::var(name) {
+        Ok(raw) if raw.is_empty() => Ok(default.to_string()),
+        Ok(raw) => Ok(raw),
+        Err(std::env::VarError::NotPresent) => Ok(default.to_string()),
+        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
+}
+
+fn env_optional_non_empty(name: &str) -> anyhow::Result<Option<String>> {
+    match std::env::var(name) {
+        Ok(raw) => Ok(Some(raw).filter(|value| !value.is_empty())),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
 }
 
 fn cached_ranking_summary_for_path(
@@ -419,11 +478,16 @@ fn ranking_summary_with_base_path(
 }
 
 fn format_config_lint_summary(
+    active_profile_id: &str,
+    fixture_set_id: Option<&str>,
     ranking: &RankingConfigLintSummary,
     profiles: &ProfilePackLintSummary,
 ) -> String {
+    let fixture_set = fixture_set_id.unwrap_or("none");
     let mut lines = vec![format!(
-        "config lint ok: ranking_files={}, profile_packs={}, profile_version={}",
+        "config lint ok: active_profile_id={}, fixture_set_id={}, ranking_files={}, profile_packs={}, profile_version={}",
+        active_profile_id,
+        fixture_set,
         ranking.files.len(),
         profiles.files.len(),
         ranking.profile_version

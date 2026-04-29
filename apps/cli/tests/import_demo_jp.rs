@@ -33,6 +33,12 @@ async fn imports_demo_jp_fixture_when_database_is_available() -> anyhow::Result<
             database_url: database_url.clone(),
             postgres_pool_max_size: 4,
             redis_url: None,
+            profile_id: "local-discovery-generic".to_string(),
+            profile_pack_manifest: repo_root
+                .join("configs/profiles/local-discovery-generic/profile.yaml")
+                .display()
+                .to_string(),
+            profile_fixture_set_id: Some("minimal".to_string()),
             ranking_config_dir: repo_root.join("configs/ranking").display().to_string(),
             fixture_dir: repo_root
                 .join("storage/fixtures/minimal")
