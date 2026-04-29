@@ -107,7 +107,9 @@ Committed fixture set directories, such as `storage/fixtures/minimal` and
 ```yaml
 schema_version: 1
 kind: fixture_set
-manifest_version: 1
+manifest_version: 2
+fixture_set_id: minimal
+profile_id: local-discovery-generic
 ```
 
 The fixture manifest records each fixture file's relative path, format,

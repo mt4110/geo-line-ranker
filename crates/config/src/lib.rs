@@ -15,6 +15,8 @@ pub const RANKING_CONFIG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_REASON_CATALOG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_FIXTURE_SET_SCHEMA_VERSION: u32 = 1;
+pub const PROFILE_ID_RULE_DESCRIPTION: &str =
+    "must use lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -871,8 +873,9 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
     );
     ensure!(
         is_profile_id(&manifest.profile_id),
-        "profile pack {} profile_id must use lowercase letters, digits, and hyphens",
-        path.display()
+        "profile pack {} profile_id {}",
+        path.display(),
+        PROFILE_ID_RULE_DESCRIPTION
     );
     ensure!(
         !manifest.display_name.trim().is_empty(),
@@ -959,8 +962,9 @@ fn validate_profile_reason_catalog(path: &Path, catalog: &ProfileReasonCatalog) 
     );
     ensure!(
         is_profile_id(&catalog.profile_id),
-        "profile reason catalog {} profile_id must use lowercase letters, digits, and hyphens",
-        path.display()
+        "profile reason catalog {} profile_id {}",
+        path.display(),
+        PROFILE_ID_RULE_DESCRIPTION
     );
     ensure!(
         !catalog.reasons.is_empty(),
@@ -1113,9 +1117,9 @@ fn has_windows_drive_prefix(raw_path: &str) -> bool {
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
-fn is_profile_id(value: &str) -> bool {
-    let value = value.trim();
+pub fn is_profile_id(value: &str) -> bool {
     !value.is_empty()
+        && value == value.trim()
         && !value.starts_with('-')
         && !value.ends_with('-')
         && value
@@ -1132,9 +1136,12 @@ fn list_profile_manifest_paths(path: &Path) -> Result<Vec<PathBuf>> {
 
 fn collect_profile_manifest_paths(path: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
     if path.is_file() {
-        if is_yaml_path(path) {
-            paths.push(path.to_path_buf());
-        }
+        ensure!(
+            path.file_name().and_then(|file_name| file_name.to_str()) == Some("profile.yaml"),
+            "expected profile manifest file named profile.yaml, got {}",
+            path.display()
+        );
+        paths.push(path.to_path_buf());
         return Ok(());
     }
 
@@ -1155,13 +1162,6 @@ fn collect_profile_manifest_paths(path: &Path, paths: &mut Vec<PathBuf>) -> Resu
         }
     }
     Ok(())
-}
-
-fn is_yaml_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|extension| extension.to_str()),
-        Some("yaml" | "yml")
-    )
 }
 
 fn validate_config_contract(
@@ -1237,7 +1237,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
+        is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
         parse_candidate_retrieval_mode, parse_postgres_pool_max_size, CandidateRetrievalMode,
         RankingConfigKind, RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
@@ -1370,6 +1370,28 @@ files: []
             vec!["local-discovery-generic", "school-event-jp"]
         );
         assert!(summary.files.iter().all(|file| file.reason_count > 0));
+    }
+
+    #[test]
+    fn profile_id_rejects_whitespace_and_edge_hyphens() {
+        assert!(is_profile_id("school-event-jp"));
+        assert!(!is_profile_id("school-event-jp "));
+        assert!(!is_profile_id(" school-event-jp"));
+        assert!(!is_profile_id("-school-event-jp"));
+        assert!(!is_profile_id("school-event-jp-"));
+        assert!(!is_profile_id("school_event_jp"));
+        assert!(!is_profile_id("School-Event-Jp"));
+    }
+
+    #[test]
+    fn lint_profile_pack_dir_rejects_non_profile_yaml_file_input() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("reasons.yaml");
+        fs::write(&path, "schema_version: 1\n").expect("write file");
+
+        let error = lint_profile_pack_dir(&path).expect_err("non-profile manifest file");
+
+        assert!(format!("{error:#}").contains("expected profile manifest file named profile.yaml"));
     }
 
     #[test]

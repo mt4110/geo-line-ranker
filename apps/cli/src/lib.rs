@@ -8,7 +8,7 @@ use anyhow::{ensure, Context, Result};
 use api_contracts::{FallbackStageDto, RecommendationRequest, RecommendationResponse};
 use cache::RecommendationCache;
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use config::{AppSettings, RankingProfiles};
+use config::{is_profile_id, AppSettings, RankingProfiles, PROFILE_ID_RULE_DESCRIPTION};
 use csv::Reader;
 use generic_csv::{
     count_csv_rows, load_manifest, read_csv_rows, stage_raw_files, stage_single_csv_file,
@@ -605,9 +605,10 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
     );
     if let Some(profile_id) = manifest.profile_id.as_deref() {
         ensure!(
-            is_portable_profile_id(profile_id),
-            "fixture manifest {} profile_id must use lowercase letters, digits, and hyphens",
-            manifest_path.display()
+            is_profile_id(profile_id),
+            "fixture manifest {} profile_id {}",
+            manifest_path.display(),
+            PROFILE_ID_RULE_DESCRIPTION
         );
     }
     ensure!(
@@ -712,16 +713,6 @@ pub fn run_fixture_doctor(path: impl AsRef<Path>) -> Result<FixtureDoctorSummary
         manifest_version: manifest.manifest_version,
         files,
     })
-}
-
-fn is_portable_profile_id(value: &str) -> bool {
-    let value = value.trim();
-    !value.is_empty()
-        && !value.starts_with('-')
-        && !value.ends_with('-')
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 fn parent_or_current_dir(path: &Path) -> &Path {
