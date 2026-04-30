@@ -177,7 +177,7 @@ enum ConfigCommand {
         path: Option<PathBuf>,
         #[arg(
             long,
-            help = "Profile pack directory to lint. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+            help = "Profile pack directory or profile.yaml file to lint. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
     },
@@ -345,8 +345,7 @@ async fn main() -> anyhow::Result<()> {
                     "PROFILE_PACKS_DIR",
                     PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
                 )?);
-                let ranking_config_dir_override =
-                    env_path_optional_non_empty("RANKING_CONFIG_DIR")?;
+                let ranking_config_dir_override = config::env_path_optional("RANKING_CONFIG_DIR")?;
                 let path = path.map(resolve_runtime_path);
                 let needs_active_profile = path.is_none() && ranking_config_dir_override.is_none();
                 let active_profile = active_profile_selection_for_lint(&profiles_path)
@@ -440,7 +439,7 @@ fn active_profile_selection_for_lint(
     profiles_path: &Path,
 ) -> anyhow::Result<config::ProfilePackRuntimeSelection> {
     let profile_id = profile_id_for_lint(profiles_path)?;
-    let fixture_set_id = env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
+    let fixture_set_id = config::env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
     resolve_profile_pack_runtime_selection(profiles_path, &profile_id, fixture_set_id.as_deref())
 }
 
@@ -456,29 +455,7 @@ fn profile_id_for_lint(profiles_path: &Path) -> anyhow::Result<String> {
 }
 
 fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> {
-    match std::env::var(name) {
-        Ok(raw) if raw.is_empty() => Ok(resolve_runtime_path(default)),
-        Ok(raw) => Ok(resolve_runtime_path(raw)),
-        Err(std::env::VarError::NotPresent) => Ok(resolve_runtime_path(default)),
-        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
-    }
-}
-
-fn env_path_optional_non_empty(name: &str) -> anyhow::Result<Option<PathBuf>> {
-    match std::env::var(name) {
-        Ok(raw) if raw.is_empty() => Ok(None),
-        Ok(raw) => Ok(Some(resolve_runtime_path(raw))),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
-    }
-}
-
-fn env_optional_non_empty(name: &str) -> anyhow::Result<Option<String>> {
-    match std::env::var(name) {
-        Ok(raw) => Ok(Some(raw).filter(|value| !value.is_empty())),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
-    }
+    Ok(config::env_path_optional(name)?.unwrap_or_else(|| resolve_runtime_path(default)))
 }
 
 fn cached_ranking_summary_for_path(

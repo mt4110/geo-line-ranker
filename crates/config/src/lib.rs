@@ -1501,7 +1501,7 @@ fn env_string(name: &str, default: String) -> Result<String> {
     }
 }
 
-fn env_optional_non_empty(name: &str) -> Result<Option<String>> {
+pub fn env_optional_non_empty(name: &str) -> Result<Option<String>> {
     match env::var(name) {
         Ok(raw) => Ok(Some(raw).filter(|value| !value.is_empty())),
         Err(env::VarError::NotPresent) => Ok(None),
@@ -1518,7 +1518,7 @@ fn env_path(name: &str, default: PathBuf) -> Result<PathBuf> {
     }
 }
 
-fn env_path_optional(name: &str) -> Result<Option<PathBuf>> {
+pub fn env_path_optional(name: &str) -> Result<Option<PathBuf>> {
     match env::var(name) {
         Ok(raw) => Ok(Some(raw)
             .filter(|value| !value.is_empty())
