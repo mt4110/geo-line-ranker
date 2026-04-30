@@ -13,6 +13,9 @@ cp .env.example .env
 ```
 
 The `api`, `worker`, `cli`, and `crawler` binaries automatically read `.env` from the repository root.
+By default the runtime selects the `local-discovery-generic` profile pack, which
+resolves `configs/ranking` and `storage/fixtures/minimal` from
+`configs/profiles/local-discovery-generic/profile.yaml`.
 
 ## 2. Start minimal services
 

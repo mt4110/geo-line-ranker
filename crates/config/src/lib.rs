@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
+pub const DEFAULT_PROFILE_PACKS_DIR: &str = "configs/profiles";
+pub const DEFAULT_PROFILE_ID: &str = "local-discovery-generic";
+pub const DEFAULT_RANKING_CONFIG_DIR: &str = "configs/ranking";
+pub const DEFAULT_FIXTURE_DIR: &str = "storage/fixtures/minimal";
 pub const RANKING_CONFIG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_REASON_CATALOG_SCHEMA_VERSION: u32 = 1;
@@ -66,6 +70,9 @@ pub struct AppSettings {
     pub database_url: String,
     pub postgres_pool_max_size: usize,
     pub redis_url: Option<String>,
+    pub profile_id: String,
+    pub profile_pack_manifest: String,
+    pub profile_fixture_set_id: Option<String>,
     pub ranking_config_dir: String,
     pub fixture_dir: String,
     pub raw_storage_dir: String,
@@ -81,7 +88,86 @@ pub struct AppSettings {
 
 impl AppSettings {
     pub fn from_env() -> Result<Self> {
+        Self::from_env_with_profile_pack(
+            ProfilePackRuntimeMode::Resolve,
+            FixtureRuntimeRequirement::Optional,
+        )
+    }
+
+    pub fn from_env_requiring_fixture() -> Result<Self> {
+        Self::from_env_with_profile_pack(
+            ProfilePackRuntimeMode::Resolve,
+            FixtureRuntimeRequirement::Required,
+        )
+    }
+
+    pub fn from_env_without_profile_pack() -> Result<Self> {
+        Self::from_env_with_profile_pack(
+            ProfilePackRuntimeMode::Skip,
+            FixtureRuntimeRequirement::Optional,
+        )
+    }
+
+    fn from_env_with_profile_pack(
+        profile_pack_mode: ProfilePackRuntimeMode,
+        fixture_requirement: FixtureRuntimeRequirement,
+    ) -> Result<Self> {
         load_dotenv();
+
+        let (ranking_config_dir_override, fixture_dir_override, profile_id, runtime_profile) =
+            match profile_pack_mode {
+                ProfilePackRuntimeMode::Resolve => {
+                    let ranking_config_dir_override = env_path_optional("RANKING_CONFIG_DIR")?;
+                    let fixture_dir_override = env_path_optional("FIXTURE_DIR")?;
+                    let profile_packs_dir = env_path(
+                        "PROFILE_PACKS_DIR",
+                        resolve_runtime_path(DEFAULT_PROFILE_PACKS_DIR),
+                    )?;
+                    let profile_id = env_optional_non_empty("PROFILE_ID")?
+                        .unwrap_or_else(|| DEFAULT_PROFILE_ID.to_string());
+                    let requested_fixture_set_id =
+                        env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
+                    let legacy_path_mode =
+                        ranking_config_dir_override.is_some() || fixture_dir_override.is_some();
+                    let runtime_profile = if legacy_path_mode {
+                        None
+                    } else {
+                        Some(resolve_profile_pack_runtime_selection(
+                            profile_packs_dir,
+                            &profile_id,
+                            requested_fixture_set_id.as_deref(),
+                        )?)
+                    };
+                    (
+                        ranking_config_dir_override,
+                        fixture_dir_override,
+                        profile_id,
+                        runtime_profile,
+                    )
+                }
+                ProfilePackRuntimeMode::Skip => (None, None, DEFAULT_PROFILE_ID.to_string(), None),
+            };
+
+        let ranking_config_dir = match (ranking_config_dir_override, runtime_profile.as_ref()) {
+            (Some(path), _) => path,
+            (None, Some(profile)) => profile.ranking_config_dir.clone(),
+            (None, None) => resolve_runtime_path(DEFAULT_RANKING_CONFIG_DIR),
+        };
+        let fixture_dir = match (fixture_dir_override, runtime_profile.as_ref()) {
+            (Some(path), _) => Some(path),
+            (None, Some(profile)) => match profile.fixture_dir.clone() {
+                Some(path) => Some(path),
+                None if fixture_requirement == FixtureRuntimeRequirement::Required => {
+                    anyhow::bail!(
+                        "profile pack {} does not declare a runtime fixture; set FIXTURE_DIR explicitly",
+                        profile.profile_pack_manifest.display()
+                    );
+                }
+                None => None,
+            },
+            (None, None) => Some(resolve_runtime_path(DEFAULT_FIXTURE_DIR)),
+        };
+
         let candidate_retrieval_mode =
             parse_candidate_retrieval_mode(match env::var("CANDIDATE_RETRIEVAL_MODE") {
                 Ok(raw) => Some(raw),
@@ -92,33 +178,43 @@ impl AppSettings {
             })?;
 
         Ok(Self {
-            bind_addr: env::var("APP_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:4000".to_string()),
-            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
-                "postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker".to_string()
-            }),
+            bind_addr: env_string("APP_BIND_ADDR", "127.0.0.1:4000".to_string())?,
+            database_url: env_string(
+                "DATABASE_URL",
+                "postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker".to_string(),
+            )?,
             postgres_pool_max_size: parse_postgres_pool_max_size_env()?,
-            redis_url: env::var("REDIS_URL").ok().filter(|value| !value.is_empty()),
-            ranking_config_dir: env::var("RANKING_CONFIG_DIR")
-                .unwrap_or_else(|_| "configs/ranking".to_string()),
-            fixture_dir: env::var("FIXTURE_DIR")
-                .unwrap_or_else(|_| "storage/fixtures/minimal".to_string()),
-            raw_storage_dir: env::var("RAW_STORAGE_DIR")
-                .unwrap_or_else(|_| ".storage/raw".to_string()),
-            algorithm_version: env::var("ALGORITHM_VERSION")
-                .unwrap_or_else(|_| "phase8-policy-diversity-v1".to_string()),
+            redis_url: env_optional_non_empty("REDIS_URL")?,
+            profile_id: runtime_profile
+                .as_ref()
+                .map(|profile| profile.profile_id.clone())
+                .unwrap_or(profile_id),
+            profile_pack_manifest: runtime_profile
+                .as_ref()
+                .map(|profile| profile.profile_pack_manifest.display().to_string())
+                .unwrap_or_default(),
+            profile_fixture_set_id: runtime_profile
+                .as_ref()
+                .and_then(|profile| profile.fixture_set_id.clone()),
+            ranking_config_dir: ranking_config_dir.display().to_string(),
+            fixture_dir: fixture_dir
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            raw_storage_dir: env_string("RAW_STORAGE_DIR", ".storage/raw".to_string())?,
+            algorithm_version: env_string(
+                "ALGORITHM_VERSION",
+                "phase8-policy-diversity-v1".to_string(),
+            )?,
             candidate_retrieval_mode,
             candidate_retrieval_limit: parse_env("CANDIDATE_RETRIEVAL_LIMIT", 256)?,
             opensearch: OpenSearchSettings {
-                url: env::var("OPENSEARCH_URL")
-                    .unwrap_or_else(|_| "http://127.0.0.1:9200".to_string()),
-                index_name: env::var("OPENSEARCH_INDEX_NAME")
-                    .unwrap_or_else(|_| "geo_line_ranker_candidates".to_string()),
-                username: env::var("OPENSEARCH_USERNAME")
-                    .ok()
-                    .filter(|value| !value.is_empty()),
-                password: env::var("OPENSEARCH_PASSWORD")
-                    .ok()
-                    .filter(|value| !value.is_empty()),
+                url: env_string("OPENSEARCH_URL", "http://127.0.0.1:9200".to_string())?,
+                index_name: env_string(
+                    "OPENSEARCH_INDEX_NAME",
+                    "geo_line_ranker_candidates".to_string(),
+                )?,
+                username: env_optional_non_empty("OPENSEARCH_USERNAME")?,
+                password: env_optional_non_empty("OPENSEARCH_PASSWORD")?,
                 request_timeout_secs: parse_env("OPENSEARCH_REQUEST_TIMEOUT_SECS", 5)?,
             },
             recommendation_cache_ttl_secs: parse_env("RECOMMENDATION_CACHE_TTL_SECS", 120)?,
@@ -129,7 +225,19 @@ impl AppSettings {
     }
 }
 
-fn load_dotenv() {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfilePackRuntimeMode {
+    Resolve,
+    Skip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FixtureRuntimeRequirement {
+    Optional,
+    Required,
+}
+
+pub fn load_dotenv() {
     static DOTENV: Once = Once::new();
     DOTENV.call_once(|| {
         let _ = dotenvy::dotenv();
@@ -428,6 +536,15 @@ pub struct ProfilePackLintSummary {
     pub ranking_configs: Vec<RankingConfigLintSummary>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfilePackRuntimeSelection {
+    pub profile_id: String,
+    pub profile_pack_manifest: PathBuf,
+    pub ranking_config_dir: PathBuf,
+    pub fixture_set_id: Option<String>,
+    pub fixture_dir: Option<PathBuf>,
+}
+
 impl RankingProfiles {
     pub fn load_from_dir(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -663,6 +780,123 @@ impl RankingProfiles {
 
         Ok(())
     }
+}
+
+pub fn resolve_profile_pack_runtime_selection(
+    profile_packs_dir: impl AsRef<Path>,
+    profile_id: &str,
+    fixture_set_id: Option<&str>,
+) -> Result<ProfilePackRuntimeSelection> {
+    ensure!(
+        is_profile_id(profile_id),
+        "invalid profile_id '{}': {}",
+        profile_id,
+        PROFILE_ID_RULE_DESCRIPTION
+    );
+    let profile_pack_path = profile_packs_dir.as_ref();
+    let profile_pack_manifest = if profile_pack_path.is_file() {
+        profile_pack_path.to_path_buf()
+    } else {
+        profile_pack_path.join(profile_id).join("profile.yaml")
+    };
+    let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize profile pack manifest {}",
+            profile_pack_manifest.display()
+        )
+    })?;
+    let manifest = load_profile_pack_manifest(&profile_pack_manifest)?;
+    ensure!(
+        manifest.profile_id == profile_id,
+        "profile pack {} profile_id {} does not match selected profile_id {}",
+        profile_pack_manifest.display(),
+        manifest.profile_id,
+        profile_id
+    );
+
+    let ranking_config_dir = resolve_profile_ref(
+        &profile_pack_manifest,
+        "ranking_config_dir",
+        &manifest.ranking_config_dir,
+    )?;
+    ensure!(
+        ranking_config_dir.is_dir(),
+        "profile pack {} ranking_config_dir {} is missing or not a directory",
+        profile_pack_manifest.display(),
+        ranking_config_dir.display()
+    );
+    let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            ranking_config_dir.display()
+        )
+    })?;
+
+    let selected_fixture =
+        select_runtime_fixture(&profile_pack_manifest, &manifest, fixture_set_id)?;
+    let (fixture_set_id, fixture_dir) = match selected_fixture {
+        Some(fixture) => {
+            let fixture_dir =
+                resolve_profile_ref(&profile_pack_manifest, "fixtures.path", &fixture.path)?;
+            let fixture_dir = if fixture_dir.is_dir() {
+                fixture_dir.canonicalize().with_context(|| {
+                    format!(
+                        "failed to canonicalize fixture dir {}",
+                        fixture_dir.display()
+                    )
+                })?
+            } else {
+                fixture_dir
+            };
+            let fixture_manifest_path = fixture_dir.join("fixture_manifest.yaml");
+            if fixture_manifest_path.is_file() {
+                validate_profile_fixture_ref(
+                    &profile_pack_manifest,
+                    &manifest.profile_id,
+                    fixture,
+                    &fixture_manifest_path,
+                )?;
+            }
+            (Some(fixture.fixture_set_id.clone()), Some(fixture_dir))
+        }
+        None => (None, None),
+    };
+
+    Ok(ProfilePackRuntimeSelection {
+        profile_id: manifest.profile_id,
+        profile_pack_manifest,
+        ranking_config_dir,
+        fixture_set_id,
+        fixture_dir,
+    })
+}
+
+fn select_runtime_fixture<'a>(
+    profile_pack_manifest: &Path,
+    manifest: &'a ProfilePackManifest,
+    fixture_set_id: Option<&str>,
+) -> Result<Option<&'a ProfileFixtureRef>> {
+    if let Some(fixture_set_id) = fixture_set_id {
+        ensure!(
+            !fixture_set_id.trim().is_empty(),
+            "profile pack {} requested fixture_set_id must not be empty",
+            profile_pack_manifest.display()
+        );
+        return manifest
+            .fixtures
+            .iter()
+            .find(|fixture| fixture.fixture_set_id == fixture_set_id)
+            .map(Some)
+            .with_context(|| {
+                format!(
+                    "profile pack {} does not contain fixture_set_id {}",
+                    profile_pack_manifest.display(),
+                    fixture_set_id
+                )
+            });
+    }
+
+    Ok(manifest.fixtures.first())
 }
 
 pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLintSummary> {
@@ -1260,6 +1494,64 @@ fn parse_postgres_pool_max_size_env() -> Result<usize> {
     }
 }
 
+fn env_string(name: &str, default: String) -> Result<String> {
+    match env::var(name) {
+        Ok(raw) => Ok(raw),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
+}
+
+pub fn env_optional_non_empty(name: &str) -> Result<Option<String>> {
+    match env::var(name) {
+        Ok(raw) => Ok(Some(raw).filter(|value| !value.is_empty())),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
+}
+
+fn env_path(name: &str, default: PathBuf) -> Result<PathBuf> {
+    match env::var(name) {
+        Ok(raw) if raw.is_empty() => Ok(default),
+        Ok(raw) => Ok(resolve_runtime_path(raw)),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
+}
+
+pub fn env_path_optional(name: &str) -> Result<Option<PathBuf>> {
+    match env::var(name) {
+        Ok(raw) => Ok(Some(raw)
+            .filter(|value| !value.is_empty())
+            .map(resolve_runtime_path)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid unicode"),
+    }
+}
+
+pub fn resolve_runtime_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    let cwd_relative = path.to_path_buf();
+    if cwd_relative.exists() {
+        return cwd_relative;
+    }
+
+    let source_relative = source_repo_root().join(path);
+    if source_relative.exists() {
+        return source_relative;
+    }
+
+    cwd_relative
+}
+
+fn source_repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
 fn parse_env<T>(name: &str, default: T) -> Result<T>
 where
     T: std::str::FromStr,
@@ -1276,18 +1568,22 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+        sync::{Mutex, OnceLock},
+    };
 
     use tempfile::tempdir;
 
     use super::{
         is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
         parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
-        validate_portable_relative_path, validate_profile_pack_contract,
-        validate_profile_reason_catalog, ArticleSupport, CandidateRetrievalMode,
-        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfileReasonCatalog,
-        ProfileReasonCatalogKind, RankingConfigKind, RankingProfiles,
-        DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        resolve_profile_pack_runtime_selection, validate_portable_relative_path,
+        validate_profile_pack_contract, validate_profile_reason_catalog, AppSettings,
+        ArticleSupport, CandidateRetrievalMode, ProfileContextInput, ProfilePackKind,
+        ProfilePackManifest, ProfileReasonCatalog, ProfileReasonCatalogKind, RankingConfigKind,
+        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     use domain::ContentKind;
@@ -1316,6 +1612,24 @@ mod tests {
             .parent()
             .expect("configs dir")
             .join("profiles")
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_app_env() {
+        for name in [
+            "PROFILE_PACKS_DIR",
+            "PROFILE_ID",
+            "PROFILE_FIXTURE_SET_ID",
+            "RANKING_CONFIG_DIR",
+            "FIXTURE_DIR",
+            "CANDIDATE_RETRIEVAL_MODE",
+        ] {
+            env::remove_var(name);
+        }
     }
 
     fn write_minimal_reason_catalog(path: &std::path::Path, profile_id: &str) {
@@ -1421,6 +1735,307 @@ files: []
         );
         assert!(summary.files.iter().all(|file| file.reason_count > 0));
         assert_eq!(summary.ranking_configs.len(), 1);
+    }
+
+    #[test]
+    fn resolves_runtime_selection_from_profile_pack_manifest() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "example-profile",
+        );
+
+        let selection =
+            resolve_profile_pack_runtime_selection(&profiles_dir, "example-profile", None)
+                .expect("runtime selection");
+
+        assert_eq!(selection.profile_id, "example-profile");
+        assert_eq!(
+            selection.profile_pack_manifest,
+            profile_dir
+                .join("profile.yaml")
+                .canonicalize()
+                .expect("manifest")
+        );
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().expect("ranking dir")
+        );
+        assert_eq!(selection.fixture_set_id.as_deref(), Some("minimal"));
+        assert_eq!(
+            selection.fixture_dir,
+            Some(fixture_dir.canonicalize().expect("fixture dir"))
+        );
+    }
+
+    #[test]
+    fn resolves_runtime_selection_from_profile_yaml_file() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "example-profile",
+        );
+
+        let selection = resolve_profile_pack_runtime_selection(
+            profile_dir.join("profile.yaml"),
+            "example-profile",
+            None,
+        )
+        .expect("runtime selection");
+
+        assert_eq!(selection.profile_id, "example-profile");
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().expect("ranking dir")
+        );
+        assert_eq!(
+            selection.fixture_dir,
+            Some(fixture_dir.canonicalize().expect("fixture dir"))
+        );
+    }
+
+    #[test]
+    fn runtime_selection_does_not_require_fixture_files_until_used() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+
+        let selection =
+            resolve_profile_pack_runtime_selection(&profiles_dir, "example-profile", None)
+                .expect("runtime selection");
+
+        assert_eq!(selection.fixture_set_id.as_deref(), Some("minimal"));
+        assert!(selection.fixture_dir.is_some());
+        assert!(!selection
+            .fixture_dir
+            .expect("fixture dir")
+            .join("fixture_manifest.yaml")
+            .exists());
+    }
+
+    #[test]
+    fn app_settings_honors_legacy_overrides_without_profile_pack() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("legacy");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+
+        env::set_var("PROFILE_PACKS_DIR", temp.path().join("missing-profiles"));
+        env::set_var("RANKING_CONFIG_DIR", &ranking_dir);
+        env::set_var("FIXTURE_DIR", &fixture_dir);
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env().expect("settings");
+
+        assert_eq!(
+            settings.ranking_config_dir,
+            ranking_dir.display().to_string()
+        );
+        assert_eq!(settings.fixture_dir, fixture_dir.display().to_string());
+        assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
+        assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_fixture_set_id.is_none());
+        clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_honors_partial_legacy_override_without_profile_pack() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+
+        env::set_var("PROFILE_PACKS_DIR", temp.path().join("missing-profiles"));
+        env::set_var("RANKING_CONFIG_DIR", &ranking_dir);
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env().expect("settings");
+
+        assert_eq!(
+            settings.ranking_config_dir,
+            ranking_dir.display().to_string()
+        );
+        assert!(Path::new(&settings.fixture_dir).ends_with(super::DEFAULT_FIXTURE_DIR));
+        assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_fixture_set_id.is_none());
+        clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_can_skip_profile_pack_for_db_only_commands() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+
+        env::set_var("PROFILE_PACKS_DIR", temp.path().join("missing-profiles"));
+        env::set_var("PROFILE_ID", "missing-profile");
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env_without_profile_pack().expect("settings");
+
+        assert!(
+            Path::new(&settings.ranking_config_dir).ends_with(super::DEFAULT_RANKING_CONFIG_DIR)
+        );
+        assert!(Path::new(&settings.fixture_dir).ends_with(super::DEFAULT_FIXTURE_DIR));
+        assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_fixture_set_id.is_none());
+        clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_treats_empty_profile_env_as_default() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+
+        env::set_var("PROFILE_PACKS_DIR", "");
+        env::set_var("PROFILE_ID", "");
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env().expect("settings");
+
+        assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
+        assert!(Path::new(&settings.profile_pack_manifest).ends_with(
+            Path::new("configs")
+                .join("profiles")
+                .join("local-discovery-generic")
+                .join("profile.yaml")
+        ));
+        assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
+        clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_allows_ranking_only_profile_without_fixtures() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        env::set_var("PROFILE_PACKS_DIR", &profiles_dir);
+        env::set_var("PROFILE_ID", "example-profile");
+        env::set_var("RANKING_CONFIG_DIR", "");
+        env::set_var("FIXTURE_DIR", "");
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env().expect("ranking-only settings");
+
+        assert_eq!(
+            settings.ranking_config_dir,
+            ranking_dir
+                .canonicalize()
+                .expect("ranking dir")
+                .display()
+                .to_string()
+        );
+        assert!(settings.fixture_dir.is_empty());
+
+        let error =
+            AppSettings::from_env_requiring_fixture().expect_err("fixture override required");
+
+        assert!(format!("{error:#}").contains("does not declare a runtime fixture"));
+        clear_app_env();
+    }
+
+    #[test]
+    fn rejects_unknown_runtime_fixture_set_id() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "example-profile",
+        );
+
+        let error = resolve_profile_pack_runtime_selection(
+            &profiles_dir,
+            "example-profile",
+            Some("demo-jp"),
+        )
+        .expect_err("unknown fixture");
+
+        assert!(format!("{error:#}").contains("does not contain fixture_set_id demo-jp"));
     }
 
     #[test]

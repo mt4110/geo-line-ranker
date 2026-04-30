@@ -14,8 +14,10 @@ use cli::{
     run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
 use config::{
-    lint_profile_pack_dir, lint_ranking_config_dir, AppSettings, ProfilePackLintSummary,
-    RankingConfigLintSummary,
+    lint_profile_pack_dir, lint_ranking_config_dir, load_profile_pack_manifest,
+    resolve_profile_pack_runtime_selection, resolve_runtime_path, AppSettings,
+    ProfilePackLintSummary, RankingConfigLintSummary, DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_PACKS_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
@@ -170,15 +172,14 @@ enum ConfigCommand {
     Lint {
         #[arg(
             long,
-            help = "Ranking config directory to lint. Defaults to RANKING_CONFIG_DIR or configs/ranking."
+            help = "Ranking config directory to lint. Defaults to RANKING_CONFIG_DIR or the selected profile pack."
         )]
         path: Option<PathBuf>,
         #[arg(
             long,
-            default_value = "configs/profiles",
-            help = "Profile pack directory to lint."
+            help = "Profile pack directory or profile.yaml file to lint. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
-        profiles_path: PathBuf,
+        profiles_path: Option<PathBuf>,
     },
 }
 
@@ -233,19 +234,22 @@ enum JobsCommand {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let settings = AppSettings::from_env()?;
+    config::load_dotenv();
     let cli = Cli::parse();
 
     match cli.command {
         Command::Migrate => {
+            let settings = AppSettings::from_env_without_profile_pack()?;
             run_migrations(&settings.database_url, "storage/migrations/postgres").await?;
         }
         Command::Seed { target } => match target {
             SeedTarget::Example => {
+                let settings = AppSettings::from_env_requiring_fixture()?;
                 seed_fixture(&settings.database_url, &settings.fixture_dir).await?
             }
         },
         Command::Import { target } => {
+            let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = match target {
                 ImportCommand::Rail { manifest } => {
                     run_import_command(&settings, ImportTarget::JpRail, manifest).await?
@@ -265,6 +269,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Derive { target } => match target {
             DeriveCommand::SchoolStationLinks => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_derive_school_station_links(&settings).await?;
                 println!("{}", format_summary(&summary));
             }
@@ -281,6 +286,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Index { target } => match target {
             IndexCommand::Rebuild => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let service = ProjectionSyncService::new(
                     settings.database_url.clone(),
                     &settings.opensearch,
@@ -294,6 +300,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Projection { target } => match target {
             ProjectionCommand::Sync => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let service = ProjectionSyncService::new(
                     settings.database_url.clone(),
                     &settings.opensearch,
@@ -307,6 +314,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Snapshot { target } => match target {
             SnapshotCommand::Refresh => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_snapshot_refresh(&settings).await?;
                 println!("{}", format_snapshot_refresh_summary(&summary));
             }
@@ -316,6 +324,7 @@ async fn main() -> anyhow::Result<()> {
                 limit,
                 fail_on_mismatch,
             } => {
+                let settings = AppSettings::from_env()?;
                 let summary = run_replay_evaluate(&settings, limit).await?;
                 println!("{}", format_replay_evaluation_summary(&summary));
                 if fail_on_mismatch && (summary.mismatched > 0 || summary.failed > 0) {
@@ -332,7 +341,30 @@ async fn main() -> anyhow::Result<()> {
                 path,
                 profiles_path,
             } => {
-                let path = path.unwrap_or_else(|| PathBuf::from(&settings.ranking_config_dir));
+                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                    "PROFILE_PACKS_DIR",
+                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                )?);
+                let ranking_config_dir_override = config::env_path_optional("RANKING_CONFIG_DIR")?;
+                let path = path.map(resolve_runtime_path);
+                let needs_active_profile = path.is_none() && ranking_config_dir_override.is_none();
+                let active_profile = active_profile_selection_for_lint(&profiles_path)
+                    .map(Some)
+                    .or_else(|error| {
+                        if needs_active_profile {
+                            Err(error)
+                        } else {
+                            Ok(None)
+                        }
+                    })?;
+                let path = path
+                    .or(ranking_config_dir_override)
+                    .or_else(|| {
+                        active_profile
+                            .as_ref()
+                            .map(|profile| profile.ranking_config_dir.clone())
+                    })
+                    .context("active profile selection is required to choose ranking config dir")?;
                 let profile_summary = lint_profile_pack_dir(profiles_path)?;
                 let ranking_summary =
                     match cached_ranking_summary_for_path(&profile_summary, &path)? {
@@ -341,7 +373,16 @@ async fn main() -> anyhow::Result<()> {
                     };
                 println!(
                     "{}",
-                    format_config_lint_summary(&ranking_summary, &profile_summary)
+                    format_config_lint_summary(
+                        active_profile
+                            .as_ref()
+                            .map(|profile| profile.profile_id.as_str()),
+                        active_profile
+                            .as_ref()
+                            .and_then(|profile| profile.fixture_set_id.as_deref()),
+                        &ranking_summary,
+                        &profile_summary
+                    )
                 );
             }
         },
@@ -353,18 +394,22 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Jobs { target } => match target {
             JobsCommand::List { limit } => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_job_list(&settings, limit).await?;
                 println!("{}", format_job_list(&summary));
             }
             JobsCommand::Inspect { id } => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let inspection = run_job_inspect(&settings, id).await?;
                 println!("{}", format_job_inspection(&inspection));
             }
             JobsCommand::Retry { id } => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_job_retry(&settings, id).await?;
                 println!("{}", format_job_mutation_summary("retry", &summary));
             }
             JobsCommand::Due { id } => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_job_due(&settings, id).await?;
                 println!("{}", format_job_mutation_summary("due", &summary));
             }
@@ -373,6 +418,7 @@ async fn main() -> anyhow::Result<()> {
                 payload,
                 max_attempts,
             } => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
                 let summary = run_job_enqueue(&settings, &job_type, &payload, max_attempts).await?;
                 println!("{}", format_job_enqueue_summary(&summary));
             }
@@ -387,6 +433,28 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn active_profile_selection_for_lint(
+    profiles_path: &Path,
+) -> anyhow::Result<config::ProfilePackRuntimeSelection> {
+    let profile_id = profile_id_for_lint(profiles_path)?;
+    let fixture_set_id = config::env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
+    resolve_profile_pack_runtime_selection(profiles_path, &profile_id, fixture_set_id.as_deref())
+}
+
+fn profile_id_for_lint(profiles_path: &Path) -> anyhow::Result<String> {
+    match config::env_optional_non_empty("PROFILE_ID")? {
+        Some(profile_id) => Ok(profile_id),
+        None if profiles_path.is_file() => {
+            Ok(load_profile_pack_manifest(profiles_path)?.profile_id)
+        }
+        None => Ok(DEFAULT_PROFILE_ID.to_string()),
+    }
+}
+
+fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> {
+    Ok(config::env_path_optional(name)?.unwrap_or_else(|| resolve_runtime_path(default)))
 }
 
 fn cached_ranking_summary_for_path(
@@ -419,11 +487,17 @@ fn ranking_summary_with_base_path(
 }
 
 fn format_config_lint_summary(
+    active_profile_id: Option<&str>,
+    fixture_set_id: Option<&str>,
     ranking: &RankingConfigLintSummary,
     profiles: &ProfilePackLintSummary,
 ) -> String {
+    let active_profile = active_profile_id.unwrap_or("not-selected");
+    let fixture_set = fixture_set_id.unwrap_or("none");
     let mut lines = vec![format!(
-        "config lint ok: ranking_files={}, profile_packs={}, profile_version={}",
+        "config lint ok: active_profile_id={}, fixture_set_id={}, ranking_files={}, profile_packs={}, profile_version={}",
+        active_profile,
+        fixture_set,
         ranking.files.len(),
         profiles.files.len(),
         ranking.profile_version
