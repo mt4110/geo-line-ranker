@@ -176,18 +176,29 @@ def derive_run_id(
     review_bytes: Optional[bytes],
     failure_message: Optional[str],
 ) -> str:
+    def update_optional_bytes(label: str, value: Optional[bytes]) -> None:
+        hasher.update(label.encode("ascii"))
+        hasher.update(b"\0")
+        if value is None:
+            hasher.update(b"missing\0")
+            return
+        hasher.update(b"present\0")
+        hasher.update(str(len(value)).encode("ascii"))
+        hasher.update(b"\0")
+        hasher.update(value)
+        hasher.update(b"\0")
+
     hasher = hashlib.sha256()
     hasher.update(SCHEMA_VERSION.encode("utf-8"))
     hasher.update(b"\0")
     hasher.update(scenario.encode("utf-8"))
     hasher.update(b"\0")
-    if diff_bytes is not None:
-        hasher.update(diff_bytes)
-    hasher.update(b"\0")
-    if review_bytes is not None:
-        hasher.update(review_bytes)
-    if failure_message is not None:
-        hasher.update(failure_message.encode("utf-8"))
+    update_optional_bytes("diff", diff_bytes)
+    update_optional_bytes("review", review_bytes)
+    if failure_message is None:
+        update_optional_bytes("failure_message", None)
+    else:
+        update_optional_bytes("failure_message", failure_message.encode("utf-8"))
     return hasher.hexdigest()[:16]
 
 
@@ -430,6 +441,28 @@ def run_self_test() -> int:
         manifest = json.loads((first / "manifest.json").read_text(encoding="utf-8"))
         if manifest["summary"]["findings_count"] != 2:
             raise AssertionError("success scenario should record two findings")
+
+        if derive_run_id("skipped", None, None, "x") == derive_run_id(
+            "skipped",
+            b"",
+            None,
+            "x",
+        ):
+            raise AssertionError("missing and empty diff inputs should not share a run id")
+        if derive_run_id("failure", b"x", None, "abc") == derive_run_id(
+            "failure",
+            b"x",
+            b"",
+            "abc",
+        ):
+            raise AssertionError("missing and empty review inputs should not share a run id")
+        if derive_run_id("failure", b"x", b"ab", "c") == derive_run_id(
+            "failure",
+            b"x",
+            b"a",
+            "bc",
+        ):
+            raise AssertionError("review and failure message boundaries should affect run id")
 
         no_findings = root / "no-findings"
         run_evaluation(
