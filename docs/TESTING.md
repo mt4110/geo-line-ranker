@@ -159,8 +159,10 @@ OpenSearch, or managed infrastructure to local or CI release gates.
 
 The self-hosted local review workflow still runs only on the repository's
 explicit review label for non-draft PRs. The offline evaluation harness below
-does not call network services; it only checks artifact capture and deterministic
-failure handling for local review trials.
+does not call network services; it checks artifact capture and deterministic
+failure handling for local review trials. The operational workflow reuses the
+same artifact writer after checking out the trusted base commit, so it does not
+execute PR-head code while saving review evidence.
 
 Run the built-in deterministic scenarios:
 
@@ -201,6 +203,30 @@ python3 scripts/local_review_eval.py \
 
 Failure artifacts include `error.json`, `manifest.json`, and `checksums.txt`.
 This remains evaluation-only evidence and does not add a new public-MVP gate.
+
+The operational workflow stores local review artifacts under
+`.storage/local_review/pr-<number>-<run-id>-<run-attempt>` and uploads that
+directory as a GitHub Actions artifact. Completed runs include the bounded
+`pr.diff`, raw `review.md`, parsed `findings.jsonl`, `manifest.json`, and
+`checksums.txt`. Failed or skipped runs include `error.json`; if a failure
+happens after review output was produced, the workflow keeps that `review.md`
+and parsed findings while marking the run failed. Skipped oversized diffs omit
+`pr.diff` rather than bypassing `MAX_DIFF_BYTES`.
+
+When using the writer from workflow automation, pass `--artifact-root` together
+with `--force` so forced cleanup stays confined to the local review artifact
+tree:
+
+```bash
+python3 scripts/local_review_eval.py \
+  --diff /path/to/pr.diff \
+  --review /path/to/review.md \
+  --out-dir .storage/local_review/pr-123-456-1 \
+  --artifact-root .storage/local_review \
+  --run-id pr-123-456-1 \
+  --no-synthetic-inputs \
+  --force
+```
 
 ## What gets covered
 

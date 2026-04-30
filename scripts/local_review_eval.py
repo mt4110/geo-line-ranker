@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# cspell:ignore jsonl sha256 review_probe unwrap usize
-"""Offline artifact harness for local review trials."""
+# cspell:ignore DiffTooLarge jsonl sha256 review_probe unwrap usize
+"""Artifact harness for local review trials and workflow captures."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ FINDING_SECTIONS = {
     "Serious risks": "serious_risk",
     "Missing tests": "missing_test",
 }
+METADATA_KEY_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 SAMPLE_DIFF = """diff --git a/apps/api/src/review_probe.rs b/apps/api/src/review_probe.rs
 new file mode 100644
@@ -74,15 +75,31 @@ def write_bytes(path: Path, data: bytes) -> WrittenArtifact:
     return WrittenArtifact(path=path, bytes=len(data), sha256=sha256_bytes(data))
 
 
-def read_input_bytes(path: Optional[Path], fallback: str) -> bytes:
+def read_input_bytes(
+    path: Optional[Path],
+    fallback: str,
+    *,
+    allow_fallback: bool,
+) -> Optional[bytes]:
     if path is None:
-        return fallback.encode("utf-8")
+        if allow_fallback:
+            return fallback.encode("utf-8")
+        return None
     return path.read_bytes()
 
 
-def normalize_review_for_scenario(scenario: str, review_path: Optional[Path]) -> bytes:
+def normalize_review_for_scenario(
+    scenario: str,
+    review_path: Optional[Path],
+    *,
+    allow_fallback: bool,
+) -> Optional[bytes]:
     if review_path is not None:
         return review_path.read_bytes()
+    if scenario == "skipped":
+        return None
+    if not allow_fallback:
+        return None
     if scenario == "no-findings":
         return NO_FINDINGS_REVIEW.encode("utf-8")
     return SAMPLE_REVIEW.encode("utf-8")
@@ -155,7 +172,7 @@ def artifact_record(artifact: WrittenArtifact, out_dir: Path) -> dict[str, Any]:
 
 def derive_run_id(
     scenario: str,
-    diff_bytes: bytes,
+    diff_bytes: Optional[bytes],
     review_bytes: Optional[bytes],
     failure_message: Optional[str],
 ) -> str:
@@ -164,7 +181,8 @@ def derive_run_id(
     hasher.update(b"\0")
     hasher.update(scenario.encode("utf-8"))
     hasher.update(b"\0")
-    hasher.update(diff_bytes)
+    if diff_bytes is not None:
+        hasher.update(diff_bytes)
     hasher.update(b"\0")
     if review_bytes is not None:
         hasher.update(review_bytes)
@@ -196,12 +214,12 @@ def is_relative_to_path(path: Path, parent: Path) -> bool:
 def ensure_force_target_is_safe(out_dir: Path, artifact_root: Path) -> None:
     resolved_out_dir = resolve_for_safety(out_dir)
     resolved_artifact_root = resolve_for_safety(artifact_root)
-    if (
-        resolved_out_dir != resolved_artifact_root
-        and not is_relative_to_path(resolved_out_dir, resolved_artifact_root)
+    if resolved_out_dir == resolved_artifact_root or not is_relative_to_path(
+        resolved_out_dir,
+        resolved_artifact_root,
     ):
         raise ValueError(
-            "--force can only replace output directories under "
+            "--force can only replace output directories below "
             f"{artifact_root}: {out_dir}"
         )
 
@@ -211,15 +229,29 @@ def prepare_out_dir(
     force: bool,
     artifact_root: Path = DEFAULT_ARTIFACT_ROOT,
 ) -> None:
+    if force:
+        ensure_force_target_is_safe(out_dir, artifact_root)
+
     if out_dir.exists():
         if not out_dir.is_dir():
             raise ValueError(f"output path is not a directory: {out_dir}")
         if any(out_dir.iterdir()):
             if not force:
                 raise ValueError(f"output directory is not empty: {out_dir}")
-            ensure_force_target_is_safe(out_dir, artifact_root)
             shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+
+def parse_metadata_pairs(pairs: list[str]) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise ValueError(f"--metadata must be KEY=VALUE: {pair}")
+        key, value = pair.split("=", 1)
+        if not key or METADATA_KEY_RE.fullmatch(key) is None:
+            raise ValueError(f"--metadata key is invalid: {key}")
+        metadata[key] = value
+    return dict(sorted(metadata.items()))
 
 
 def run_evaluation(
@@ -230,37 +262,64 @@ def run_evaluation(
     review_path: Optional[Path],
     run_id: Optional[str],
     failure_message: str,
+    error_type: Optional[str],
+    artifact_root: Path,
+    metadata: dict[str, str],
+    synthetic_inputs: bool,
     force: bool,
 ) -> int:
-    prepare_out_dir(out_dir, force)
+    prepare_out_dir(out_dir, force, artifact_root)
 
-    diff_bytes = read_input_bytes(diff_path, SAMPLE_DIFF)
-    review_bytes = (
-        None
-        if scenario == "failure"
-        else normalize_review_for_scenario(scenario, review_path)
+    diff_bytes = read_input_bytes(
+        diff_path,
+        SAMPLE_DIFF,
+        allow_fallback=synthetic_inputs and scenario != "skipped",
     )
+    if diff_bytes is None and scenario in {"success", "no-findings"}:
+        raise ValueError("--diff is required when synthetic inputs are disabled")
+
+    if scenario == "failure" and review_path is not None:
+        review_bytes = review_path.read_bytes()
+    elif scenario == "failure":
+        review_bytes = None
+    else:
+        review_bytes = normalize_review_for_scenario(
+            scenario,
+            review_path,
+            allow_fallback=synthetic_inputs,
+        )
+    if review_bytes is None and scenario in {"success", "no-findings"}:
+        raise ValueError("--review is required when synthetic inputs are disabled")
+
     selected_run_id = run_id or derive_run_id(
         scenario,
         diff_bytes,
         review_bytes,
-        failure_message if scenario == "failure" else None,
+        failure_message if scenario in {"failure", "skipped"} else None,
     )
 
     artifacts: list[WrittenArtifact] = []
-    diff_artifact = write_bytes(out_dir / "pr.diff", diff_bytes)
-    artifacts.append(diff_artifact)
 
-    status = "completed"
-    findings: list[dict[str, Any]] = []
-    manifest_artifacts: dict[str, Any] = {
-        "diff": artifact_record(diff_artifact, out_dir),
-    }
-
+    status = "skipped" if scenario == "skipped" else "completed"
     if scenario == "failure":
         status = "failed"
+
+    findings: list[dict[str, Any]] = []
+    manifest_artifacts: dict[str, Any] = {}
+
+    if diff_bytes is not None:
+        diff_artifact = write_bytes(out_dir / "pr.diff", diff_bytes)
+        artifacts.append(diff_artifact)
+        manifest_artifacts["diff"] = artifact_record(diff_artifact, out_dir)
+
+    if scenario in {"failure", "skipped"}:
         error_payload = {
-            "error_type": "SimulatedReviewFailure",
+            "error_type": error_type
+            or (
+                "ReviewSkipped"
+                if scenario == "skipped"
+                else "SimulatedReviewFailure"
+            ),
             "message": failure_message,
         }
         error_artifact = write_bytes(
@@ -272,8 +331,8 @@ def run_evaluation(
         )
         artifacts.append(error_artifact)
         manifest_artifacts["error"] = artifact_record(error_artifact, out_dir)
-    else:
-        assert review_bytes is not None
+
+    if review_bytes is not None:
         review_artifact = write_bytes(out_dir / "review.md", review_bytes)
         artifacts.append(review_artifact)
         manifest_artifacts["review"] = artifact_record(review_artifact, out_dir)
@@ -290,11 +349,14 @@ def run_evaluation(
         "status": status,
         "summary": {
             "findings_count": len(findings),
-            "diff_bytes": len(diff_bytes),
+            "diff_bytes": None if diff_bytes is None else len(diff_bytes),
             "deterministic_manifest": True,
         },
         "artifacts": manifest_artifacts,
     }
+    if metadata:
+        manifest["metadata"] = metadata
+
     manifest_artifact = write_bytes(
         out_dir / "manifest.json",
         json.dumps(manifest, ensure_ascii=True, indent=2, sort_keys=True).encode("utf-8")
@@ -337,6 +399,10 @@ def run_self_test() -> int:
             review_path=None,
             run_id="fixed-success",
             failure_message="local review failed",
+            error_type=None,
+            artifact_root=DEFAULT_ARTIFACT_ROOT,
+            metadata={},
+            synthetic_inputs=True,
             force=False,
         )
         run_evaluation(
@@ -346,6 +412,10 @@ def run_self_test() -> int:
             review_path=None,
             run_id="fixed-success",
             failure_message="local review failed",
+            error_type=None,
+            artifact_root=DEFAULT_ARTIFACT_ROOT,
+            metadata={},
+            synthetic_inputs=True,
             force=False,
         )
         for filename in [
@@ -369,6 +439,10 @@ def run_self_test() -> int:
             review_path=None,
             run_id="fixed-no-findings",
             failure_message="local review failed",
+            error_type=None,
+            artifact_root=DEFAULT_ARTIFACT_ROOT,
+            metadata={},
+            synthetic_inputs=True,
             force=False,
         )
         no_findings_manifest = json.loads(
@@ -387,6 +461,10 @@ def run_self_test() -> int:
                 review_path=None,
                 run_id="fixed-failure",
                 failure_message="simulated transport failure",
+                error_type=None,
+                artifact_root=DEFAULT_ARTIFACT_ROOT,
+                metadata={},
+                synthetic_inputs=True,
                 force=False,
             )
         except EvaluationError:
@@ -400,6 +478,35 @@ def run_self_test() -> int:
         if not (failure / "error.json").exists():
             raise AssertionError("failure scenario should write error.json")
 
+        failure_review_input = root / "failure-review.md"
+        failure_review_input.write_text(SAMPLE_REVIEW, encoding="utf-8")
+        failure_with_review = root / "failure-with-review"
+        try:
+            run_evaluation(
+                out_dir=failure_with_review,
+                scenario="failure",
+                diff_path=None,
+                review_path=failure_review_input,
+                run_id="fixed-failure-with-review",
+                failure_message="simulated comment failure",
+                error_type="HTTPError",
+                artifact_root=DEFAULT_ARTIFACT_ROOT,
+                metadata={},
+                synthetic_inputs=True,
+                force=False,
+            )
+        except EvaluationError:
+            pass
+        else:
+            raise AssertionError("failure scenario with review should still raise")
+        failure_with_review_manifest = json.loads(
+            (failure_with_review / "manifest.json").read_text(encoding="utf-8")
+        )
+        if failure_with_review_manifest["summary"]["findings_count"] != 2:
+            raise AssertionError("failure scenario should preserve supplied review findings")
+        if not (failure_with_review / "review.md").exists():
+            raise AssertionError("failure scenario should retain supplied review output")
+
         try:
             run_evaluation(
                 out_dir=second_failure,
@@ -408,6 +515,10 @@ def run_self_test() -> int:
                 review_path=None,
                 run_id="fixed-failure",
                 failure_message="simulated transport failure",
+                error_type=None,
+                artifact_root=DEFAULT_ARTIFACT_ROOT,
+                metadata={},
+                synthetic_inputs=True,
                 force=False,
             )
         except EvaluationError:
@@ -444,10 +555,54 @@ def run_self_test() -> int:
         (unsafe_out_dir / "keep.txt").write_text("keep", encoding="utf-8")
         assert_value_error(
             lambda: prepare_out_dir(unsafe_out_dir, force=True, artifact_root=safe_root),
-            "--force can only replace output directories",
+            "--force can only replace output directories below",
         )
         if not (unsafe_out_dir / "keep.txt").exists():
             raise AssertionError("unsafe forced cleanup should not delete files")
+
+        root_out_dir = safe_root
+        root_out_dir.mkdir(exist_ok=True)
+        (root_out_dir / "keep-root.txt").write_text("keep", encoding="utf-8")
+        assert_value_error(
+            lambda: prepare_out_dir(root_out_dir, force=True, artifact_root=safe_root),
+            "--force can only replace output directories below",
+        )
+        if not (root_out_dir / "keep-root.txt").exists():
+            raise AssertionError("forced cleanup should not delete the artifact root")
+
+        missing_unsafe_out_dir = root / "missing-unsafe"
+        assert_value_error(
+            lambda: prepare_out_dir(
+                missing_unsafe_out_dir,
+                force=True,
+                artifact_root=safe_root,
+            ),
+            "--force can only replace output directories below",
+        )
+        if missing_unsafe_out_dir.exists():
+            raise AssertionError("unsafe forced creation should not create a directory")
+
+        skipped = root / "skipped"
+        run_evaluation(
+            out_dir=skipped,
+            scenario="skipped",
+            diff_path=None,
+            review_path=None,
+            run_id="fixed-skipped",
+            failure_message="diff exceeds configured limit",
+            error_type="DiffTooLarge",
+            artifact_root=DEFAULT_ARTIFACT_ROOT,
+            metadata={"pr_number": "7", "repository": "example/project"},
+            synthetic_inputs=False,
+            force=False,
+        )
+        skipped_manifest = json.loads((skipped / "manifest.json").read_text(encoding="utf-8"))
+        if skipped_manifest["status"] != "skipped":
+            raise AssertionError("skipped scenario should write skipped status")
+        if "diff" in skipped_manifest["artifacts"]:
+            raise AssertionError("skipped scenario without a diff should not write pr.diff")
+        if skipped_manifest["metadata"]["pr_number"] != "7":
+            raise AssertionError("metadata should be recorded in the manifest")
 
     print("local review evaluation self-test ok")
     return 0
@@ -455,7 +610,7 @@ def run_self_test() -> int:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Save deterministic artifacts for an offline local review trial.",
+        description="Save deterministic artifacts for local review trials and captures.",
     )
     parser.add_argument(
         "--self-test",
@@ -464,9 +619,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--scenario",
-        choices=["success", "no-findings", "failure"],
+        choices=["success", "no-findings", "failure", "skipped"],
         default="success",
-        help="Synthetic scenario to evaluate when no external review output is supplied.",
+        help="Review capture scenario. Success and no-findings use synthetic inputs by default.",
     )
     parser.add_argument(
         "--diff",
@@ -485,8 +640,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Directory for manifest, checksums, diff, review, and findings artifacts.",
     )
     parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        default=DEFAULT_ARTIFACT_ROOT,
+        help="Root directory that --force may safely replace below.",
+    )
+    parser.add_argument(
         "--run-id",
         help="Stable run id to write into manifest.json. Defaults to an input checksum prefix.",
+    )
+    parser.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Manifest metadata entry. May be supplied more than once.",
+    )
+    parser.add_argument(
+        "--error-type",
+        help="Error type to store for failure or skipped scenarios.",
     )
     parser.add_argument(
         "--failure-message",
@@ -503,6 +675,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Replace a non-empty output directory.",
     )
+    parser.add_argument(
+        "--no-synthetic-inputs",
+        action="store_true",
+        help="Require supplied inputs instead of writing sample evaluation content.",
+    )
     return parser.parse_args(argv)
 
 
@@ -512,6 +689,7 @@ def main(argv: list[str]) -> int:
         return run_self_test()
 
     try:
+        metadata = parse_metadata_pairs(args.metadata)
         return run_evaluation(
             out_dir=args.out_dir,
             scenario=args.scenario,
@@ -519,6 +697,10 @@ def main(argv: list[str]) -> int:
             review_path=args.review,
             run_id=args.run_id,
             failure_message=args.failure_message,
+            error_type=args.error_type,
+            artifact_root=args.artifact_root,
+            metadata=metadata,
+            synthetic_inputs=not args.no_synthetic_inputs,
             force=args.force,
         )
     except EvaluationError as error:
