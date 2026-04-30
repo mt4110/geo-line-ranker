@@ -155,6 +155,53 @@ Crawler graduation and full-mode evaluation remain outside the fixed
 public-MVP gate. Evidence review command plans do not add crawler, full mode,
 OpenSearch, or managed infrastructure to local or CI release gates.
 
+## Local review evaluation
+
+The self-hosted local review workflow still runs only on the repository's
+explicit review label for non-draft PRs. The offline evaluation harness below
+does not call network services; it only checks artifact capture and deterministic
+failure handling for local review trials.
+
+Run the built-in deterministic scenarios:
+
+```bash
+just local-review-eval
+```
+
+Without `just`:
+
+```bash
+python3 scripts/local_review_eval.py --self-test
+```
+
+Capture a specific PR diff and review output:
+
+```bash
+python3 scripts/local_review_eval.py \
+  --diff /path/to/pr.diff \
+  --review /path/to/review.md \
+  --out-dir .storage/local_review_eval/manual \
+  --force
+```
+
+The output directory contains `pr.diff`, `review.md`, `findings.jsonl`,
+`manifest.json`, and `checksums.txt`. The manifest omits wall-clock timestamps
+and absolute input paths so repeated runs with the same inputs and `--run-id`
+produce the same artifact bytes.
+
+Check the failure path without failing the surrounding shell command:
+
+```bash
+python3 scripts/local_review_eval.py \
+  --scenario failure \
+  --expect-failure \
+  --out-dir .storage/local_review_eval/failure \
+  --force
+```
+
+Failure artifacts include `error.json`, `manifest.json`, and `checksums.txt`.
+This remains evaluation-only evidence and does not add a new public-MVP gate.
+
 ## What gets covered
 
 - ranking unit tests:
