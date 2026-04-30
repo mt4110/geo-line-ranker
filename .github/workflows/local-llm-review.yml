@@ -471,4 +471,7 @@ jobs:
           name: local-review-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .storage/local_review/pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
+          # Required for the explicit .storage path; the writer recreates this
+          # run directory before writing only bounded local-review evidence.
+          include-hidden-files: true
           retention-days: 14
