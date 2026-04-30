@@ -444,13 +444,12 @@ fn active_profile_selection_for_lint(
 }
 
 fn profile_id_for_lint(profiles_path: &Path) -> anyhow::Result<String> {
-    match std::env::var("PROFILE_ID") {
-        Ok(raw) => Ok(raw),
-        Err(std::env::VarError::NotPresent) if profiles_path.is_file() => {
+    match config::env_optional_non_empty("PROFILE_ID")? {
+        Some(profile_id) => Ok(profile_id),
+        None if profiles_path.is_file() => {
             Ok(load_profile_pack_manifest(profiles_path)?.profile_id)
         }
-        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_PROFILE_ID.to_string()),
-        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("PROFILE_ID must be valid unicode"),
+        None => Ok(DEFAULT_PROFILE_ID.to_string()),
     }
 }
 

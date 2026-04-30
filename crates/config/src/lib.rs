@@ -123,7 +123,8 @@ impl AppSettings {
                         "PROFILE_PACKS_DIR",
                         resolve_runtime_path(DEFAULT_PROFILE_PACKS_DIR),
                     )?;
-                    let profile_id = env_string("PROFILE_ID", DEFAULT_PROFILE_ID.to_string())?;
+                    let profile_id = env_optional_non_empty("PROFILE_ID")?
+                        .unwrap_or_else(|| DEFAULT_PROFILE_ID.to_string());
                     let requested_fixture_set_id =
                         env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
                     let legacy_path_mode =
@@ -1927,11 +1928,12 @@ files: []
     }
 
     #[test]
-    fn app_settings_treats_empty_profile_packs_dir_as_default() {
+    fn app_settings_treats_empty_profile_env_as_default() {
         let _env_guard = env_lock().lock().expect("env lock");
         clear_app_env();
 
         env::set_var("PROFILE_PACKS_DIR", "");
+        env::set_var("PROFILE_ID", "");
         env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
 
         let settings = AppSettings::from_env().expect("settings");

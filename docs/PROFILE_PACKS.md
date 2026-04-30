@@ -46,13 +46,17 @@ PROFILE_ID=local-discovery-generic
 PROFILE_PACKS_DIR=configs/profiles
 ```
 
-`PROFILE_ID` resolves `configs/profiles/<profile_id>/profile.yaml`, then uses
-that manifest's `ranking_config_dir` and selected fixture path as runtime
-defaults. Setting either `RANKING_CONFIG_DIR` or `FIXTURE_DIR` keeps legacy path
-mode: the explicit directory is used, the other directory falls back to its
-built-in default, and startup does not require profile pack IO.
-`PROFILE_FIXTURE_SET_ID` is optional; when omitted, the first fixture declared
-by the selected profile is used.
+Runtime selection uses `PROFILE_PACKS_DIR` together with `PROFILE_ID`. When
+`PROFILE_PACKS_DIR` is a directory, startup resolves
+`<PROFILE_PACKS_DIR>/<profile_id>/profile.yaml`; with the default values above,
+that is `configs/profiles/local-discovery-generic/profile.yaml`. If
+`PROFILE_PACKS_DIR` points directly to a `profile.yaml` file, that manifest is
+used directly. The selected manifest then provides the runtime defaults for
+`ranking_config_dir` and the selected fixture path. Setting either
+`RANKING_CONFIG_DIR` or `FIXTURE_DIR` keeps legacy path mode: the explicit
+directory is used, the other directory falls back to its built-in default, and
+startup does not require profile pack IO. `PROFILE_FIXTURE_SET_ID` is optional;
+when omitted, the first fixture declared by the selected profile is used.
 Profiles may omit fixtures for ranking-only runtimes. Commands that consume
 fixtures require either a selected profile fixture or an explicit `FIXTURE_DIR`.
 
