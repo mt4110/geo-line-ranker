@@ -81,3 +81,6 @@ post-mvp-hardening:
 
 optional-evidence-review:
   ./scripts/optional_evidence_review.sh
+
+local-review-eval:
+  python3 scripts/local_review_eval.py --self-test
