@@ -11,47 +11,58 @@
   - keep AI / ML / embeddings / vector search out of the system
   - keep PostgreSQL/PostGIS as the reference implementation, Redis as cache only, and OpenSearch as optional candidate retrieval only
 
-- Phase 25: optional evidence operating handoff / closeout
-  - close the Phase 17-24 optional evidence operating skeleton as a final read-only handoff flow
-  - add a one-page operating handoff guide for intake -> triage -> recheck audit -> closeout ledger -> closeout integrity -> lifecycle index -> inventory report
-  - make it clear which optional evidence document to use at each operating moment
-  - make `just optional-evidence-review` point to the operating handoff / closeout guide while staying read-only
-  - keep optional evidence records, lifecycle index rows, inventory reports, and findings as review inventory and handoff support only
-  - record orphan, stale, and unclear-owner findings as edit candidates for the source record, linked record, closeout ledger, or integrity note, not gate failures
-  - keep labels as record aids only, not required gates or repository setup prerequisites
+- v0.2.13 post-onboarding design alignment
+  - confirm the v0.2.12 onboarding polish left `ROADMAP.md`, public docs, and `docs/design_document` in the same operating story
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
-  - keep strict data-quality doctor output as evidence, with `review_items` classified by humans
-  - keep crawler graduation outside the fixed gate even when its packet is complete
-  - keep full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
+  - keep optional evidence handoff as review inventory and handoff support only
+  - keep OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
   - keep managed infrastructure explicit review only
   - keep public API shape unchanged
-  - set the next improvement area to README, Quickstart, default sample, and human-friendly onboarding polish
+  - prefer docs-only alignment unless a code or API mismatch is explicitly found
+  - set the next improvement area to default sample inspection and first-run comprehension after the onboarding docs have settled
 
-## Phase 25 Exit Gates
+## v0.2.13 Exit Gates
 
-- `ROADMAP.md` names Phase 25 as current and moves Phase 24 into Recently Completed.
-- Optional evidence operating handoff / closeout guidance is added.
-- The final operating flow is visible as intake -> triage -> recheck audit -> closeout ledger -> closeout integrity -> lifecycle index -> inventory report.
-- The handoff guide makes it clear which optional evidence document to use in each operating moment.
-- `just optional-evidence-review` points operators to the operating handoff / closeout guide without running validation or changing services.
-- Optional evidence records, lifecycle index rows, inventory reports, and findings remain review inventory and handoff support only, not gates.
-- Orphan, stale, and unclear-owner findings remain edit candidates for the source record, linked record, closeout ledger, or integrity note, not gate failures.
-- Labels are documented as record aids only and are not required gates.
+- `ROADMAP.md` names v0.2.13 post-onboarding design alignment as current and moves completed onboarding and Phase 25 handoff work into Recently Completed.
+- `ROADMAP.md`, `README.md`, `docs/README.md`, `docs/QUICKSTART.md`, `docs/OPERATIONS.md`, `docs/TESTING.md`, `docs/MVP_ACCEPTANCE.md`, and `docs/OPTIONAL_EVIDENCE_HANDOFF.md` tell the same first-run and fixed-gate story.
+- `docs/design_document/README_JA.md` still points readers through a coherent non-engineer design sequence before implementation detail.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
+- Optional evidence records, lifecycle index rows, inventory reports, and findings remain review inventory and handoff support only, not gates.
 - Crawler graduation remains outside the fixed gate even when its packet is complete.
 - Full-mode automation candidates do not add `full` mode or OpenSearch to the fixed gate.
 - Managed infrastructure stays explicit review only and outside hardening gates.
 - OpenSearch, live crawler operation, and managed infrastructure are not added to fixed-gate requirements.
-- The next improvement area is README, Quickstart, default sample, and human-friendly onboarding, without changing the fixed public MVP boundary.
+- The next improvement area is default sample inspection and first-run comprehension, without changing the fixed public MVP boundary.
 - CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
 
 ## Recently Completed
 
+- v0.2.12 human-friendly onboarding polish
+  - improved README orientation, shortest local path, default sample summary, and first success state
+  - made Quickstart the command-by-command first-run path for `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - made the documentation index point first-time operators to README -> Quickstart -> MVP Acceptance -> Optional Evidence Handoff
+  - kept OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed public-MVP gate
+  - kept public API shape unchanged
+- Phase 25: optional evidence operating handoff / closeout
+  - closed the Phase 17-24 optional evidence operating skeleton as a final read-only handoff flow
+  - added a one-page operating handoff guide for intake -> triage -> recheck audit -> closeout ledger -> closeout integrity -> lifecycle index -> inventory report
+  - made it clear which optional evidence document to use at each operating moment
+  - made `just optional-evidence-review` point to the operating handoff / closeout guide while staying read-only
+  - kept optional evidence records, lifecycle index rows, inventory reports, and findings as review inventory and handoff support only
+  - recorded orphan, stale, and unclear-owner findings as edit candidates for the source record, linked record, closeout ledger, or integrity note, not gate failures
+  - kept labels as record aids only, not required gates or repository setup prerequisites
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept strict data-quality doctor output as evidence, with `review_items` classified by humans
+  - kept crawler graduation outside the fixed gate even when its packet is complete
+  - kept full-mode automation candidates from adding `full` mode or OpenSearch to the fixed gate
+  - kept managed infrastructure explicit review only
+  - kept public API shape unchanged
 - Phase 24: optional evidence lifecycle inventory report / review snapshot
   - turned lifecycle index rows into a read-only inventory report and review snapshot operators can share without replacing source records
   - added a lifecycle inventory report guide for purpose, scope, non-goals, header, row, summary, and finding formats
@@ -219,12 +230,12 @@
 
 ## Next
 
-- After Phase 25 human-friendly onboarding polish
-  - improve README orientation without widening the fixed public MVP gate
-  - polish Quickstart language and command flow for first-time operators
-  - make the default sample easier to understand and inspect
-  - improve human-friendly onboarding around what to run first, what success looks like, and where to go next
-- Later hardening after Phase 25
+- After v0.2.13 post-onboarding design alignment
+  - make the default sample easier to inspect without changing public API shape
+  - improve first-run comprehension around sample rows, expected recommendation shape, and where operators should look after the first success
+  - keep README and Quickstart as orientation and command-runbook docs rather than expanding them into optional evidence or full-mode gates
+  - keep public docs and non-engineer design docs aligned when the next sample or onboarding improvement lands
+- Later hardening after v0.2.13
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review
