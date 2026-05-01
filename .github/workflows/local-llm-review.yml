@@ -464,6 +464,20 @@ jobs:
               raise
           PY
 
+      - name: Inspect local review artifacts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -d "${LOCAL_REVIEW_ARTIFACT_DIR}" ]]; then
+            python3 scripts/local_review_eval.py \
+              --inspect "${LOCAL_REVIEW_ARTIFACT_DIR}" \
+              --triage
+          else
+            echo "No local review artifact directory found at ${LOCAL_REVIEW_ARTIFACT_DIR}"
+          fi
+
       - name: Upload local review artifacts
         if: always()
         uses: actions/upload-artifact@v4

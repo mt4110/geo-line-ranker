@@ -217,6 +217,20 @@ With `just`:
 just local-review-inspect .storage/local_review/pr-123-456-1
 ```
 
+For human triage, add the safe next-step guide:
+
+```bash
+python3 scripts/local_review_eval.py \
+  --inspect .storage/local_review/pr-123-456-1 \
+  --triage
+```
+
+With `just`:
+
+```bash
+just local-review-triage .storage/local_review/pr-123-456-1
+```
+
 Inspection is read-only. It checks that `manifest.json` has the expected
 schema, status, artifact records, and deterministic summary; verifies every
 recorded sha256 in `checksums.txt`; rejects absolute or parent-directory
@@ -224,7 +238,9 @@ artifact paths; rejects unexpected entries in the artifact directory; validates
 `findings.jsonl` as JSON Lines; and checks `error.json` shape for failed or
 skipped runs. The report prints only file names, sizes, checksum prefixes,
 status, metadata keys, and error summary; it does not print the raw `pr.diff`
-or `review.md` contents.
+or `review.md` contents. The `--triage` view keeps the same safety boundary and
+adds a short read order for `findings.jsonl`, `error.json`, manifest metadata,
+and workflow logs before anyone opens raw artifacts.
 
 The operational workflow stores local review artifacts under
 `.storage/local_review/pr-<number>-<run-id>-<run-attempt>` and uploads that
