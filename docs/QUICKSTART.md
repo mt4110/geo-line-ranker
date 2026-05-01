@@ -3,6 +3,10 @@
 This is the canonical local runbook for the repository. `README.md` stays as the shorter project overview.
 
 For the fixed public-MVP release gate, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md). Quickstart remains broader and still includes optional JP demo import, crawler, and full-mode steps that are outside the initial public-MVP acceptance scope.
+For optional crawler, full-mode, OpenSearch, managed infrastructure, data-quality,
+or local review evidence handoff, use
+[OPTIONAL_EVIDENCE_HANDOFF.md](OPTIONAL_EVIDENCE_HANDOFF.md); that flow is
+review inventory only and does not expand the Quickstart or public-MVP gate.
 
 ## 1. Set environment
 

@@ -107,7 +107,9 @@ Without `just`:
 ```
 
 For optional crawler, full-mode, OpenSearch, or managed infrastructure review,
-print the read-only evidence command plan:
+start with the read-only
+[Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md), then print the
+evidence command plan:
 
 ```bash
 just optional-evidence-review
@@ -118,6 +120,11 @@ Without `just`:
 ```bash
 ./scripts/optional_evidence_review.sh
 ```
+
+This handoff is intake -> triage -> recheck audit -> closeout ledger ->
+closeout integrity -> lifecycle index -> inventory report. Its records and
+findings are review inventory and handoff support only, not acceptance gates,
+release gates, CI gates, or required label setup.
 
 ## Readiness checks
 
