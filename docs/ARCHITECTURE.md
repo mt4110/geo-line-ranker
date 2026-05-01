@@ -1,6 +1,6 @@
 # Architecture
 
-## Phase 6 boundaries
+## Current Boundaries
 
 - PostgreSQL/PostGIS remains the source of truth.
 - Placement profiles are config-driven and loaded at startup.
@@ -113,7 +113,7 @@ The ranker may return fewer than the requested limit when the hard caps would ot
 - Parse uses the registry-selected parser, records parse failures explicitly, dedupes deterministic event IDs, and imports rows into `events` as `source_type = 'crawl'` with manifest `source_id` as the stable source key.
 - Crawl success and failure are recorded in `crawl_runs`, `crawl_fetch_logs`, `crawl_parse_reports`, and `crawl_dedupe_reports`.
 
-## Phase 6 crate map
+## Workspace Crate Map
 
 - `crates/domain`
   Placement enum, content-kind enum, mixed recommendation item types, and ranking query/result shapes.

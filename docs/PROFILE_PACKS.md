@@ -4,6 +4,12 @@ Profile packs describe which deterministic recommendation profile owns a demo
 path, source mapping, reason labels, and operating assumptions. They are local
 manifests, not runtime plugins.
 
+For the broader docs map, start with [Documentation Index](README.md). Profile
+authors should use this document before changing profile manifests, fixture
+ownership, source mappings, or profile-owned reason labels. For the first local
+run, use [First 15 Minutes](FIRST_15_MINUTES.md) and
+[Quickstart](QUICKSTART.md) first.
+
 ## Current Profiles
 
 | Profile | Manifest | Purpose |

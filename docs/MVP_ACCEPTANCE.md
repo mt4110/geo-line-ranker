@@ -6,8 +6,8 @@ This document defines the fixed public-MVP launch gate for this repository.
 
 The public MVP is ready for release only when this gate passes on the release candidate branch and in CI.
 
-The gate is intentionally stable for the April 30, 2026 launch window. Prefer
-tightening implementation and operations around these checks over adding
+The gate is intentionally stable around the April 30, 2026 public-MVP baseline.
+Prefer tightening implementation and operations around these checks over adding
 broader product surface to the gate.
 
 ## Scope

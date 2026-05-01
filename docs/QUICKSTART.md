@@ -6,6 +6,8 @@ the shorter project overview.
 If you are new to the project, read
 [FIRST_15_MINUTES.md](FIRST_15_MINUTES.md) first for the reading order, default
 sample inspection points, fixed-vs-optional boundary, and touch map.
+[docs/README.md](README.md) is the audience and task map when you need to
+choose a next document rather than run commands.
 
 First-time operators should start with the SQL-only public-MVP path:
 PostgreSQL/PostGIS, Redis, the committed default sample, and the operational
@@ -157,16 +159,22 @@ cargo run -p cli -- snapshot refresh
 
 ## 10. Where to go next
 
-- Use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md) for the fixed six-case public-MVP
-  gate.
-- Use [OPERATIONS.md](OPERATIONS.md) for worker recovery, replay evaluation,
-  post-launch doctor, and data-quality doctor routines.
-- Use [TESTING.md](TESTING.md) for local and CI validation commands.
+- New contributors: use [CONTRIBUTING_LOCAL.md](CONTRIBUTING_LOCAL.md) for
+  change boundaries and validation, then [TESTING.md](TESTING.md) for local and
+  CI checks.
+- Operators: use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md) for the fixed six-case
+  public-MVP gate, then [OPERATIONS.md](OPERATIONS.md) for worker recovery,
+  replay evaluation, post-launch doctor, and data-quality doctor routines.
+- Profile authors: use [PROFILE_PACKS.md](PROFILE_PACKS.md) before changing a
+  profile manifest, fixture ownership, reason catalog, or source mapping.
+- Connector authors: use [DATA_SOURCES.md](DATA_SOURCES.md) and
+  [DATA_LICENSES.md](DATA_LICENSES.md) before changing source manifests,
+  adapters, crawler manifests, or upstream-data handling.
+- Maintainers: use [docs/README.md](README.md) as the audience and task map
+  when deciding which document should own a new explanation.
 - Use [OPTIONAL_EVIDENCE_HANDOFF.md](OPTIONAL_EVIDENCE_HANDOFF.md) before
   turning optional crawler, full-mode, OpenSearch, managed infrastructure,
   data-quality, or local review findings into follow-up work.
-- Use the [Project README](../README.md) for orientation or the
-  [Documentation Index](README.md) when choosing another document to read.
 
 ## 11. Optional JP demo import
 

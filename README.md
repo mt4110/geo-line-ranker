@@ -96,7 +96,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 - [MVP Acceptance](docs/MVP_ACCEPTANCE.md): 固定 public-MVP gate
 - [Operations](docs/OPERATIONS.md): worker jobs、replay、doctor、運用確認
 - [Optional Evidence Handoff](docs/OPTIONAL_EVIDENCE_HANDOFF.md): crawler/full/OpenSearch/managed infrastructure などの任意証跡の handoff
-- [Documentation Index](docs/README.md): 目的別の読み先
+- [Documentation Index](docs/README.md): audience / task 別の読み先
 
 ## Response 例
 

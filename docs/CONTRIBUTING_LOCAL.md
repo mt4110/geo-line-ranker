@@ -7,8 +7,23 @@ There is no standalone `station_converter_ja/` directory in this repository toda
 ## Read This First
 
 - Start with [`AGENTS.md`](../AGENTS.md).
+- If this is your first local run, follow
+  [First 15 Minutes](FIRST_15_MINUTES.md) before this longer contributor
+  runbook.
+- If you are deciding which document owns a topic, use the
+  [Documentation Index](README.md) audience and task map.
 - Keep changes small and reviewable.
 - Do not change runtime behavior when the task is documentation-only.
+
+## Contributor Lanes
+
+| Change type | Start with | Then validate with |
+|---|---|---|
+| Docs-only routing or onboarding | [Documentation Index](README.md), [First 15 Minutes](FIRST_15_MINUTES.md) | `git diff --check`, docs link/self-review |
+| Ranking behavior, reasons, or fallback | [Reason Catalog](REASON_CATALOG.md), [Architecture](ARCHITECTURE.md) | ranking tests, default validation |
+| Public API shape | [API Spec](../API_SPEC.md), [Versioning](VERSIONING.md) | OpenAPI/API docs update, default validation |
+| Profile pack or fixture ownership | [Profile Packs](PROFILE_PACKS.md) | `cargo run -p cli -- config lint`, fixture doctor |
+| Connector, source manifest, or crawler source | [Data Sources](DATA_SOURCES.md), [Data Licenses](DATA_LICENSES.md) | source-manifest lint, crawler manifest lint, fixture doctor |
 
 ## Repository Layout
 

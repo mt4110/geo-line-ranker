@@ -18,6 +18,12 @@ cargo run -p crawler -- manifest lint
 `config lint` covers both active ranking config and committed profile pack
 manifests under `configs/profiles`.
 
+For docs-only changes, still run `git diff --check` and review the changed
+links and routing by hand. If no Rust code, public API, ranking semantics,
+database schema, OpenAPI, config, fixtures, or manifests changed, it is
+acceptable to skip cargo validation in the PR notes with that reason stated
+plainly. Do not use a docs-only reason to skip validation for behavior changes.
+
 When the local PostgreSQL container is memory constrained, the workspace test
 can also be run with serialized Rust test execution:
 
@@ -45,7 +51,9 @@ hit by the entire workspace at once.
 
 ## Integration prerequisites
 
-Phase 5 integration checks use PostgreSQL and Redis. The SQL-only vs full-mode compatibility test still uses a mock OpenSearch endpoint and does not require Docker.
+Integration checks that touch persisted state use PostgreSQL and Redis. The
+SQL-only vs full-mode compatibility test still uses a mock OpenSearch endpoint
+and does not require Docker.
 
 ```bash
 docker compose -f .docker/docker-compose.yaml up -d postgres redis
@@ -307,7 +315,8 @@ python3 scripts/local_review_eval.py \
 - worker integration test:
   snapshot jobs refresh snapshot tables and invalidate Redis cache entries
 - importer integration test:
-  Phase 2 JP import path still works after Phase 5 additions
+  JP import paths still work alongside the current mixed ranking and worker
+  flows
 - crawler integration test:
   allowlist fetch, parser registry selection, and crawl-to-events import flow work when PostgreSQL is reachable
 - compatibility integration test:
