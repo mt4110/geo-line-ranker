@@ -88,6 +88,7 @@ PostgreSQL/PostGIS + Redis(optional) + Rust API
 
 OpenSearch は使いません。  
 OSSとして試しやすく、まずはこのモードを基準にします。
+公開MVPの確認では、この SQL-only path を `event-csv`、PostgreSQL/PostGIS、Redis で起動します。Redis はあくまで cache-only で、正本にはしません。
 
 ### full mode
 
