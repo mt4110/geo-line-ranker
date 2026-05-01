@@ -42,7 +42,9 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 
 ## Quickstart
 
-The canonical local runbook lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+For the first 15 minutes, read
+[docs/FIRST_15_MINUTES.md](docs/FIRST_15_MINUTES.md). The canonical local
+runbook lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 Minimal SQL-only loop:
 
@@ -126,6 +128,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 - [Documentation Index](docs/README.md)
 - [Non-engineer Friendly Design Docs](docs/design_document/README_JA.md)
 - [Contributor Rules](AGENTS.md)
+- [First 15 Minutes](docs/FIRST_15_MINUTES.md)
 - [Local Contributing Guide](docs/CONTRIBUTING_LOCAL.md)
 - [Quickstart](docs/QUICKSTART.md)
 - [MVP Acceptance](docs/MVP_ACCEPTANCE.md)

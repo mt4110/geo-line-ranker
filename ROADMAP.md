@@ -11,22 +11,24 @@
   - keep AI / ML / embeddings / vector search out of the system
   - keep PostgreSQL/PostGIS as the reference implementation, Redis as cache only, and OpenSearch as optional candidate retrieval only
 
-- v0.2.13 post-onboarding design alignment
-  - confirm the v0.2.12 onboarding polish left `ROADMAP.md`, public docs, and `docs/design_document` in the same operating story
+- v0.2.14 first-run sample guide
+  - add a focused first-15-minutes contributor/operator guide before expanding command runbooks
+  - make the default sample easier to inspect without changing public API shape, ranking semantics, database schema, or OpenAPI
+  - connect README, docs index, and Quickstart to the same first-run path
+  - add a small touch map for common change types and safe review boundaries
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
-  - keep optional evidence handoff as review inventory and handoff support only
+  - keep optional evidence handoff as review inventory and handoff support only, not a fixed gate
   - keep OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
-  - keep managed infrastructure explicit review only
   - keep public API shape unchanged
-  - prefer docs-only alignment unless a code or API mismatch is explicitly found
-  - set the next improvement area to default sample inspection and first-run comprehension after the onboarding docs have settled
 
-## v0.2.13 Exit Gates
+## v0.2.14 Exit Gates
 
-- `ROADMAP.md` names v0.2.13 post-onboarding design alignment as current and moves completed onboarding and Phase 25 handoff work into Recently Completed.
-- `ROADMAP.md`, `README.md`, `docs/README.md`, `docs/QUICKSTART.md`, `docs/OPERATIONS.md`, `docs/TESTING.md`, `docs/MVP_ACCEPTANCE.md`, and `docs/OPTIONAL_EVIDENCE_HANDOFF.md` tell the same first-run and fixed-gate story.
-- `docs/design_document/README_JA.md` still points readers through a coherent non-engineer design sequence before implementation detail.
+- `ROADMAP.md` names v0.2.14 first-run sample guide as current and moves v0.2.13 post-onboarding design alignment into Recently Completed.
+- `README.md`, `docs/README.md`, and `docs/QUICKSTART.md` point first-time contributors and operators to `docs/FIRST_15_MINUTES.md`.
+- `docs/FIRST_15_MINUTES.md` explains what to read, what to run, what success looks like, where to inspect the default sample, and where to go next.
+- The default sample guide keeps `storage/fixtures/minimal/` and `examples/import/events.sample.csv` distinct.
+- The touch map points common change types to bounded code/docs areas without changing implementation ownership.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
@@ -35,13 +37,21 @@
 - Full-mode automation candidates do not add `full` mode or OpenSearch to the fixed gate.
 - Managed infrastructure stays explicit review only and outside hardening gates.
 - OpenSearch, live crawler operation, and managed infrastructure are not added to fixed-gate requirements.
-- The next improvement area is default sample inspection and first-run comprehension, without changing the fixed public MVP boundary.
 - CI and local validation commands stay visibly aligned in docs and command-plan scripts.
 - Public API shape is unchanged. If that changes, `schemas/openapi.json` and `API_SPEC.md` must be updated in the same change.
 - Freshness language stays precise: use "latest available MLIT N02 snapshot", not real-time railway wording.
 
 ## Recently Completed
 
+- v0.2.13 post-onboarding design alignment
+  - confirmed the v0.2.12 onboarding polish left `ROADMAP.md`, public docs, and `docs/design_document` in the same operating story
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept optional evidence handoff as review inventory and handoff support only
+  - kept OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
+  - kept managed infrastructure explicit review only
+  - kept public API shape unchanged
+  - set the next improvement area to default sample inspection and first-run comprehension after the onboarding docs settled
 - v0.2.12 human-friendly onboarding polish
   - improved README orientation, shortest local path, default sample summary, and first success state
   - made Quickstart the command-by-command first-run path for `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
@@ -230,12 +240,12 @@
 
 ## Next
 
-- After v0.2.13 post-onboarding design alignment
-  - make the default sample easier to inspect without changing public API shape
-  - improve first-run comprehension around sample rows, expected recommendation shape, and where operators should look after the first success
+- After v0.2.14 first-run sample guide
+  - keep the first-run guide small as more contributor docs are added
+  - consider docs link checking only as a contributor UX improvement, not as a new public-MVP gate
   - keep README and Quickstart as orientation and command-runbook docs rather than expanding them into optional evidence or full-mode gates
   - keep public docs and non-engineer design docs aligned when the next sample or onboarding improvement lands
-- Later hardening after v0.2.13
+- Later hardening after v0.2.14
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review
