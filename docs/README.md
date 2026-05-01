@@ -25,6 +25,8 @@ Start here when choosing what to read next.
 
 - [Operations](OPERATIONS.md): service operation, profiles, replay evaluation, and Docker notes.
 - [MVP Acceptance](MVP_ACCEPTANCE.md): fixed SQL-only public-MVP gate.
+- [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md): read-only
+  intake-to-inventory handoff for optional evidence review and closeout.
 
 ## Data And Compatibility
 

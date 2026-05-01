@@ -122,7 +122,9 @@ Without `just`:
 ```
 
 For optional crawler, full-mode, OpenSearch, or managed infrastructure review,
-print the read-only evidence command plan:
+start with the read-only
+[Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md), then print the
+evidence command plan:
 
 ```bash
 just optional-evidence-review
@@ -133,6 +135,12 @@ Without `just`:
 ```bash
 ./scripts/optional_evidence_review.sh
 ```
+
+The handoff and command plan stay outside the release gate. Optional evidence
+records, lifecycle index rows, inventory reports, and findings are review
+inventory only; they do not add required labels, CI gates, live crawler checks,
+OpenSearch checks, `full` mode checks, or managed infrastructure checks to the
+fixed public-MVP validation path.
 
 Use the maintenance command plans before follow-up PRs to keep the same
 validation set visible:
