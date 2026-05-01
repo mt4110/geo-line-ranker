@@ -204,6 +204,28 @@ python3 scripts/local_review_eval.py \
 Failure artifacts include `error.json`, `manifest.json`, and `checksums.txt`.
 This remains evaluation-only evidence and does not add a new public-MVP gate.
 
+Inspect a saved artifact directory before opening the raw diff or review:
+
+```bash
+python3 scripts/local_review_eval.py \
+  --inspect .storage/local_review/pr-123-456-1
+```
+
+With `just`:
+
+```bash
+just local-review-inspect .storage/local_review/pr-123-456-1
+```
+
+Inspection is read-only. It checks that `manifest.json` has the expected
+schema, status, artifact records, and deterministic summary; verifies every
+recorded sha256 in `checksums.txt`; rejects absolute or parent-directory
+artifact paths; rejects unexpected entries in the artifact directory; validates
+`findings.jsonl` as JSON Lines; and checks `error.json` shape for failed or
+skipped runs. The report prints only file names, sizes, checksum prefixes,
+status, metadata keys, and error summary; it does not print the raw `pr.diff`
+or `review.md` contents.
+
 The operational workflow stores local review artifacts under
 `.storage/local_review/pr-<number>-<run-id>-<run-attempt>` and uploads that
 directory as a GitHub Actions artifact. Completed runs include the bounded

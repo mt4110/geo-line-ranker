@@ -84,3 +84,6 @@ optional-evidence-review:
 
 local-review-eval:
   python3 scripts/local_review_eval.py --self-test
+
+local-review-inspect artifact_dir:
+  python3 scripts/local_review_eval.py --inspect {{artifact_dir}}
