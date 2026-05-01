@@ -294,6 +294,8 @@ def read_json_object(path: Path, label: str) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise InspectionError(f"missing {label}") from error
+    except UnicodeDecodeError as error:
+        raise InspectionError(f"{label} is not valid UTF-8") from error
     except json.JSONDecodeError as error:
         raise InspectionError(f"{label} is not valid JSON: {error.msg}") from error
     if not isinstance(payload, dict):
@@ -360,6 +362,8 @@ def parse_checksums(out_dir: Path) -> dict[str, str]:
         raise InspectionError("missing checksums.txt")
     if checksum_path.is_symlink():
         raise InspectionError("artifact path is a symlink: checksums.txt")
+    if not checksum_path.is_file():
+        raise InspectionError("artifact path is not a file: checksums.txt")
 
     checksums: dict[str, str] = {}
     with checksum_path.open("r", encoding="utf-8") as checksum_file:
@@ -1205,6 +1209,23 @@ def run_self_test() -> int:
                 lambda: inspect_artifact_dir(symlink_inside),
                 "artifact path is a symlink: manifest.json",
             )
+
+        invalid_utf8_manifest = root / "invalid-utf8-manifest"
+        shutil.copytree(first, invalid_utf8_manifest)
+        (invalid_utf8_manifest / "manifest.json").write_bytes(b"\xff")
+        assert_inspection_error(
+            lambda: inspect_artifact_dir(invalid_utf8_manifest),
+            "manifest.json is not valid UTF-8",
+        )
+
+        checksum_directory = root / "checksum-directory"
+        shutil.copytree(first, checksum_directory)
+        (checksum_directory / "checksums.txt").unlink()
+        (checksum_directory / "checksums.txt").mkdir()
+        assert_inspection_error(
+            lambda: inspect_artifact_dir(checksum_directory),
+            "artifact path is not a file: checksums.txt",
+        )
 
     print("local review evaluation self-test ok")
     return 0
