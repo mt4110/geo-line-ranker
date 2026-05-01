@@ -2,9 +2,22 @@
 
 Start here when choosing what to read next.
 
+## First-Time Path
+
+- [Project README](../README.md): project orientation, shortest local path,
+  default sample summary, and first success state.
+- [Quickstart](QUICKSTART.md): command-by-command local runbook for first-time
+  operators.
+- [MVP Acceptance](MVP_ACCEPTANCE.md): fixed public-MVP gate for `sql_only` +
+  `event-csv` + PostgreSQL/PostGIS + Redis.
+- [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md): read-only handoff
+  for optional crawler, full-mode, OpenSearch, managed infrastructure,
+  data-quality, and local review evidence.
+
 ## Build And Run
 
-- [Quickstart](QUICKSTART.md): local SQL-only loop and demo commands.
+- [Quickstart](QUICKSTART.md): first-time SQL-only loop, default sample, and
+  demo commands.
 - [Local Contributing Guide](CONTRIBUTING_LOCAL.md): validation commands, database modes, and contributor workflow.
 - [Testing](TESTING.md): unit, integration, compatibility, and release-gate checks.
 

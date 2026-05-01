@@ -1,12 +1,16 @@
 # Quickstart
 
-This is the canonical local runbook for the repository. `README.md` stays as the shorter project overview.
+This is the canonical local runbook for the repository. `README.md` stays as
+the shorter project overview.
 
-For the fixed public-MVP release gate, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md). Quickstart remains broader and still includes optional JP demo import, crawler, and full-mode steps that are outside the initial public-MVP acceptance scope.
-For optional crawler, full-mode, OpenSearch, managed infrastructure, data-quality,
-or local review evidence handoff, use
-[OPTIONAL_EVIDENCE_HANDOFF.md](OPTIONAL_EVIDENCE_HANDOFF.md); that flow is
-review inventory only and does not expand the Quickstart or public-MVP gate.
+First-time operators should start with the SQL-only public-MVP path:
+PostgreSQL/PostGIS, Redis, the committed default sample, and the operational
+`event-csv` import. For the fixed release gate, use
+[MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md). Optional JP demo import, crawler,
+full-mode, OpenSearch, managed infrastructure, data-quality, and local review
+evidence remain outside that gate; use
+[OPTIONAL_EVIDENCE_HANDOFF.md](OPTIONAL_EVIDENCE_HANDOFF.md) when those items
+need human review inventory or handoff support.
 
 ## 1. Set environment
 
@@ -33,13 +37,28 @@ docker compose -f .docker/docker-compose.yaml up -d postgres redis
 cargo run -p cli -- migrate
 ```
 
-## 4. Seed the demo fixture
+## 4. Seed the default sample
 
 ```bash
 cargo run -p cli -- seed example
 ```
 
-Fixture files live in `storage/fixtures/minimal/`.
+Fixture files live in `storage/fixtures/minimal/`. This default sample is small
+on purpose:
+
+- 6 stations across JR Yamanote Line, Tokyo Metro Marunouchi Line, and Tokyo
+  Metro Yurakucho Line
+- 10 school rows, including the local demo schools used by the first requests
+- 5 fixture event rows for the seeded local dataset
+- 7 school-station links with walking minutes, distance, hop distance, and line
+  name
+- 2 user event rows for initial behavior/snapshot checks
+
+Use `st_tamachi` to inspect the station-first path, `JR Yamanote Line` for the
+line-first path, and `Minato` / `Tokyo` for the area-first path. The first
+successful recommendation should show a non-empty `items` array with stable
+scores, explanations, fallback stage, and candidate counts.
+
 Verify the committed fixture manifest and checksums when fixture files change:
 
 ```bash
@@ -49,7 +68,106 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 The minimal fixture is owned by the `local-discovery-generic` profile pack in
 `configs/profiles/local-discovery-generic/`.
 
-## 5. Optional Phase 2 JP demo import
+## 5. Import operational event CSV
+
+```bash
+cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
+```
+
+The file has 4 event rows and exercises the public-MVP operational input path:
+checksum staging, import audit rows, active event updates, and replacement
+semantics. It is not a crawler path.
+
+## 6. Run the worker and API
+
+```bash
+# terminal A
+cargo run -p worker -- serve
+
+# terminal B
+cargo run -p api -- serve
+```
+
+Open Swagger UI:
+
+[http://127.0.0.1:4000/swagger-ui](http://127.0.0.1:4000/swagger-ui)
+
+## 7. Make the first recommendation request
+
+```bash
+curl -X POST http://127.0.0.1:4000/v1/recommendations \
+  -H "content-type: application/json" \
+  -d '{"target_station_id":"st_tamachi","placement":"home","limit":3}'
+```
+
+Success looks like:
+
+- HTTP `200`
+- a non-empty `items` array
+- each item has a `content_kind`, `school_id`, `score`, and explanation fields
+- event items also include `event_id` and `event_title`
+- the top-level response includes `fallback_stage`, `candidate_counts`,
+  `context`, `profile_version`, and `algorithm_version`
+
+This confirms that the default sample is loaded, the SQL-only ranking path is
+working, and the API can explain why a result was selected.
+
+## 8. Compare placements
+
+```bash
+curl -X POST http://127.0.0.1:4000/v1/recommendations \
+  -H "content-type: application/json" \
+  -d '{"target_station_id":"st_tamachi","placement":"home","limit":3}'
+
+curl -X POST http://127.0.0.1:4000/v1/recommendations \
+  -H "content-type: application/json" \
+  -d '{"target_station_id":"st_tamachi","placement":"search","limit":3}'
+```
+
+`home` should surface event-heavy mixes more aggressively.  
+`search` should keep school items closer to the front.
+
+## 9. Track user events
+
+```bash
+curl -X POST http://127.0.0.1:4000/v1/track \
+  -H "content-type: application/json" \
+  -d '{"user_id":"demo-user-1","event_kind":"school_view","school_id":"school_seaside"}'
+```
+
+The API stores the event in `user_events` and enqueues snapshot refresh jobs into `job_queue`.
+Inspect queued worker jobs from the CLI:
+
+```bash
+cargo run -p cli -- jobs list --limit 20
+```
+
+For recovery commands such as `jobs inspect`, `jobs retry`, `jobs due`, and
+`jobs enqueue`, use [docs/OPERATIONS.md](OPERATIONS.md).
+
+If you tune `configs/ranking/tracking.default.yaml`, restart the API and worker, then reapply the current snapshot weights explicitly:
+
+```bash
+cargo run -p cli -- snapshot refresh
+```
+
+## 10. Where to go next
+
+- Use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md) for the fixed six-case public-MVP
+  gate.
+- Use [OPERATIONS.md](OPERATIONS.md) for worker recovery, replay evaluation,
+  post-launch doctor, and data-quality doctor routines.
+- Use [TESTING.md](TESTING.md) for local and CI validation commands.
+- Use [OPTIONAL_EVIDENCE_HANDOFF.md](OPTIONAL_EVIDENCE_HANDOFF.md) before
+  turning optional crawler, full-mode, OpenSearch, managed infrastructure,
+  data-quality, or local review findings into follow-up work.
+- Use the [Project README](../README.md) for orientation or the
+  [Documentation Index](README.md) when choosing another document to read.
+
+## 11. Optional JP demo import
+
+Run this after the first SQL-only sample works, not as a prerequisite for the
+default local path:
 
 ```bash
 cargo run -p cli -- fixtures generate-demo-jp
@@ -64,13 +182,11 @@ cargo run -p cli -- derive school-station-links
 The JP adapter fixture path is owned by the `school-event-jp` reference profile
 pack in `configs/profiles/school-event-jp/`.
 
-## 6. Import operational event CSV
+## 12. Optional allowlist crawl
 
-```bash
-cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
-```
-
-## 7. Optional allowlist crawl
+Crawler flows are optional operator workflows. They are useful for reviewed
+source experiments, but they are not required for the first local success state
+or the fixed public-MVP gate.
 
 ```bash
 cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.yaml
@@ -95,65 +211,30 @@ cargo run -p crawler -- fetch --manifest configs/crawler/sources/aoyama-junior-s
 cargo run -p crawler -- parse --manifest configs/crawler/sources/aoyama-junior-school-tour.yaml
 ```
 
-`cargo run -p cli -- seed example` now seeds `school_utokyo`, `school_keio`, `school_shibaura_it_junior`, `school_hachioji_gakuen_junior`, `school_nihon_university_junior`, and `school_aoyama_gakuin_junior`, so the committed real-domain parser fixtures can import rows in the default local setup once raw content has been fetched.
+`cargo run -p cli -- seed example` seeds `school_utokyo`, `school_keio`,
+`school_shibaura_it_junior`, `school_hachioji_gakuen_junior`,
+`school_nihon_university_junior`, and `school_aoyama_gakuin_junior`, so the
+committed real-domain parser fixtures can import rows in the default local
+setup once raw content has been fetched.
 
-`configs/crawler/sources/keio_events.yaml` is intentionally blocked for live fetch. As of April 19, 2026, `https://www.keio.ac.jp/robots.txt` returned HTTP 404, so only local test fixtures or pre-fetched raw HTML should be used with the Keio parser until the official robots path is confirmed.
-`configs/crawler/sources/nihon_university_junior_events.yaml` is live-fetch enabled. As of April 19, 2026, `https://www.yokohama.hs.nihon-u.ac.jp/robots.txt` resolves successfully but redirects back to HTML, so treat health output and future doctor warnings as part of normal operator review.
-`configs/crawler/sources/aoyama-junior-school-tour.yaml` is live-fetch enabled. As of April 19, 2026, `https://www.jh.aoyama.ed.jp/robots.txt` returned `text/plain` and does not explicitly block `/admission/explanation.html`.
-`crawler -- serve` only auto-runs manifests marked `source_maturity: live_ready`.
-If you seed a different fixture set, keep the matching `schools.id` rows in place before running crawl parse.
+`configs/crawler/sources/keio_events.yaml` is intentionally blocked for live
+fetch. As of April 19, 2026, `https://www.keio.ac.jp/robots.txt` returned HTTP
+404, so only local test fixtures or pre-fetched raw HTML should be used with
+the Keio parser until the official robots path is confirmed.
+`configs/crawler/sources/nihon_university_junior_events.yaml` is live-fetch
+enabled. As of April 19, 2026,
+`https://www.yokohama.hs.nihon-u.ac.jp/robots.txt` resolves successfully but
+redirects back to HTML, so treat health output and future doctor warnings as
+part of normal operator review.
+`configs/crawler/sources/aoyama-junior-school-tour.yaml` is live-fetch enabled.
+As of April 19, 2026, `https://www.jh.aoyama.ed.jp/robots.txt` returned
+`text/plain` and does not explicitly block `/admission/explanation.html`.
+`crawler -- serve` only auto-runs manifests marked `source_maturity:
+live_ready`.
+If you seed a different fixture set, keep the matching `schools.id` rows in
+place before running crawl parse.
 
-## 8. Run the worker and API
-
-```bash
-cargo run -p worker -- serve
-cargo run -p api -- serve
-```
-
-Open Swagger UI:
-
-[http://127.0.0.1:4000/swagger-ui](http://127.0.0.1:4000/swagger-ui)
-
-## 9. Compare placements
-
-```bash
-curl -X POST http://127.0.0.1:4000/v1/recommendations \
-  -H "content-type: application/json" \
-  -d '{"target_station_id":"st_tamachi","placement":"home","limit":3}'
-
-curl -X POST http://127.0.0.1:4000/v1/recommendations \
-  -H "content-type: application/json" \
-  -d '{"target_station_id":"st_tamachi","placement":"search","limit":3}'
-```
-
-`home` should surface event-heavy mixes more aggressively.  
-`search` should keep school items closer to the front.
-
-## 10. Track user events
-
-```bash
-curl -X POST http://127.0.0.1:4000/v1/track \
-  -H "content-type: application/json" \
-  -d '{"user_id":"demo-user-1","event_kind":"school_view","school_id":"school_seaside"}'
-```
-
-The API stores the event in `user_events` and enqueues snapshot refresh jobs into `job_queue`.
-Inspect queued worker jobs from the CLI:
-
-```bash
-cargo run -p cli -- jobs list --limit 20
-```
-
-For recovery commands such as `jobs inspect`, `jobs retry`, `jobs due`, and
-`jobs enqueue`, use [docs/OPERATIONS.md](OPERATIONS.md).
-
-If you tune `configs/ranking/tracking.default.yaml`, restart the API and worker, then reapply the current snapshot weights explicitly:
-
-```bash
-cargo run -p cli -- snapshot refresh
-```
-
-## 11. Run full mode
+## 13. Optional full mode
 
 ```bash
 perl -0pi -e 's/^CANDIDATE_RETRIEVAL_MODE=.*/CANDIDATE_RETRIEVAL_MODE=full/' .env
