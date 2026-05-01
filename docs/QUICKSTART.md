@@ -18,6 +18,21 @@ evidence remain outside that gate; use
 [OPTIONAL_EVIDENCE_HANDOFF.md](OPTIONAL_EVIDENCE_HANDOFF.md) when those items
 need human review inventory or handoff support.
 
+## Contributor entrypoints
+
+Use these from the repository root when you want the guided path:
+
+| Command | What it does |
+|---|---|
+| `just setup` | Creates `.env` if needed, starts PostgreSQL/Redis, waits for PostgreSQL, applies migrations, seeds the default sample, and imports `examples/import/events.sample.csv`. |
+| `just dev` | Starts the worker and API together. Stop both with `Ctrl-C`. |
+| `just smoke` | Runs read-only SQL-only contributor smoke checks without making crawler, full mode, OpenSearch, or managed infrastructure part of the fixed gate. |
+| `just docs` | Checks required docs files and local Markdown links as contributor tooling. |
+| `just eval` | Runs the offline local review evaluation self-test. Use `RUN_REPLAY_EVAL=1 just eval` after recommendation traces exist to include replay evaluation. |
+
+The manual steps below are the same baseline path, written out command by
+command.
+
 ## 1. Set environment
 
 Use `.env.example` as the baseline.

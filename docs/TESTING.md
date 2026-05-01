@@ -24,6 +24,28 @@ database schema, OpenAPI, config, fixtures, or manifests changed, it is
 acceptable to skip cargo validation in the PR notes with that reason stated
 plainly. Do not use a docs-only reason to skip validation for behavior changes.
 
+## Contributor entrypoints
+
+Use these shorter entrypoints before choosing a broader validation set:
+
+```bash
+just smoke
+just docs
+just eval
+```
+
+`just smoke` is a read-only SQL-only contributor smoke pass for config lint,
+source manifest lint, the default fixture doctor, crawler manifest lint, and
+`git diff --check`. It is not the fixed public-MVP gate; keep using
+`just mvp-acceptance` for the six-case gate.
+
+`just docs` checks required docs files and local Markdown links. Treat this as
+contributor tooling, not as a release gate expansion.
+
+`just eval` runs the offline local review evaluation self-test. After the
+database has recommendation traces, `RUN_REPLAY_EVAL=1 just eval` also runs
+`cargo run -p cli -- replay evaluate --limit 20`.
+
 When the local PostgreSQL container is memory constrained, the workspace test
 can also be run with serialized Rust test execution:
 

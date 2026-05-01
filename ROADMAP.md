@@ -11,25 +11,25 @@
   - keep AI / ML / embeddings / vector search out of the system
   - keep PostgreSQL/PostGIS as the reference implementation, Redis as cache only, and OpenSearch as optional candidate retrieval only
 
-- v0.2.15 docs index audience alignment
-  - make `docs/README.md` the routing map by audience and task
-  - keep `docs/FIRST_15_MINUTES.md` focused on the first-run sequence and first success state
-  - show new contributors, operators, maintainers, profile authors, and connector authors what to read first and next
-  - keep README and Quickstart as orientation and command-runbook docs rather than expanding them into optional evidence or full-mode gates
+- v0.2.16 contributor just entrypoints
+  - add `just setup`, `just dev`, `just smoke`, `just docs`, and `just eval` as runnable contributor/operator entrypoints
+  - keep the v0.2.15 audience/task docs routing as the map and make the commands visible from README, docs index, Quickstart, and Testing
+  - keep `just smoke`, `just docs`, and `just eval` as contributor tooling rather than public-MVP gate expansion
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
   - keep optional evidence handoff as review inventory and handoff support only, not a fixed gate
   - keep OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
   - keep public API shape unchanged
 
-## v0.2.15 Exit Gates
+## v0.2.16 Exit Gates
 
-- `ROADMAP.md` names v0.2.15 docs index audience alignment as current and moves v0.2.14 first-run sample guide into Recently Completed.
-- `docs/README.md` routes new contributors, operators, maintainers, profile authors, and connector authors to clear first and next docs.
-- `docs/README.md` also routes common tasks to the right docs without duplicating the first-run sequence from `docs/FIRST_15_MINUTES.md`.
-- `docs/QUICKSTART.md`, `docs/CONTRIBUTING_LOCAL.md`, `docs/TESTING.md`, `docs/PROFILE_PACKS.md`, and `docs/DATA_SOURCES.md` point back to the right audience/task docs without becoming duplicate indexes.
-- `docs/FIRST_15_MINUTES.md` remains the focused first-run guide for what to read, what to run, what success looks like, and where to inspect the default sample.
-- README docs links continue to point readers toward the first-run guide and the audience/task documentation index.
+- `ROADMAP.md` names v0.2.16 contributor just entrypoints as current and moves v0.2.15 docs index audience alignment into Recently Completed.
+- `just setup` prepares the SQL-only first-run baseline with `.env`, PostgreSQL/Redis, migrations, default sample seeding, and the operational `event-csv` sample import.
+- `just dev` starts the worker and API together for local development after setup.
+- `just smoke` runs read-only contributor smoke checks for config lint, source manifest lint, the default fixture doctor, crawler manifest lint, and whitespace.
+- `just docs` checks required docs files and local Markdown links as contributor tooling, not as a public-MVP gate.
+- `just eval` runs the offline local review evaluation self-test and can include replay evaluation only when traces exist and `RUN_REPLAY_EVAL=1` is set.
+- README, `docs/README.md`, `docs/FIRST_15_MINUTES.md`, `docs/QUICKSTART.md`, and `docs/TESTING.md` route readers to the new commands without duplicating the full runbook.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
@@ -44,6 +44,16 @@
 
 ## Recently Completed
 
+- v0.2.15 docs index audience alignment
+  - made `docs/README.md` the routing map by audience and task
+  - kept `docs/FIRST_15_MINUTES.md` focused on the first-run sequence and first success state
+  - showed new contributors, operators, maintainers, profile authors, and connector authors what to read first and next
+  - kept README and Quickstart as orientation and command-runbook docs rather than expanding them into optional evidence or full-mode gates
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept optional evidence handoff as review inventory and handoff support only, not a fixed gate
+  - kept OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
+  - kept public API shape unchanged
 - v0.2.14 first-run sample guide
   - added a focused first-15-minutes contributor/operator guide before expanding command runbooks
   - made the default sample easier to inspect without changing public API shape, ranking semantics, database schema, or OpenAPI
@@ -251,13 +261,14 @@
 
 ## Next
 
-- After v0.2.15 docs index audience alignment
+- After v0.2.16 contributor just entrypoints
   - keep the first-run guide small as more contributor docs are added
   - keep the docs index useful as a routing map rather than turning it into a second runbook
   - consider docs link checking only as a contributor UX improvement, not as a new public-MVP gate
+  - consider `just ci-local` only after Rust, Node/TS, OpenAPI drift, and docs checks are clearly separated
   - add deeper profile-author and connector-author docs only when the underlying workflows change
   - keep public docs and non-engineer design docs aligned when the next sample or onboarding improvement lands
-- Later hardening after v0.2.15
+- Later hardening after v0.2.16
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review
