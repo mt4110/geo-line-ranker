@@ -2,6 +2,7 @@
 /.env
 /.storage/raw
 /.storage/tmp
+/.storage/local_review
 /.storage/local_review_eval
 .next/
 node_modules

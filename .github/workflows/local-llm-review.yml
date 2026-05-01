@@ -1,4 +1,4 @@
-# cspell:ignore OLLAMA qwen pipefail urllib rstrip startswith urlopen endswith findall ollama textwrap isinstance repr
+# cspell:ignore OLLAMA qwen pipefail urllib rstrip startswith urlopen endswith findall ollama textwrap isinstance repr pathlib subprocess tempfile DiffTooLarge
 
 name: Local AI PR Review
 
@@ -8,6 +8,7 @@ on:
     types: [labeled]
 
 permissions:
+  contents: read
   pull-requests: read
   issues: write
 
@@ -36,8 +37,19 @@ jobs:
       MAX_DIFF_BYTES: "350000"
       MAX_FINDINGS: "8"
       MAX_COMMENT_CHARS: "60000"
+      LOCAL_REVIEW_ARTIFACT_ROOT: .storage/local_review
+      LOCAL_REVIEW_ARTIFACT_DIR: .storage/local_review/pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+      LOCAL_REVIEW_RUN_ID: pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
     steps:
+      - name: Checkout trusted review tools
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
       - name: Review PR diff and update comment
         shell: bash
         run: |
@@ -46,10 +58,13 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import pathlib
           import re
+          import subprocess
           import sys
           import textwrap
           import time
+          import tempfile
           import urllib.error
           import urllib.request
 
@@ -64,6 +79,9 @@ jobs:
           max_diff_bytes = int(os.environ["MAX_DIFF_BYTES"])
           max_findings = int(os.environ["MAX_FINDINGS"])
           max_comment_chars = int(os.environ["MAX_COMMENT_CHARS"])
+          artifact_root = os.environ["LOCAL_REVIEW_ARTIFACT_ROOT"]
+          artifact_dir = os.environ["LOCAL_REVIEW_ARTIFACT_DIR"]
+          local_review_run_id = os.environ["LOCAL_REVIEW_RUN_ID"]
 
           owner, repo = repository.split("/", 1)
           marker = "<!-- local-llm-review -->"
@@ -258,7 +276,7 @@ jobs:
                       except ValueError:
                           announced_bytes = None
                       if announced_bytes is not None and announced_bytes > max_diff_bytes:
-                          return None, announced_bytes
+                          return None, announced_bytes, None
 
                   chunks = []
                   total_bytes = 0
@@ -266,17 +284,89 @@ jobs:
                   while True:
                       remaining = max_diff_bytes + 1 - total_bytes
                       if remaining <= 0:
-                          return None, total_bytes
+                          return None, total_bytes, None
                       chunk = response.read(min(chunk_size, remaining))
                       if not chunk:
                           break
                       chunks.append(chunk)
                       total_bytes += len(chunk)
                       if total_bytes > max_diff_bytes:
-                          return None, total_bytes
+                          return None, total_bytes, None
 
               diff_bytes = b"".join(chunks)
-              return diff_bytes.decode("utf-8", errors="replace"), len(diff_bytes)
+              return diff_bytes.decode("utf-8", errors="replace"), len(diff_bytes), diff_bytes
+
+          def capture_review_artifacts(
+              scenario,
+              *,
+              diff_payload=None,
+              review_text=None,
+              failure_message="local review failed",
+              error_type=None,
+          ):
+              metadata = {
+                  "base_sha": os.environ["BASE_SHA"],
+                  "head_sha": os.environ["HEAD_SHA"],
+                  "max_diff_bytes": str(max_diff_bytes),
+                  "ollama_model": ollama_model,
+                  "pr_number": pr_number,
+                  "repository": repository,
+                  "github_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                  "github_run_id": os.environ["GITHUB_RUN_ID"],
+                  "workflow_name": os.environ["GITHUB_WORKFLOW"],
+              }
+
+              with tempfile.TemporaryDirectory() as temp_dir:
+                  temp_root = pathlib.Path(temp_dir)
+                  command = [
+                      "python3",
+                      "scripts/local_review_eval.py",
+                      "--scenario",
+                      scenario,
+                      "--out-dir",
+                      artifact_dir,
+                      "--artifact-root",
+                      artifact_root,
+                      "--run-id",
+                      local_review_run_id,
+                      "--failure-message",
+                      failure_message,
+                      "--force",
+                      "--no-synthetic-inputs",
+                  ]
+                  for key, value in sorted(metadata.items()):
+                      command.extend(["--metadata", f"{key}={value}"])
+                  if error_type:
+                      command.extend(["--error-type", error_type])
+                  if scenario == "failure":
+                      command.append("--expect-failure")
+                  if diff_payload is not None:
+                      diff_path = temp_root / "pr.diff"
+                      diff_path.write_bytes(diff_payload)
+                      command.extend(["--diff", str(diff_path)])
+                  if review_text is not None:
+                      review_path = temp_root / "review.md"
+                      review_path.write_text(review_text, encoding="utf-8")
+                      command.extend(["--review", str(review_path)])
+
+                  subprocess.run(command, check=True)
+
+          def try_capture_failure_artifacts(diff_payload, review_text, message, error_type):
+              try:
+                  capture_review_artifacts(
+                      "failure",
+                      diff_payload=diff_payload,
+                      review_text=review_text,
+                      failure_message=message,
+                      error_type=error_type,
+                  )
+                  return True
+              except Exception as artifact_error:
+                  print(
+                      f"Failed to save local review artifacts: {artifact_error}",
+                      file=sys.stderr,
+                  )
+                  return False
 
           def comment_header(diff_bytes):
               return (
@@ -304,7 +394,7 @@ jobs:
               return message
 
           try:
-              diff, diff_bytes = fetch_pr_diff_with_limit()
+              diff, diff_bytes, raw_diff = fetch_pr_diff_with_limit()
               header = comment_header(diff_bytes)
 
               if diff is None:
@@ -317,6 +407,15 @@ jobs:
                       + "2. Run a deeper manual review.\n"
                       + "3. Temporarily raise `MAX_DIFF_BYTES` and `OLLAMA_NUM_CTX` after confirming memory headroom.\n"
                   )
+                  capture_review_artifacts(
+                      "skipped",
+                      review_text=body,
+                      failure_message=(
+                          f"PR diff size {diff_bytes} exceeds MAX_DIFF_BYTES "
+                          f"{max_diff_bytes}"
+                      ),
+                      error_type="DiffTooLarge",
+                  )
               else:
                   started_at = time.time()
                   review = ollama_review(diff)
@@ -326,10 +425,26 @@ jobs:
                       + f"- Review elapsed seconds: `{elapsed_seconds}`\n\n"
                       + sanitize_review_output(review)
                   )
+                  capture_review_artifacts(
+                      "success",
+                      diff_payload=raw_diff,
+                      review_text=review,
+                  )
 
               post_or_update_comment(body)
           except Exception as error:
               message = describe_error(error)
+              review_for_failure = locals().get("review")
+              if review_for_failure is None:
+                  review_for_failure = locals().get("body")
+              # If comment posting fails after review output exists, keep that output
+              # but rewrite the run status as failed for operator triage.
+              try_capture_failure_artifacts(
+                  locals().get("raw_diff"),
+                  review_for_failure,
+                  message,
+                  type(error).__name__,
+              )
               failure_header = comment_header(locals().get("diff_bytes", "unknown"))
               failure_body = (
                   failure_header
@@ -348,3 +463,15 @@ jobs:
                   )
               raise
           PY
+
+      - name: Upload local review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-review-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .storage/local_review/pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          # Required for the explicit .storage path; the writer recreates this
+          # run directory before writing only bounded local-review evidence.
+          include-hidden-files: true
+          retention-days: 14
