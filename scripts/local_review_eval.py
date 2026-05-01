@@ -281,11 +281,12 @@ def safe_relative_artifact_path(raw_path: Any, field_name: str) -> str:
 
 def safe_artifact_file(out_dir: Path, raw_path: Any, field_name: str) -> tuple[str, Path]:
     relative_path = safe_relative_artifact_path(raw_path, field_name)
+    artifact_path = out_dir / relative_path
     resolved_out_dir = resolve_for_safety(out_dir)
-    resolved_path = resolve_for_safety(out_dir / relative_path)
+    resolved_path = resolve_for_safety(artifact_path)
     if not is_relative_to_path(resolved_path, resolved_out_dir):
         raise InspectionError(f"{field_name} resolves outside the artifact directory")
-    return relative_path, resolved_path
+    return relative_path, artifact_path
 
 
 def read_json_object(path: Path, label: str) -> dict[str, Any]:
@@ -301,7 +302,13 @@ def read_json_object(path: Path, label: str) -> dict[str, Any]:
 
 
 def read_json_artifact_object(out_dir: Path, raw_path: str, label: str) -> dict[str, Any]:
-    _, path = safe_artifact_file(out_dir, raw_path, label)
+    relative_path, path = safe_artifact_file(out_dir, raw_path, label)
+    if not path.exists():
+        raise InspectionError(f"missing artifact file: {relative_path}")
+    if path.is_symlink():
+        raise InspectionError(f"artifact path is a symlink: {relative_path}")
+    if not path.is_file():
+        raise InspectionError(f"artifact path is not a file: {relative_path}")
     return read_json_object(path, label)
 
 
@@ -334,6 +341,8 @@ def actual_artifact_record(out_dir: Path, raw_path: Any, field_name: str) -> dic
     relative_path, path = safe_artifact_file(out_dir, raw_path, field_name)
     if not path.exists():
         raise InspectionError(f"missing artifact file: {relative_path}")
+    if path.is_symlink():
+        raise InspectionError(f"artifact path is a symlink: {relative_path}")
     if not path.is_file():
         raise InspectionError(f"artifact path is not a file: {relative_path}")
 
@@ -349,30 +358,31 @@ def parse_checksums(out_dir: Path) -> dict[str, str]:
     _, checksum_path = safe_artifact_file(out_dir, "checksums.txt", "checksums.txt")
     if not checksum_path.exists():
         raise InspectionError("missing checksums.txt")
+    if checksum_path.is_symlink():
+        raise InspectionError("artifact path is a symlink: checksums.txt")
 
     checksums: dict[str, str] = {}
-    for line_number, raw_line in enumerate(
-        checksum_path.read_text(encoding="utf-8").splitlines(),
-        start=1,
-    ):
-        if not raw_line:
-            raise InspectionError(f"checksums.txt:{line_number} is blank")
-        if "  " not in raw_line:
-            raise InspectionError(
-                f"checksums.txt:{line_number} must use '<sha256>  <path>'"
+    with checksum_path.open("r", encoding="utf-8") as checksum_file:
+        for line_number, raw_line in enumerate(checksum_file, start=1):
+            line = raw_line.rstrip("\r\n")
+            if not line:
+                raise InspectionError(f"checksums.txt:{line_number} is blank")
+            if "  " not in line:
+                raise InspectionError(
+                    f"checksums.txt:{line_number} must use '<sha256>  <path>'"
+                )
+            digest, raw_path = line.split("  ", 1)
+            if CHECKSUM_RE.fullmatch(digest) is None:
+                raise InspectionError(
+                    f"checksums.txt:{line_number} has an invalid sha256 digest"
+                )
+            relative_path = safe_relative_artifact_path(
+                raw_path,
+                f"checksums.txt:{line_number}",
             )
-        digest, raw_path = raw_line.split("  ", 1)
-        if CHECKSUM_RE.fullmatch(digest) is None:
-            raise InspectionError(
-                f"checksums.txt:{line_number} has an invalid sha256 digest"
-            )
-        relative_path = safe_relative_artifact_path(
-            raw_path,
-            f"checksums.txt:{line_number}",
-        )
-        if relative_path in checksums:
-            raise InspectionError(f"checksums.txt duplicates {relative_path}")
-        checksums[relative_path] = digest
+            if relative_path in checksums:
+                raise InspectionError(f"checksums.txt duplicates {relative_path}")
+            checksums[relative_path] = digest
 
     if not checksums:
         raise InspectionError("checksums.txt must contain at least manifest.json")
@@ -380,23 +390,33 @@ def parse_checksums(out_dir: Path) -> dict[str, str]:
 
 
 def read_findings_count(out_dir: Path, raw_path: str) -> int:
-    _, findings_path = safe_artifact_file(out_dir, raw_path, "findings.path")
+    relative_path, findings_path = safe_artifact_file(
+        out_dir,
+        raw_path,
+        "findings.path",
+    )
+    if not findings_path.exists():
+        raise InspectionError(f"missing artifact file: {relative_path}")
+    if findings_path.is_symlink():
+        raise InspectionError(f"artifact path is a symlink: {relative_path}")
+    if not findings_path.is_file():
+        raise InspectionError(f"artifact path is not a file: {relative_path}")
+
     count = 0
-    for line_number, raw_line in enumerate(
-        findings_path.read_text(encoding="utf-8").splitlines(),
-        start=1,
-    ):
-        if not raw_line:
-            raise InspectionError(f"findings.jsonl:{line_number} is blank")
-        try:
-            finding = json.loads(raw_line)
-        except json.JSONDecodeError as error:
-            raise InspectionError(
-                f"findings.jsonl:{line_number} is not valid JSON: {error.msg}"
-            ) from error
-        if not isinstance(finding, dict):
-            raise InspectionError(f"findings.jsonl:{line_number} must be an object")
-        count += 1
+    with findings_path.open("r", encoding="utf-8") as findings_file:
+        for line_number, raw_line in enumerate(findings_file, start=1):
+            line = raw_line.rstrip("\r\n")
+            if not line:
+                raise InspectionError(f"findings.jsonl:{line_number} is blank")
+            try:
+                finding = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise InspectionError(
+                    f"findings.jsonl:{line_number} is not valid JSON: {error.msg}"
+                ) from error
+            if not isinstance(finding, dict):
+                raise InspectionError(f"findings.jsonl:{line_number} must be an object")
+            count += 1
     return count
 
 
@@ -581,11 +601,9 @@ def inspect_artifact_dir(out_dir: Path) -> dict[str, Any]:
 
     tracked_files = set(expected_checksum_paths)
     tracked_files.add("checksums.txt")
-    existing_entries = {
-        path.relative_to(out_dir).as_posix()
-        for path in out_dir.rglob("*")
-        if path.is_file() or path.is_symlink() or path.is_dir()
-    }
+    # The artifact format is intentionally flat. Inspect only direct children so
+    # an unexpected directory or symlinked directory cannot expand the scan.
+    existing_entries = {path.name for path in out_dir.iterdir()}
     untracked_entries = sorted(existing_entries - tracked_files)
     if untracked_entries:
         raise InspectionError(
@@ -1171,6 +1189,21 @@ def run_self_test() -> int:
             assert_inspection_error(
                 lambda: inspect_artifact_dir(symlink_escape),
                 "resolves outside the artifact directory",
+            )
+
+        symlink_inside = root / "symlink-inside"
+        shutil.copytree(first, symlink_inside)
+        inside_manifest = symlink_inside / "inside-manifest.json"
+        inside_manifest.write_text("{}", encoding="utf-8")
+        (symlink_inside / "manifest.json").unlink()
+        try:
+            (symlink_inside / "manifest.json").symlink_to(inside_manifest)
+        except OSError:
+            pass
+        else:
+            assert_inspection_error(
+                lambda: inspect_artifact_dir(symlink_inside),
+                "artifact path is a symlink: manifest.json",
             )
 
     print("local review evaluation self-test ok")
