@@ -231,6 +231,19 @@ With `just`:
 just local-review-triage .storage/local_review/pr-123-456-1
 ```
 
+List saved artifact directories before choosing one to open:
+
+```bash
+python3 scripts/local_review_eval.py \
+  --inventory .storage/local_review
+```
+
+With `just`:
+
+```bash
+just local-review-inventory .storage/local_review
+```
+
 Inspection is read-only. It checks that `manifest.json` has the expected
 schema, status, artifact records, and deterministic summary; verifies every
 recorded sha256 in `checksums.txt`; rejects absolute or parent-directory
@@ -241,6 +254,14 @@ status, metadata keys, and error summary; it does not print the raw `pr.diff`
 or `review.md` contents. The `--triage` view keeps the same safety boundary and
 adds a short read order for `findings.jsonl`, `error.json`, manifest metadata,
 and workflow logs before anyone opens raw artifacts.
+
+The `--inventory` view scans only direct children of the supplied artifact root,
+verifies each artifact directory with the same inspection checks, and prints a
+small index with state, finding count, diff byte count, run id, safe first files,
+metadata keys, and raw artifact file names when present. It does not print raw
+`pr.diff` or `review.md` contents. If any root entry is not a directory, is a
+symlink, or fails artifact inspection, the inventory still shows the verified
+directories and exits non-zero with the invalid entry reasons.
 
 The operational workflow stores local review artifacts under
 `.storage/local_review/pr-<number>-<run-id>-<run-attempt>` and uploads that

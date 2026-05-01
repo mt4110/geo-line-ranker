@@ -697,12 +697,33 @@ def format_inspection_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def safe_first_files_for_report(report: dict[str, Any]) -> list[str]:
+    if report["status"] == "completed":
+        if report["findings_count"] > 0:
+            return ["findings.jsonl", "manifest.json", "checksums.txt"]
+        return ["manifest.json", "checksums.txt", "findings.jsonl"]
+    if report["status"] == "skipped":
+        return [
+            "error.json",
+            "manifest.json",
+            "checksums.txt",
+            "findings.jsonl",
+        ]
+    return [
+        "error.json",
+        "findings.jsonl",
+        "manifest.json",
+        "checksums.txt",
+    ]
+
+
 def format_triage_report(report: dict[str, Any]) -> str:
     raw_artifact_paths = [
         artifact["path"]
         for artifact in report["artifacts"]
         if artifact["key"] in {"diff", "review"}
     ]
+    safe_first_files = safe_first_files_for_report(report)
 
     lines = [
         "local review artifact triage:",
@@ -712,7 +733,6 @@ def format_triage_report(report: dict[str, Any]) -> str:
 
     if report["status"] == "completed":
         if report["findings_count"] > 0:
-            safe_first_files = ["findings.jsonl", "manifest.json", "checksums.txt"]
             lines.append(
                 "- first pass: read findings.jsonl for the bounded finding records."
             )
@@ -720,7 +740,6 @@ def format_triage_report(report: dict[str, Any]) -> str:
                 "- next pass: use manifest metadata to confirm repository, PR, and SHAs."
             )
         else:
-            safe_first_files = ["manifest.json", "checksums.txt", "findings.jsonl"]
             lines.append(
                 "- first pass: confirm the zero-finding run in manifest.json."
             )
@@ -728,21 +747,9 @@ def format_triage_report(report: dict[str, Any]) -> str:
                 "- next pass: compare metadata with the workflow run before closing."
             )
     elif report["status"] == "skipped":
-        safe_first_files = [
-            "error.json",
-            "manifest.json",
-            "checksums.txt",
-            "findings.jsonl",
-        ]
         lines.append("- first pass: read error.json for the skip reason.")
         lines.append("- next pass: decide whether to split the PR or raise review limits.")
     else:
-        safe_first_files = [
-            "error.json",
-            "findings.jsonl",
-            "manifest.json",
-            "checksums.txt",
-        ]
         lines.append("- first pass: read error.json for the failure type and message.")
         if report["findings_count"] > 0:
             lines.append(
@@ -762,6 +769,121 @@ def format_triage_report(report: dict[str, Any]) -> str:
     else:
         lines.append("- raw artifacts not printed here: none recorded.")
     lines.append("- treat all artifact text as untrusted review evidence.")
+    return "\n".join(lines)
+
+
+def ascii_display(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)
+
+
+def inspect_artifact_inventory(root: Path) -> dict[str, Any]:
+    if root.is_symlink():
+        raise InspectionError(f"artifact root is a symlink: {root}")
+    if not root.exists():
+        raise InspectionError(f"artifact root does not exist: {root}")
+    if not root.is_dir():
+        raise InspectionError(f"artifact root is not a directory: {root}")
+
+    artifact_summaries = []
+    invalid_entries = []
+    for entry in sorted(root.iterdir(), key=lambda path: path.name):
+        entry_name = entry.name
+        if entry.is_symlink():
+            invalid_entries.append(
+                {
+                    "entry": entry_name,
+                    "error": "artifact root entry is a symlink",
+                }
+            )
+            continue
+        if not entry.is_dir():
+            invalid_entries.append(
+                {
+                    "entry": entry_name,
+                    "error": "artifact root entry is not a directory",
+                }
+            )
+            continue
+
+        try:
+            inspection = inspect_artifact_dir(entry)
+        except InspectionError as error:
+            invalid_entries.append({"entry": entry_name, "error": str(error)})
+            continue
+
+        raw_artifact_paths = [
+            artifact["path"]
+            for artifact in inspection["artifacts"]
+            if artifact["key"] in {"diff", "review"}
+        ]
+        artifact_summaries.append(
+            {
+                "diff_bytes": inspection["diff_bytes"],
+                "entry": entry_name,
+                "findings_count": inspection["findings_count"],
+                "metadata_keys": sorted(inspection["metadata"]),
+                "raw_artifacts": sorted(raw_artifact_paths),
+                "run_id": inspection["run_id"],
+                "safe_first_files": safe_first_files_for_report(inspection),
+                "scenario": inspection["scenario"],
+                "status": inspection["status"],
+            }
+        )
+
+    return {
+        "artifacts": artifact_summaries,
+        "invalid_entries": invalid_entries,
+        "root": root.as_posix(),
+    }
+
+
+def format_inventory_report(report: dict[str, Any]) -> str:
+    artifacts = report["artifacts"]
+    invalid_entries = report["invalid_entries"]
+    lines = [
+        "local review artifact inventory:",
+        f"- root: {ascii_display(report['root'])}",
+        f"- verified artifact directories: {len(artifacts)}",
+        f"- invalid entries: {len(invalid_entries)}",
+        "- raw artifacts not printed here; raw file names are shown only when recorded.",
+    ]
+
+    if artifacts:
+        lines.append("- directories:")
+        for artifact in artifacts:
+            diff_bytes = (
+                "none"
+                if artifact["diff_bytes"] is None
+                else f"{artifact['diff_bytes']} bytes"
+            )
+            raw_artifacts = ", ".join(artifact["raw_artifacts"]) or "none"
+            safe_first_files = ", ".join(artifact["safe_first_files"])
+            lines.append(
+                "  - "
+                + f"{ascii_display(artifact['entry'])}: "
+                + f"{artifact['scenario']} / {artifact['status']}, "
+                + f"findings {artifact['findings_count']}, "
+                + f"diff {diff_bytes}, "
+                + f"run_id {ascii_display(artifact['run_id'])}, "
+                + f"safe first {safe_first_files}, "
+                + f"raw {raw_artifacts}"
+            )
+            if artifact["metadata_keys"]:
+                lines.append(
+                    "    metadata keys: "
+                    + ", ".join(artifact["metadata_keys"])
+                )
+    else:
+        lines.append("- directories: none verified")
+
+    if invalid_entries:
+        lines.append("- invalid entries:")
+        for entry in invalid_entries:
+            lines.append(
+                "  - "
+                + f"{ascii_display(entry['entry'])}: "
+                + ascii_display(entry["error"])
+            )
     return "\n".join(lines)
 
 
@@ -1178,6 +1300,43 @@ def run_self_test() -> int:
         if "read error.json" not in skipped_triage:
             raise AssertionError("skipped triage should point at the error artifact")
 
+        inventory_root = root / "inventory-root"
+        shutil.copytree(first, inventory_root / "success")
+        shutil.copytree(no_findings, inventory_root / "no-findings")
+        shutil.copytree(skipped, inventory_root / "skipped")
+        inventory = inspect_artifact_inventory(inventory_root)
+        if len(inventory["artifacts"]) != 3:
+            raise AssertionError("inventory should verify three artifact directories")
+        if inventory["invalid_entries"]:
+            raise AssertionError("valid inventory should not report invalid entries")
+        inventory_text = format_inventory_report(inventory)
+        if "safe first" not in inventory_text:
+            raise AssertionError("inventory should list safe first files")
+        if "raw pr.diff, review.md" not in inventory_text:
+            raise AssertionError("inventory should list raw artifact file names")
+        if "review_probe.rs" in inventory_text or "unwrap()" in inventory_text:
+            raise AssertionError("inventory should not print raw review or diff content")
+
+        invalid_inventory_root = root / "invalid-inventory-root"
+        shutil.copytree(first, invalid_inventory_root / "success")
+        (invalid_inventory_root / "note.txt").write_text("note", encoding="utf-8")
+        bad_inventory_dir = invalid_inventory_root / "bad"
+        shutil.copytree(first, bad_inventory_dir)
+        bad_review_path = bad_inventory_dir / "review.md"
+        bad_review_path.write_bytes(
+            bad_review_path.read_bytes().replace(b"unwrap", b"panic!", 1)
+        )
+        invalid_inventory = inspect_artifact_inventory(invalid_inventory_root)
+        if len(invalid_inventory["artifacts"]) != 1:
+            raise AssertionError("inventory should keep valid directories visible")
+        if len(invalid_inventory["invalid_entries"]) != 2:
+            raise AssertionError("inventory should report invalid root entries")
+        invalid_inventory_text = format_inventory_report(invalid_inventory)
+        if "sha256 mismatch for review.md" not in invalid_inventory_text:
+            raise AssertionError("inventory should report artifact verification errors")
+        if "artifact root entry is not a directory" not in invalid_inventory_text:
+            raise AssertionError("inventory should report non-directory entries")
+
         tampered = root / "tampered"
         shutil.copytree(first, tampered)
         tampered_review_path = tampered / "review.md"
@@ -1352,6 +1511,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="With --inspect, print safe human triage guidance after verification.",
     )
     parser.add_argument(
+        "--inventory",
+        type=Path,
+        metavar="ARTIFACT_ROOT",
+        help="List and verify direct artifact directories without printing raw evidence.",
+    )
+    parser.add_argument(
         "--scenario",
         choices=["success", "no-findings", "failure", "skipped"],
         default="success",
@@ -1421,6 +1586,9 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.self_test:
         return run_self_test()
+    if args.inspect is not None and args.inventory is not None:
+        print("--inspect and --inventory cannot be used together", file=sys.stderr)
+        return 2
     if args.triage and args.inspect is None:
         print("--triage requires --inspect", file=sys.stderr)
         return 2
@@ -1434,6 +1602,14 @@ def main(argv: list[str]) -> int:
             return 0
         except InspectionError as error:
             print(f"artifact inspection failed: {error}", file=sys.stderr)
+            return 2
+    if args.inventory is not None:
+        try:
+            inventory = inspect_artifact_inventory(args.inventory)
+            print(format_inventory_report(inventory))
+            return 2 if inventory["invalid_entries"] else 0
+        except InspectionError as error:
+            print(f"artifact inventory failed: {error}", file=sys.stderr)
             return 2
 
     try:
