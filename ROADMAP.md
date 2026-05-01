@@ -11,24 +11,25 @@
   - keep AI / ML / embeddings / vector search out of the system
   - keep PostgreSQL/PostGIS as the reference implementation, Redis as cache only, and OpenSearch as optional candidate retrieval only
 
-- v0.2.14 first-run sample guide
-  - add a focused first-15-minutes contributor/operator guide before expanding command runbooks
-  - make the default sample easier to inspect without changing public API shape, ranking semantics, database schema, or OpenAPI
-  - connect README, docs index, and Quickstart to the same first-run path
-  - add a small touch map for common change types and safe review boundaries
+- v0.2.15 docs index audience alignment
+  - make `docs/README.md` the routing map by audience and task
+  - keep `docs/FIRST_15_MINUTES.md` focused on the first-run sequence and first success state
+  - show new contributors, operators, maintainers, profile authors, and connector authors what to read first and next
+  - keep README and Quickstart as orientation and command-runbook docs rather than expanding them into optional evidence or full-mode gates
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
   - keep optional evidence handoff as review inventory and handoff support only, not a fixed gate
   - keep OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
   - keep public API shape unchanged
 
-## v0.2.14 Exit Gates
+## v0.2.15 Exit Gates
 
-- `ROADMAP.md` names v0.2.14 first-run sample guide as current and moves v0.2.13 post-onboarding design alignment into Recently Completed.
-- `README.md`, `docs/README.md`, and `docs/QUICKSTART.md` point first-time contributors and operators to `docs/FIRST_15_MINUTES.md`.
-- `docs/FIRST_15_MINUTES.md` explains what to read, what to run, what success looks like, where to inspect the default sample, and where to go next.
-- The default sample guide keeps `storage/fixtures/minimal/` and `examples/import/events.sample.csv` distinct.
-- The touch map points common change types to bounded code/docs areas without changing implementation ownership.
+- `ROADMAP.md` names v0.2.15 docs index audience alignment as current and moves v0.2.14 first-run sample guide into Recently Completed.
+- `docs/README.md` routes new contributors, operators, maintainers, profile authors, and connector authors to clear first and next docs.
+- `docs/README.md` also routes common tasks to the right docs without duplicating the first-run sequence from `docs/FIRST_15_MINUTES.md`.
+- `docs/QUICKSTART.md`, `docs/CONTRIBUTING_LOCAL.md`, `docs/TESTING.md`, `docs/PROFILE_PACKS.md`, and `docs/DATA_SOURCES.md` point back to the right audience/task docs without becoming duplicate indexes.
+- `docs/FIRST_15_MINUTES.md` remains the focused first-run guide for what to read, what to run, what success looks like, and where to inspect the default sample.
+- README docs links continue to point readers toward the first-run guide and the audience/task documentation index.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
@@ -43,6 +44,16 @@
 
 ## Recently Completed
 
+- v0.2.14 first-run sample guide
+  - added a focused first-15-minutes contributor/operator guide before expanding command runbooks
+  - made the default sample easier to inspect without changing public API shape, ranking semantics, database schema, or OpenAPI
+  - connected README, docs index, and Quickstart to the same first-run path
+  - added a small touch map for common change types and safe review boundaries
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept optional evidence handoff as review inventory and handoff support only, not a fixed gate
+  - kept OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
+  - kept public API shape unchanged
 - v0.2.13 post-onboarding design alignment
   - confirmed the v0.2.12 onboarding polish left `ROADMAP.md`, public docs, and `docs/design_document` in the same operating story
   - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
@@ -240,12 +251,13 @@
 
 ## Next
 
-- After v0.2.14 first-run sample guide
+- After v0.2.15 docs index audience alignment
   - keep the first-run guide small as more contributor docs are added
+  - keep the docs index useful as a routing map rather than turning it into a second runbook
   - consider docs link checking only as a contributor UX improvement, not as a new public-MVP gate
-  - keep README and Quickstart as orientation and command-runbook docs rather than expanding them into optional evidence or full-mode gates
+  - add deeper profile-author and connector-author docs only when the underlying workflows change
   - keep public docs and non-engineer design docs aligned when the next sample or onboarding improvement lands
-- Later hardening after v0.2.14
+- Later hardening after v0.2.15
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

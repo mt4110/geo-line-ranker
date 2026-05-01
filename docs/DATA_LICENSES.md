@@ -1,6 +1,7 @@
 # Data Licenses
 
-This repository ships only small demo fixtures for the Phase 2 adapter flow.
+This repository ships only small demo fixtures for adapter, import, and
+quickstart flows.
 
 ## Repository fixtures
 

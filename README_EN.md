@@ -44,33 +44,35 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 
 For the first 15 minutes, read
 [docs/FIRST_15_MINUTES.md](docs/FIRST_15_MINUTES.md). The canonical local
-runbook lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+runbook lives in [docs/QUICKSTART.md](docs/QUICKSTART.md). The first run should
+stay on the public-MVP path: SQL-only candidate retrieval, `event-csv`
+operational content, PostgreSQL/PostGIS, and Redis. OpenSearch, full mode, live
+crawler operation, and managed infrastructure are optional follow-on paths, not
+fixed gates.
 
-Minimal SQL-only loop:
+Shortest local path:
 
 ```bash
 cp .env.example .env
 docker compose -f .docker/docker-compose.yaml up -d postgres redis
 cargo run -p cli -- migrate
 cargo run -p cli -- seed example
+cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
+
+# terminal A
 cargo run -p worker -- serve
+
+# terminal B
 cargo run -p api -- serve
 ```
 
-Useful next steps:
+First success means Swagger UI opens, `POST /v1/recommendations` returns
+non-empty `items` with score and explanation fields, `POST /v1/track` accepts a
+behavior event, and the `event-csv` import leaves an audit trail in PostgreSQL.
 
-```bash
-cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
-cargo run -p crawler -- doctor --manifest configs/crawler/sources/custom_example.yaml
-cargo run -p crawler -- fetch --manifest configs/crawler/sources/custom_example.yaml
-cargo run -p crawler -- parse --manifest configs/crawler/sources/custom_example.yaml
-cargo run -p cli -- jobs list --limit 20
-./scripts/post_launch_doctor.sh
-./scripts/data_quality_doctor.sh
-./scripts/release_readiness.sh
-```
-
-The demo fixture now includes the committed real-domain crawl schools, and `crawler -- serve` auto-runs only manifests marked `source_maturity = live_ready`. For full mode, projection sync, the real-domain crawler manifests, and worker job recovery, use [docs/QUICKSTART.md](docs/QUICKSTART.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
+For crawler commands, full mode, projection sync, worker job recovery, and
+post-launch doctor routines, use [docs/QUICKSTART.md](docs/QUICKSTART.md) and
+[docs/OPERATIONS.md](docs/OPERATIONS.md) after the baseline path works.
 
 Sample recommendation request:
 
@@ -90,6 +92,9 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 
 ## Example response shape
 
+This is a field-shape example. Scores and event titles can vary with fixtures,
+imports, and config.
+
 ```json
 {
   "items": [
@@ -99,24 +104,37 @@ curl -X POST http://127.0.0.1:4000/v1/track \
       "school_id": "school_seaside",
       "school_name": "Seaside High",
       "event_id": "event_seaside_open",
-      "event_title": "Seaside Open Campus",
+      "event_title": "Seaside Open Campus Spring",
       "primary_station_id": "st_tamachi",
       "primary_station_name": "Tamachi",
       "line_name": "JR Yamanote Line",
       "score": 6.41,
-      "explanation": "直結条件 と 注目イベント が効き、直結条件のイベント候補として上位になりました。",
+      "explanation": "沿線一致 と 注目イベント が効き、同一路線のイベント候補として上位になりました。",
       "score_breakdown": [
         {
-          "feature": "direct_station_bonus",
-          "value": 3.0,
-          "reason": "Tamachi に直結しています。"
+          "feature": "line_match_bonus",
+          "reason_code": "geo.line_match",
+          "value": 1.25,
+          "reason": "JR Yamanote Line 沿線の候補です。"
         }
-      ]
+      ],
+      "fallback_stage": "same_line"
     }
   ],
-  "explanation": "ホームでは Tamachi 直結の候補群 を母集団にし、直結条件 と 注目イベント を効かせて決定論的に順位付けしました。 多様性上限で同一学校1件を抑制し、3件の表示枠に整えています。",
+  "explanation": "ホームでは JR Yamanote Line 沿線の候補群 を母集団にし、沿線一致 と 注目イベント を効かせて決定論的に順位付けしました。 多様性上限で同一学校1件を抑制し、3件の表示枠に整えています。",
   "score_breakdown": [],
-  "fallback_stage": "strict",
+  "fallback_stage": "same_line",
+  "candidate_counts": {
+    "strict_station": 0,
+    "same_line": 5,
+    "same_city": 2
+  },
+  "context": {
+    "context_source": "request_line",
+    "confidence": 0.95,
+    "privacy_level": "coarse_area",
+    "warnings": []
+  },
   "profile_version": "phase5-profile-version",
   "algorithm_version": "phase8-policy-diversity-v1"
 }
@@ -125,7 +143,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 ## Docs
 
 - [Japanese README](README.md)
-- [Documentation Index](docs/README.md)
+- [Documentation Index](docs/README.md): audience and task map
 - [Non-engineer Friendly Design Docs](docs/design_document/README_JA.md)
 - [Contributor Rules](AGENTS.md)
 - [First 15 Minutes](docs/FIRST_15_MINUTES.md)

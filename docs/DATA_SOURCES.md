@@ -1,6 +1,14 @@
 # Data Sources
 
-Phase 2 adds adapter paths for four Japanese public data families. Phase 6 adds an optional allowlist crawler path for supplemental event data.
+This repository includes adapter paths for four Japanese public data families
+and an optional allowlist crawler path for supplemental event data.
+
+Connector authors should start here, then read [Data Licenses](DATA_LICENSES.md)
+before changing source manifests, adapters, crawler manifests, or upstream-data
+handling. Use [Documentation Index](README.md) when choosing a broader audience
+or task path, and [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md)
+when optional crawler or full-mode evidence needs review without widening the
+fixed public-MVP gate.
 
 ## Covered sources
 
