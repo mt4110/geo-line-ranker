@@ -776,6 +776,31 @@ def ascii_display(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
+def safe_inventory_error(error: InspectionError) -> str:
+    message = str(error)
+    prefix_summaries = [
+        ("artifact directory contains unexpected entries:", "unexpected artifact entries"),
+        ("artifact path is a symlink:", "artifact path is a symlink"),
+        ("artifact path is not a file:", "artifact path is not a file"),
+        ("checksum mismatch for", "checksum mismatch"),
+        ("checksums.txt contains unexpected paths:", "unexpected checksum paths"),
+        ("checksums.txt duplicates", "duplicate checksum path"),
+        ("checksums.txt is missing", "missing checksum path"),
+        ("completed artifacts must include", "missing completed artifact"),
+        ("missing artifact file:", "missing artifact file"),
+        ("sha256 mismatch for", "sha256 mismatch"),
+        ("unsupported scenario:", "unsupported scenario"),
+        ("unsupported schema_version", "unsupported schema_version"),
+        ("unsupported status:", "unsupported status"),
+    ]
+    for prefix, summary in prefix_summaries:
+        if message.startswith(prefix):
+            return summary
+    if " must " in message:
+        return message.split(" must ", 1)[0] + " is invalid"
+    return "artifact inspection failed"
+
+
 def inspect_artifact_inventory(root: Path) -> dict[str, Any]:
     if root.is_symlink():
         raise InspectionError(f"artifact root is a symlink: {root}")
@@ -808,7 +833,12 @@ def inspect_artifact_inventory(root: Path) -> dict[str, Any]:
         try:
             inspection = inspect_artifact_dir(entry)
         except InspectionError as error:
-            invalid_entries.append({"entry": entry_name, "error": str(error)})
+            invalid_entries.append(
+                {
+                    "entry": entry_name,
+                    "error": safe_inventory_error(error),
+                }
+            )
             continue
 
         raw_artifact_paths = [
@@ -1332,10 +1362,30 @@ def run_self_test() -> int:
         if len(invalid_inventory["invalid_entries"]) != 2:
             raise AssertionError("inventory should report invalid root entries")
         invalid_inventory_text = format_inventory_report(invalid_inventory)
-        if "sha256 mismatch for review.md" not in invalid_inventory_text:
+        if "sha256 mismatch" not in invalid_inventory_text:
             raise AssertionError("inventory should report artifact verification errors")
         if "artifact root entry is not a directory" not in invalid_inventory_text:
             raise AssertionError("inventory should report non-directory entries")
+
+        untrusted_error_inventory_root = root / "untrusted-error-inventory-root"
+        bad_manifest_dir = untrusted_error_inventory_root / "bad-manifest"
+        shutil.copytree(first, bad_manifest_dir)
+        bad_manifest_path = bad_manifest_dir / "manifest.json"
+        bad_manifest = json.loads(bad_manifest_path.read_text(encoding="utf-8"))
+        bad_manifest["scenario"] = "bad " + SAMPLE_REVIEW
+        bad_manifest_path.write_text(
+            json.dumps(bad_manifest, ensure_ascii=True, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        untrusted_error_inventory = inspect_artifact_inventory(
+            untrusted_error_inventory_root
+        )
+        untrusted_error_text = format_inventory_report(untrusted_error_inventory)
+        if "unsupported scenario" not in untrusted_error_text:
+            raise AssertionError("inventory should keep a safe invalid reason")
+        if "review_probe.rs" in untrusted_error_text or "unwrap()" in untrusted_error_text:
+            raise AssertionError("inventory should not echo untrusted manifest values")
 
         tampered = root / "tampered"
         shutil.copytree(first, tampered)

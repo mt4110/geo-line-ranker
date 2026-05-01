@@ -261,7 +261,8 @@ small index with state, finding count, diff byte count, run id, safe first files
 metadata keys, and raw artifact file names when present. It does not print raw
 `pr.diff` or `review.md` contents. If any root entry is not a directory, is a
 symlink, or fails artifact inspection, the inventory still shows the verified
-directories and exits non-zero with the invalid entry reasons.
+directories and exits non-zero with summarized invalid entry reasons so
+untrusted manifest values are not echoed into the first-pass index.
 
 The operational workflow stores local review artifacts under
 `.storage/local_review/pr-<number>-<run-id>-<run-attempt>` and uploads that
