@@ -1,5 +1,20 @@
 set dotenv-load := true
 
+setup:
+  ./scripts/contributor_setup.sh
+
+dev:
+  ./scripts/contributor_dev.sh
+
+smoke:
+  ./scripts/contributor_smoke.sh
+
+docs:
+  ./scripts/docs_check.sh
+
+eval:
+  ./scripts/contributor_eval.sh
+
 fmt:
   cargo fmt --all
 

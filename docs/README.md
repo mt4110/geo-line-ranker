@@ -13,6 +13,18 @@ audience and task. For the actual first-run sequence, use
 | This index | Choosing the next document by audience or by task after the first-run guide. |
 | [Quickstart](QUICKSTART.md) | Command-by-command local runbook for the SQL-only public-MVP path and optional follow-on paths. |
 
+## Contributor Commands
+
+Run these from the repository root after reading the first-run path:
+
+| Command | Use it for |
+|---|---|
+| `just setup` | Create `.env` if needed, start PostgreSQL/Redis, migrate, seed the default sample, and import the operational `event-csv` sample. |
+| `just dev` | Start the worker and API together for local development after setup. |
+| `just smoke` | Run read-only SQL-only contributor smoke checks for configs, source manifests, the default fixture, crawler manifests, and whitespace. |
+| `just docs` | Check required docs files and local Markdown links. This is contributor tooling, not a public-MVP gate. |
+| `just eval` | Run the offline local review evaluation self-test. Set `RUN_REPLAY_EVAL=1` after capturing recommendation traces to include replay evaluation. |
+
 ## Choose By Audience
 
 | Audience | Read first | Read next |
@@ -27,8 +39,10 @@ audience and task. For the actual first-run sequence, use
 
 | Task | Start here | Then check |
 |---|---|---|
-| Run the baseline locally | [First 15 Minutes](FIRST_15_MINUTES.md) | [Quickstart](QUICKSTART.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
-| Make a bounded code change | [Local Contributing Guide](CONTRIBUTING_LOCAL.md) | [Testing](TESTING.md), [Architecture](ARCHITECTURE.md) |
+| Run the baseline locally | [First 15 Minutes](FIRST_15_MINUTES.md), then `just setup` and `just dev` | [Quickstart](QUICKSTART.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
+| Make a bounded code change | [Local Contributing Guide](CONTRIBUTING_LOCAL.md), then `just smoke` | [Testing](TESTING.md), [Architecture](ARCHITECTURE.md) |
+| Check docs routing | `just docs` | [First 15 Minutes](FIRST_15_MINUTES.md), [Quickstart](QUICKSTART.md), [Testing](TESTING.md) |
+| Run local evaluation tooling | `just eval` | [Testing](TESTING.md), [Operations](OPERATIONS.md) |
 | Change ranking scores, reasons, or fallback behavior | [Reason Catalog](REASON_CATALOG.md) | [Architecture](ARCHITECTURE.md), [Testing](TESTING.md), [Versioning](VERSIONING.md) |
 | Change public API fields | [API Spec](../API_SPEC.md) | [Versioning](VERSIONING.md), [Deprecation Policy](DEPRECATION_POLICY.md), [Testing](TESTING.md) |
 | Run or review the fixed public-MVP gate | [MVP Acceptance](MVP_ACCEPTANCE.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Testing](TESTING.md) |

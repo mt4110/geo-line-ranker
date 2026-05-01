@@ -40,14 +40,24 @@ fixed gate.
 Run the narrow local path from the repository root:
 
 ```bash
+just setup
+```
+
+Then start the runtime:
+
+```bash
+just dev
+```
+
+If you do not have `just`, use the equivalent commands:
+
+```bash
 cp .env.example .env
 docker compose -f .docker/docker-compose.yaml up -d postgres redis
 cargo run -p cli -- migrate
 cargo run -p cli -- seed example
 cargo run -p cli -- import event-csv --file examples/import/events.sample.csv
 ```
-
-Then start the runtime:
 
 ```bash
 # terminal A
@@ -125,6 +135,9 @@ placements, track one user event, and choose the next document.
 | `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis | First run, fixed acceptance, release candidate baseline | Yes |
 | `just mvp-acceptance` | Fixed six-case public-MVP gate | Yes |
 | `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` | Strict release and post-MVP evidence capture | Evidence, not one of the six fixed cases |
+| `just smoke` | Read-only contributor smoke for configs, manifests, default fixture, crawler manifests, and whitespace | No |
+| `just docs` | Required docs file and local Markdown link check | No |
+| `just eval` | Offline local review evaluation self-test, with optional replay evaluation when traces exist | No |
 | JP demo imports | Adapter and source parser development | No |
 | allowlist crawler | Reviewed source experiments and parser work | No |
 | `full` mode + OpenSearch | Optional candidate-retrieval evaluation | No |
