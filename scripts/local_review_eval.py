@@ -366,27 +366,30 @@ def parse_checksums(out_dir: Path) -> dict[str, str]:
         raise InspectionError("artifact path is not a file: checksums.txt")
 
     checksums: dict[str, str] = {}
-    with checksum_path.open("r", encoding="utf-8") as checksum_file:
-        for line_number, raw_line in enumerate(checksum_file, start=1):
-            line = raw_line.rstrip("\r\n")
-            if not line:
-                raise InspectionError(f"checksums.txt:{line_number} is blank")
-            if "  " not in line:
-                raise InspectionError(
-                    f"checksums.txt:{line_number} must use '<sha256>  <path>'"
+    try:
+        with checksum_path.open("r", encoding="utf-8") as checksum_file:
+            for line_number, raw_line in enumerate(checksum_file, start=1):
+                line = raw_line.rstrip("\r\n")
+                if not line:
+                    raise InspectionError(f"checksums.txt:{line_number} is blank")
+                if "  " not in line:
+                    raise InspectionError(
+                        f"checksums.txt:{line_number} must use '<sha256>  <path>'"
+                    )
+                digest, raw_path = line.split("  ", 1)
+                if CHECKSUM_RE.fullmatch(digest) is None:
+                    raise InspectionError(
+                        f"checksums.txt:{line_number} has an invalid sha256 digest"
+                    )
+                relative_path = safe_relative_artifact_path(
+                    raw_path,
+                    f"checksums.txt:{line_number}",
                 )
-            digest, raw_path = line.split("  ", 1)
-            if CHECKSUM_RE.fullmatch(digest) is None:
-                raise InspectionError(
-                    f"checksums.txt:{line_number} has an invalid sha256 digest"
-                )
-            relative_path = safe_relative_artifact_path(
-                raw_path,
-                f"checksums.txt:{line_number}",
-            )
-            if relative_path in checksums:
-                raise InspectionError(f"checksums.txt duplicates {relative_path}")
-            checksums[relative_path] = digest
+                if relative_path in checksums:
+                    raise InspectionError(f"checksums.txt duplicates {relative_path}")
+                checksums[relative_path] = digest
+    except UnicodeDecodeError as error:
+        raise InspectionError("checksums.txt is not valid UTF-8") from error
 
     if not checksums:
         raise InspectionError("checksums.txt must contain at least manifest.json")
@@ -407,20 +410,25 @@ def read_findings_count(out_dir: Path, raw_path: str) -> int:
         raise InspectionError(f"artifact path is not a file: {relative_path}")
 
     count = 0
-    with findings_path.open("r", encoding="utf-8") as findings_file:
-        for line_number, raw_line in enumerate(findings_file, start=1):
-            line = raw_line.rstrip("\r\n")
-            if not line:
-                raise InspectionError(f"findings.jsonl:{line_number} is blank")
-            try:
-                finding = json.loads(line)
-            except json.JSONDecodeError as error:
-                raise InspectionError(
-                    f"findings.jsonl:{line_number} is not valid JSON: {error.msg}"
-                ) from error
-            if not isinstance(finding, dict):
-                raise InspectionError(f"findings.jsonl:{line_number} must be an object")
-            count += 1
+    try:
+        with findings_path.open("r", encoding="utf-8") as findings_file:
+            for line_number, raw_line in enumerate(findings_file, start=1):
+                line = raw_line.rstrip("\r\n")
+                if not line:
+                    raise InspectionError(f"findings.jsonl:{line_number} is blank")
+                try:
+                    finding = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise InspectionError(
+                        f"findings.jsonl:{line_number} is not valid JSON: {error.msg}"
+                    ) from error
+                if not isinstance(finding, dict):
+                    raise InspectionError(
+                        f"findings.jsonl:{line_number} must be an object"
+                    )
+                count += 1
+    except UnicodeDecodeError as error:
+        raise InspectionError(f"{relative_path} is not valid UTF-8") from error
     return count
 
 
@@ -1225,6 +1233,22 @@ def run_self_test() -> int:
         assert_inspection_error(
             lambda: inspect_artifact_dir(checksum_directory),
             "artifact path is not a file: checksums.txt",
+        )
+
+        invalid_utf8_checksums = root / "invalid-utf8-checksums"
+        invalid_utf8_checksums.mkdir()
+        (invalid_utf8_checksums / "checksums.txt").write_bytes(b"\xff")
+        assert_inspection_error(
+            lambda: parse_checksums(invalid_utf8_checksums),
+            "checksums.txt is not valid UTF-8",
+        )
+
+        invalid_utf8_findings = root / "invalid-utf8-findings"
+        invalid_utf8_findings.mkdir()
+        (invalid_utf8_findings / "findings.jsonl").write_bytes(b"\xff")
+        assert_inspection_error(
+            lambda: read_findings_count(invalid_utf8_findings, "findings.jsonl"),
+            "findings.jsonl is not valid UTF-8",
         )
 
     print("local review evaluation self-test ok")
