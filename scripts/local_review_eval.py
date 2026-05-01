@@ -796,8 +796,6 @@ def safe_inventory_error(error: InspectionError) -> str:
     for prefix, summary in prefix_summaries:
         if message.startswith(prefix):
             return summary
-    if " must " in message:
-        return message.split(" must ", 1)[0] + " is invalid"
     return "artifact inspection failed"
 
 
@@ -1389,6 +1387,11 @@ def run_self_test() -> int:
             raise AssertionError("inventory should keep a safe invalid reason")
         if "review_probe.rs" in untrusted_error_text or "unwrap()" in untrusted_error_text:
             raise AssertionError("inventory should not echo untrusted manifest values")
+        metadata_key_error = safe_inventory_error(
+            InspectionError("metadata.review_probe.rs must be a string")
+        )
+        if metadata_key_error != "artifact inspection failed":
+            raise AssertionError("inventory should not echo untrusted metadata keys")
 
         tampered = root / "tampered"
         shutil.copytree(first, tampered)
