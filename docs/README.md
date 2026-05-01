@@ -6,6 +6,9 @@ Start here when choosing what to read next.
 
 - [Project README](../README.md): project orientation, shortest local path,
   default sample summary, and first success state.
+- [First 15 Minutes](FIRST_15_MINUTES.md): first reading path, baseline
+  commands, default sample inspection, optional-vs-fixed boundary, and touch
+  map.
 - [Quickstart](QUICKSTART.md): command-by-command local runbook for first-time
   operators.
 - [MVP Acceptance](MVP_ACCEPTANCE.md): fixed public-MVP gate for `sql_only` +
@@ -18,6 +21,8 @@ Start here when choosing what to read next.
 
 - [Quickstart](QUICKSTART.md): first-time SQL-only loop, default sample, and
   demo commands.
+- [First 15 Minutes](FIRST_15_MINUTES.md): short contributor/operator guide for
+  the first local success state and safe change boundaries.
 - [Local Contributing Guide](CONTRIBUTING_LOCAL.md): validation commands, database modes, and contributor workflow.
 - [Testing](TESTING.md): unit, integration, compatibility, and release-gate checks.
 

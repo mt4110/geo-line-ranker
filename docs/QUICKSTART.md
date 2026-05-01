@@ -3,6 +3,10 @@
 This is the canonical local runbook for the repository. `README.md` stays as
 the shorter project overview.
 
+If you are new to the project, read
+[FIRST_15_MINUTES.md](FIRST_15_MINUTES.md) first for the reading order, default
+sample inspection points, fixed-vs-optional boundary, and touch map.
+
 First-time operators should start with the SQL-only public-MVP path:
 PostgreSQL/PostGIS, Redis, the committed default sample, and the operational
 `event-csv` import. For the fixed release gate, use
