@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# cspell:ignore gsub
 
 read_env_candidate_mode() {
   local env_file="${1:-.env}"
