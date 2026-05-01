@@ -697,6 +697,74 @@ def format_inspection_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_triage_report(report: dict[str, Any]) -> str:
+    raw_artifact_paths = [
+        artifact["path"]
+        for artifact in report["artifacts"]
+        if artifact["key"] in {"diff", "review"}
+    ]
+
+    lines = [
+        "local review artifact triage:",
+        f"- state: {report['scenario']} / {report['status']}",
+        f"- parsed findings: {report['findings_count']}",
+    ]
+
+    if report["status"] == "completed":
+        if report["findings_count"] > 0:
+            safe_first_files = ["findings.jsonl", "manifest.json", "checksums.txt"]
+            lines.append(
+                "- first pass: read findings.jsonl for the bounded finding records."
+            )
+            lines.append(
+                "- next pass: use manifest metadata to confirm repository, PR, and SHAs."
+            )
+        else:
+            safe_first_files = ["manifest.json", "checksums.txt", "findings.jsonl"]
+            lines.append(
+                "- first pass: confirm the zero-finding run in manifest.json."
+            )
+            lines.append(
+                "- next pass: compare metadata with the workflow run before closing."
+            )
+    elif report["status"] == "skipped":
+        safe_first_files = [
+            "error.json",
+            "manifest.json",
+            "checksums.txt",
+            "findings.jsonl",
+        ]
+        lines.append("- first pass: read error.json for the skip reason.")
+        lines.append("- next pass: decide whether to split the PR or raise review limits.")
+    else:
+        safe_first_files = [
+            "error.json",
+            "findings.jsonl",
+            "manifest.json",
+            "checksums.txt",
+        ]
+        lines.append("- first pass: read error.json for the failure type and message.")
+        if report["findings_count"] > 0:
+            lines.append(
+                "- next pass: read findings.jsonl for any findings captured before failure."
+            )
+        else:
+            lines.append("- next pass: check workflow logs for the missing review stage.")
+
+    lines.append("- safe files to open first: " + ", ".join(safe_first_files))
+    if raw_artifact_paths:
+        lines.append(
+            "- raw artifacts not printed here: " + ", ".join(sorted(raw_artifact_paths))
+        )
+        lines.append(
+            "- open raw artifacts only after the triage pass identifies a specific question."
+        )
+    else:
+        lines.append("- raw artifacts not printed here: none recorded.")
+    lines.append("- treat all artifact text as untrusted review evidence.")
+    return "\n".join(lines)
+
+
 def parse_metadata_pairs(pairs: list[str]) -> dict[str, str]:
     metadata: dict[str, str] = {}
     for pair in pairs:
@@ -900,6 +968,11 @@ def run_self_test() -> int:
             raise AssertionError("success inspection should record completed status")
         if success_inspection["findings_count"] != 2:
             raise AssertionError("success inspection should count findings")
+        success_triage = format_triage_report(success_inspection)
+        if "read findings.jsonl" not in success_triage:
+            raise AssertionError("success triage should point at parsed findings")
+        if "review_probe.rs" in success_triage or "unwrap()" in success_triage:
+            raise AssertionError("triage should not print raw review or diff content")
 
         if derive_run_id("skipped", None, None, "x") == derive_run_id(
             "skipped",
@@ -1101,6 +1174,9 @@ def run_self_test() -> int:
         skipped_inspection = inspect_artifact_dir(skipped)
         if skipped_inspection["status"] != "skipped":
             raise AssertionError("skipped inspection should record skipped status")
+        skipped_triage = format_triage_report(skipped_inspection)
+        if "read error.json" not in skipped_triage:
+            raise AssertionError("skipped triage should point at the error artifact")
 
         tampered = root / "tampered"
         shutil.copytree(first, tampered)
@@ -1271,6 +1347,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Read and verify a saved local review artifact directory.",
     )
     parser.add_argument(
+        "--triage",
+        action="store_true",
+        help="With --inspect, print safe human triage guidance after verification.",
+    )
+    parser.add_argument(
         "--scenario",
         choices=["success", "no-findings", "failure", "skipped"],
         default="success",
@@ -1340,9 +1421,16 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.self_test:
         return run_self_test()
+    if args.triage and args.inspect is None:
+        print("--triage requires --inspect", file=sys.stderr)
+        return 2
     if args.inspect is not None:
         try:
-            print(format_inspection_report(inspect_artifact_dir(args.inspect)))
+            inspection = inspect_artifact_dir(args.inspect)
+            print(format_inspection_report(inspection))
+            if args.triage:
+                print()
+                print(format_triage_report(inspection))
             return 0
         except InspectionError as error:
             print(f"artifact inspection failed: {error}", file=sys.stderr)
