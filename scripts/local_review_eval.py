@@ -873,6 +873,7 @@ def format_inventory_report(report: dict[str, Any]) -> str:
     lines = [
         "local review artifact inventory:",
         f"- root: {ascii_display(report['root'])}",
+        "- purpose: read-only first-pass index for human handoff; not a validation gate.",
         f"- verified artifact directories: {len(artifacts)}",
         f"- invalid entries: {len(invalid_entries)}",
         "- raw artifacts not printed here; raw file names are shown only when recorded.",
@@ -1340,6 +1341,8 @@ def run_self_test() -> int:
         if inventory["invalid_entries"]:
             raise AssertionError("valid inventory should not report invalid entries")
         inventory_text = format_inventory_report(inventory)
+        if "not a validation gate" not in inventory_text:
+            raise AssertionError("inventory should state its non-gate purpose")
         if "safe first" not in inventory_text:
             raise AssertionError("inventory should list safe first files")
         if "raw pr.diff, review.md" not in inventory_text:
