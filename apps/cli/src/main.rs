@@ -404,11 +404,19 @@ async fn main() -> anyhow::Result<()> {
                     profile_id.as_deref().or(env_profile_id.as_deref()),
                     DEFAULT_PROFILE_ID,
                 )?;
+                let fixture_set_id = config::env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
                 let manifest_path = registry.manifest_path_for_profile_id(&profile_id)?;
+                let runtime_selection =
+                    registry.runtime_selection(&profile_id, fixture_set_id.as_deref())?;
                 let (manifest, lint_file) = load_and_lint_profile_pack_file(&manifest_path)?;
                 println!(
                     "{}",
-                    format_profile_inspect_summary(&manifest_path, &manifest, &lint_file)
+                    format_profile_inspect_summary(
+                        &manifest_path,
+                        &manifest,
+                        &lint_file,
+                        &runtime_selection
+                    )
                 );
             }
         },
@@ -630,6 +638,7 @@ fn format_profile_inspect_summary(
     manifest_path: &Path,
     manifest: &ProfilePackManifest,
     lint_file: &ProfilePackLintFile,
+    runtime_selection: &config::ProfilePackRuntimeSelection,
 ) -> String {
     let content_kinds = manifest
         .supported_content_kinds
@@ -664,8 +673,32 @@ fn format_profile_inspect_summary(
             "reason_catalog={} reasons={}",
             manifest.reason_catalog, lint_file.reason_count
         ),
+        format!(
+            "runtime_reason_catalog_path={}",
+            runtime_selection.reason_catalog_path.display()
+        ),
+        format!(
+            "runtime_ranking_config_dir={}",
+            runtime_selection.ranking_config_dir.display()
+        ),
         format!("article_support={}", manifest.article_support.as_str()),
     ];
+
+    lines.push(format!(
+        "runtime_fixture_set_id={}",
+        runtime_selection
+            .fixture_set_id
+            .as_deref()
+            .unwrap_or("none")
+    ));
+    lines.push(format!(
+        "runtime_fixture_dir={}",
+        runtime_selection
+            .fixture_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "none".to_string())
+    ));
 
     if let Some(description) = manifest.description.as_deref() {
         lines.push(format!("description={description:?}"));
@@ -754,6 +787,81 @@ mod tests {
 
         assert!(rendered.contains("profile validate ok: profile_packs=1"));
         assert!(rendered.contains("profile_id=local-discovery-generic"));
+    }
+
+    #[test]
+    fn profile_inspect_summary_reports_runtime_paths() {
+        let manifest_path = PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml");
+        let manifest: ProfilePackManifest = serde_yaml::from_str(
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: local-discovery-generic
+display_name: Local Discovery Generic
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: geo_line_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile manifest");
+        let lint_file = ProfilePackLintFile {
+            path: manifest_path.clone(),
+            profile_id: "local-discovery-generic".to_string(),
+            schema_version: 1,
+            kind: ProfilePackKind::ProfilePack,
+            manifest_version: 1,
+            supported_content_kinds: manifest.supported_content_kinds.clone(),
+            reason_count: 14,
+            fixture_count: 0,
+            source_manifest_count: 0,
+            optional_crawler_manifest_count: 0,
+        };
+        let runtime_manifest_path = PathBuf::from("repo")
+            .join("configs")
+            .join("profiles")
+            .join("local-discovery-generic")
+            .join("profile.yaml");
+        let reason_catalog_path = PathBuf::from("repo")
+            .join("configs")
+            .join("profiles")
+            .join("local-discovery-generic")
+            .join("reasons.yaml");
+        let ranking_config_dir = PathBuf::from("repo").join("configs").join("ranking");
+        let fixture_dir = PathBuf::from("repo")
+            .join("storage")
+            .join("fixtures")
+            .join("minimal");
+        let runtime_selection = config::ProfilePackRuntimeSelection {
+            profile_id: "local-discovery-generic".to_string(),
+            profile_pack_manifest: runtime_manifest_path,
+            reason_catalog_path: reason_catalog_path.clone(),
+            ranking_config_dir: ranking_config_dir.clone(),
+            fixture_set_id: Some("minimal".to_string()),
+            fixture_dir: Some(fixture_dir.clone()),
+        };
+
+        let rendered = format_profile_inspect_summary(
+            &manifest_path,
+            &manifest,
+            &lint_file,
+            &runtime_selection,
+        );
+
+        assert!(rendered.contains(&format!(
+            "runtime_reason_catalog_path={}",
+            reason_catalog_path.display()
+        )));
+        assert!(rendered.contains(&format!(
+            "runtime_ranking_config_dir={}",
+            ranking_config_dir.display()
+        )));
+        assert!(rendered.contains("runtime_fixture_set_id=minimal"));
+        assert!(rendered.contains(&format!("runtime_fixture_dir={}", fixture_dir.display())));
     }
 
     #[test]

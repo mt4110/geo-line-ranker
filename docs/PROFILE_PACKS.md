@@ -82,6 +82,9 @@ cargo run -p cli -- profile inspect --profile-id local-discovery-generic
 `profile list`, `profile validate`, and `profile inspect` reuse the same
 profile-pack contract checks without changing the meaning of `config lint`,
 which remains the combined active ranking config and profile-pack lint command.
+`profile inspect` also prints the selected runtime paths for ranking config,
+reason catalog, and fixture set so local refs can be checked without changing
+runtime semantics.
 
 ## Runtime Selection
 
@@ -103,13 +106,19 @@ is only local manifest discovery and selection. It is not a plugin ABI, dynamic
 loader, marketplace, or remote package source.
 
 The selected manifest then provides the runtime defaults for
-`ranking_config_dir` and the selected fixture path. Setting either
-`RANKING_CONFIG_DIR` or `FIXTURE_DIR` keeps legacy path mode: the explicit
-directory is used, the other directory falls back to its built-in default, and
-startup does not require profile pack IO. `PROFILE_FIXTURE_SET_ID` is optional;
-when omitted, the first fixture declared by the selected profile is used.
-Profiles may omit fixtures for ranking-only runtimes. Commands that consume
-fixtures require either a selected profile fixture or an explicit `FIXTURE_DIR`.
+`ranking_config_dir`, the selected fixture path, and the profile-owned
+`reason_catalog` path. Runtime selection resolves and validates the reason
+catalog as a local file so later runtime code can use the selected profile's
+local references without re-parsing the manifest. It does not change ranking
+explanation semantics.
+
+Setting either `RANKING_CONFIG_DIR` or `FIXTURE_DIR` keeps legacy path mode:
+the explicit directory is used, the other directory falls back to its built-in
+default, and startup does not require profile pack IO. `PROFILE_FIXTURE_SET_ID`
+is optional; when omitted, the first fixture declared by the selected profile
+is used. Profiles may omit fixtures for ranking-only runtimes. Commands that
+consume fixtures require either a selected profile fixture or an explicit
+`FIXTURE_DIR`.
 
 CLI commands that do not consume ranking configs or fixtures, such as
 `migrate`, explicit-manifest imports, `derive`, `index`, `projection`, and
