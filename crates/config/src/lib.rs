@@ -1762,6 +1762,59 @@ unknown_key: true
     }
 
     #[test]
+    fn rejects_unknown_nested_ranking_config_keys() {
+        for (placement_yaml, expected_field) in [
+            (
+                r#"schema_version: 1
+kind: ranking_placement
+neighbor_max_hops: 3
+neighbor_same_line_bonus: 0.9
+mixed_ranking:
+  enabled_content_kinds:
+    - school
+  score_boosts:
+    school: 0.0
+  featured_event_bonus: 0.4
+  event_priority_weight: 0.8
+  unknown_mixed_key: true
+diversity:
+  same_school_cap: 1
+  same_group_cap: 2
+"#,
+                "unknown_mixed_key",
+            ),
+            (
+                r#"schema_version: 1
+kind: ranking_placement
+neighbor_max_hops: 3
+neighbor_same_line_bonus: 0.9
+mixed_ranking:
+  enabled_content_kinds:
+    - school
+  score_boosts:
+    school: 0.0
+  featured_event_bonus: 0.4
+  event_priority_weight: 0.8
+diversity:
+  same_school_cap: 1
+  same_group_cap: 2
+  unknown_diversity_key: true
+"#,
+                "unknown_diversity_key",
+            ),
+        ] {
+            let temp = tempdir().expect("tempdir");
+            copy_default_configs(temp.path());
+            fs::write(temp.path().join("placement.home.yaml"), placement_yaml)
+                .expect("write config");
+
+            let error = RankingProfiles::load_from_dir(temp.path()).expect_err("unknown key");
+
+            assert!(format!("{error:#}").contains(&format!("unknown field `{expected_field}`")));
+        }
+    }
+
+    #[test]
     fn rejects_unknown_profile_pack_keys() {
         let temp = tempdir().expect("tempdir");
         let manifest_path = temp.path().join("profile.yaml");
@@ -1790,6 +1843,37 @@ unknown_key: true
     }
 
     #[test]
+    fn rejects_unknown_profile_pack_fixture_keys() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+fixtures:
+  - fixture_set_id: minimal
+    path: ../../fixtures/minimal
+    unknown_fixture_key: true
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("unknown key");
+        assert!(format!("{error:#}").contains("unknown field `unknown_fixture_key`"));
+    }
+
+    #[test]
     fn rejects_unknown_profile_reason_catalog_keys() {
         let temp = tempdir().expect("tempdir");
         let catalog_path = temp.path().join("reasons.yaml");
@@ -1810,6 +1894,29 @@ reasons:
 
         let error = load_profile_reason_catalog(&catalog_path).expect_err("unknown key");
         assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
+    }
+
+    #[test]
+    fn rejects_unknown_profile_reason_keys() {
+        let temp = tempdir().expect("tempdir");
+        let catalog_path = temp.path().join("reasons.yaml");
+        fs::write(
+            &catalog_path,
+            r#"schema_version: 1
+kind: profile_reason_catalog
+profile_id: example-profile
+reasons:
+  - feature: direct_station_bonus
+    reason_code: geo.direct_station
+    label: Direct station
+    layer: core
+    unknown_reason_key: true
+"#,
+        )
+        .expect("reason catalog");
+
+        let error = load_profile_reason_catalog(&catalog_path).expect_err("unknown key");
+        assert!(format!("{error:#}").contains("unknown field `unknown_reason_key`"));
     }
 
     #[test]
