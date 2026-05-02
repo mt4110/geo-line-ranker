@@ -4,6 +4,10 @@ This profile is the smallest deterministic demo path. It uses the committed
 `storage/fixtures/minimal` dataset and no JP source adapters, live crawler
 fetches, full mode, OpenSearch, or managed services.
 
+For profile-pack authoring, start with
+[Profile Packs](../../docs/PROFILE_PACKS.md). This example is the small
+SQL-only baseline, not a separate authoring runbook.
+
 ## Profile Manifest
 
 - `configs/profiles/local-discovery-generic/profile.yaml`

@@ -2,6 +2,10 @@
 
 This profile shows how to use `geo-line-ranker` for school and event discovery without hardcoding school-specific rules into the generic ranking core.
 
+For profile-pack authoring, start with
+[Profile Packs](../../docs/PROFILE_PACKS.md). This example is the maintained JP
+reference profile, not a separate authoring runbook.
+
 ## Profile Manifest
 
 - `configs/profiles/school-event-jp/profile.yaml`
