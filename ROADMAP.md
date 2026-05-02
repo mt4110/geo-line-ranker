@@ -11,26 +11,25 @@
   - keep AI / ML / embeddings / vector search out of the system
   - keep PostgreSQL/PostGIS as the reference implementation, Redis as cache only, and OpenSearch as optional candidate retrieval only
 
-- v0.2.18 config contract closeout
-  - inventory and close out the active ranking config, profile pack, import source manifest, crawler manifest, and fixture manifest contracts
-  - keep `schema_version`, `kind`, `manifest_version`, strict unknown-key validation, and local lint docs aligned with implementation
-  - add only the missing focused contract tests where coverage is thinner than the implementation
-  - keep config, manifest, and versioning docs routed from the contributor docs map instead of creating another runbook
+- v0.2.19 profile CLI scaffold
+  - add thin `cli profile list`, `cli profile validate`, and `cli profile inspect` entry points over the existing profile-pack contract
+  - keep `config lint` as the combined active ranking config and profile-pack lint command
+  - keep `school-event-jp` as the reference profile and `local-discovery-generic` as the small default demo
+  - keep profile-pack work local and manifest-based without runtime plugin ABI, marketplace, or dynamic code loading
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
   - keep optional evidence handoff as review inventory and handoff support only, not a fixed gate
   - keep OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
   - keep public API shape unchanged
 
-## v0.2.18 Exit Gates
+## v0.2.19 Exit Gates
 
-- `ROADMAP.md` names v0.2.18 config contract closeout as current and moves v0.2.17 ci-local and frontend checks into Recently Completed.
-- Active ranking config files declare `schema_version: 1` and the expected file-specific `kind`, and `cargo run -p cli -- config lint` reports the active ranking files and profile packs.
-- Profile pack manifests and profile reason catalogs declare their schema contract and reject unknown keys.
-- Import source manifests declare `schema_version: 1`, `kind: import_source`, and `manifest_version`; `cargo run -p cli -- source-manifest lint` remains the local contract check.
-- Crawler manifests declare `schema_version: 1`, `kind: crawler_source`, and `manifest_version`; `cargo run -p crawler -- manifest lint` remains the local contract check.
-- Fixture sets declare `schema_version: 1`, `kind: fixture_set`, and `manifest_version`; `fixtures doctor` remains the checksum and row-count contract check.
-- `docs/README.md`, `docs/TESTING.md`, `docs/CONTRIBUTING_LOCAL.md`, `docs/VERSIONING.md`, and `docs/DEPRECATION_POLICY.md` route contributors to the same config, manifest, and versioning contract story.
+- `ROADMAP.md` names v0.2.19 profile CLI scaffold as current and moves v0.2.18 config contract closeout into Recently Completed.
+- `cargo run -p cli -- profile list` lists committed profile packs with validated manifest metadata.
+- `cargo run -p cli -- profile validate` validates profile pack manifests, reason catalogs, fixture references, and profile-owned local references through the existing contract checks.
+- `cargo run -p cli -- profile inspect --profile-id local-discovery-generic` shows one selected profile without changing runtime behavior.
+- `cargo run -p cli -- config lint` keeps its current meaning as the combined active ranking config and profile-pack lint command.
+- `docs/PROFILE_PACKS.md`, `docs/TESTING.md`, `docs/CONTRIBUTING_LOCAL.md`, `docs/README.md`, and this roadmap route profile authors to the same minimal CLI entry points.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
@@ -45,6 +44,15 @@
 
 ## Recently Completed
 
+- v0.2.18 config contract closeout
+  - inventoried and closed out active ranking config, profile pack, import source manifest, crawler manifest, and fixture manifest contracts
+  - kept `schema_version`, `kind`, `manifest_version`, strict unknown-key validation, and local lint docs aligned with implementation
+  - kept config, manifest, and versioning docs routed from the contributor docs map instead of creating another runbook
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept optional evidence handoff as review inventory and handoff support only, not a fixed gate
+  - kept OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
+  - kept public API shape unchanged
 - v0.2.17 ci-local and frontend checks
   - added separated local entrypoints for OpenAPI drift, TypeScript SDK build, example frontend smoke, and selected local CI mirroring
   - made Node/TS SDK and example frontend build checks visible from contributor docs and pull request CI
@@ -280,13 +288,13 @@
 
 ## Next
 
-- After v0.2.18 config contract closeout
+- After v0.2.19 profile CLI scaffold
   - keep the first-run guide small as more contributor docs are added
   - keep the docs index useful as a routing map rather than turning it into a second runbook
   - add deeper profile-author and connector-author docs only when the underlying workflows change
-  - use the closed config contract as the baseline for later profile-pack work
+  - use the profile CLI scaffold as the baseline for later profile-pack implementation work
   - keep public docs and non-engineer design docs aligned when the next sample or onboarding improvement lands
-- Later hardening after v0.2.18
+- Later hardening after v0.2.19
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

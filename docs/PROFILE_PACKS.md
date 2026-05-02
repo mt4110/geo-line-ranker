@@ -42,6 +42,18 @@ reason catalog.
 cargo run -p cli -- config lint
 ```
 
+Use the profile CLI when you only need the profile-pack surface:
+
+```bash
+cargo run -p cli -- profile list
+cargo run -p cli -- profile validate
+cargo run -p cli -- profile inspect --profile-id local-discovery-generic
+```
+
+`profile list`, `profile validate`, and `profile inspect` reuse the same
+profile-pack contract checks without changing the meaning of `config lint`,
+which remains the combined active ranking config and profile-pack lint command.
+
 ## Runtime Selection
 
 API, worker, and ranking/fixture-consuming CLI commands select

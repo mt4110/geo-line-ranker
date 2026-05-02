@@ -22,9 +22,9 @@ There is no standalone `station_converter_ja/` directory in this repository toda
 | Docs-only routing or onboarding | [Documentation Index](README.md), [First 15 Minutes](FIRST_15_MINUTES.md) | `git diff --check`, docs link/self-review |
 | Ranking behavior, reasons, or fallback | [Reason Catalog](REASON_CATALOG.md), [Architecture](ARCHITECTURE.md) | ranking tests, default validation |
 | Public API shape | [API Spec](../API_SPEC.md), [Versioning](VERSIONING.md) | OpenAPI/API docs update, default validation |
-| Config, profile, or manifest contract | [Versioning](VERSIONING.md), [Deprecation Policy](DEPRECATION_POLICY.md) | config lint, source-manifest lint, crawler manifest lint, fixture doctor |
+| Config, profile, or manifest contract | [Versioning](VERSIONING.md), [Deprecation Policy](DEPRECATION_POLICY.md) | config lint, profile validate/list/inspect, source-manifest lint, crawler manifest lint, fixture doctor |
 | TypeScript SDK or example frontend | [Testing](TESTING.md) | `just ts-sdk-check`, `just frontend-smoke`, `just openapi-drift` when API shape is involved |
-| Profile pack or fixture ownership | [Profile Packs](PROFILE_PACKS.md) | `cargo run -p cli -- config lint`, fixture doctor |
+| Profile pack or fixture ownership | [Profile Packs](PROFILE_PACKS.md) | `cargo run -p cli -- profile validate`, `cargo run -p cli -- config lint`, fixture doctor |
 | Connector, source manifest, or crawler source | [Data Sources](DATA_SOURCES.md), [Data Licenses](DATA_LICENSES.md) | source-manifest lint, crawler manifest lint, fixture doctor |
 
 ## Repository Layout
@@ -58,6 +58,14 @@ cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
+```
+
+For profile-pack or profile CLI changes, also run:
+
+```bash
+cargo run -p cli -- profile list
+cargo run -p cli -- profile validate
+cargo run -p cli -- profile inspect --profile-id local-discovery-generic
 ```
 
 Convenience commands are also available:
