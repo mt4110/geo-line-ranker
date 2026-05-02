@@ -18,11 +18,22 @@ cargo run -p crawler -- manifest lint
 `config lint` covers both active ranking config and committed profile pack
 manifests under `configs/profiles`.
 
+The `profile` commands are narrower profile-pack entry points for authors and
+reviewers. They do not change the fixed public-MVP gate.
+
+For profile-pack or profile CLI changes, also run:
+
+```bash
+cargo run -p cli -- profile list
+cargo run -p cli -- profile validate
+cargo run -p cli -- profile inspect --profile-id local-discovery-generic
+```
+
 Config, profile, source, crawler, or fixture manifest contract changes should
-run the relevant lint or doctor command from the default set above. Those
-commands verify `schema_version`, `kind`, `manifest_version` where applicable,
-strict parsers that fail on unknown keys, local path references, and fixture
-checksums without changing ranking semantics or the public API shape.
+run the relevant lint, profile, or doctor command. Those commands verify
+`schema_version`, `kind`, `manifest_version` where applicable, strict parsers
+that fail on unknown keys, local path references, and fixture checksums without
+changing ranking semantics or the public API shape.
 
 For docs-only changes, still run `git diff --check` and review the changed
 links and routing by hand. If no Rust code, public API, ranking semantics,

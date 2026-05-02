@@ -968,11 +968,28 @@ pub fn lint_profile_pack_file(path: impl AsRef<Path>) -> Result<ProfilePackLintF
     lint_profile_pack_file_with_cache(path.as_ref(), None)
 }
 
+pub fn load_and_lint_profile_pack_file(
+    path: impl AsRef<Path>,
+) -> Result<(ProfilePackManifest, ProfilePackLintFile)> {
+    let path = path.as_ref();
+    let manifest = load_profile_pack_manifest(path)?;
+    let file = lint_loaded_profile_pack_file(path, &manifest, None)?;
+    Ok((manifest, file))
+}
+
 fn lint_profile_pack_file_with_cache(
     path: &Path,
     ranking_config_cache: Option<&mut BTreeMap<PathBuf, RankingConfigLintSummary>>,
 ) -> Result<ProfilePackLintFile> {
     let manifest = load_profile_pack_manifest(path)?;
+    lint_loaded_profile_pack_file(path, &manifest, ranking_config_cache)
+}
+
+fn lint_loaded_profile_pack_file(
+    path: &Path,
+    manifest: &ProfilePackManifest,
+    ranking_config_cache: Option<&mut BTreeMap<PathBuf, RankingConfigLintSummary>>,
+) -> Result<ProfilePackLintFile> {
     let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
 
     let ranking_config_dir =
@@ -1064,11 +1081,11 @@ fn lint_profile_pack_file_with_cache(
 
     Ok(ProfilePackLintFile {
         path: path.to_path_buf(),
-        profile_id: manifest.profile_id,
+        profile_id: manifest.profile_id.clone(),
         schema_version: manifest.schema_version,
         kind: manifest.kind,
         manifest_version: manifest.manifest_version,
-        supported_content_kinds: manifest.supported_content_kinds,
+        supported_content_kinds: manifest.supported_content_kinds.clone(),
         reason_count: reason_catalog.reasons.len(),
         fixture_count: manifest.fixtures.len(),
         source_manifest_count: manifest.source_manifests.len(),

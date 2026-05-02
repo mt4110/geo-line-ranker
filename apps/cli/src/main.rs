@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Context;
+use anyhow::{ensure, Context};
 use clap::{Parser, Subcommand};
 use cli::{
     format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
@@ -14,10 +14,10 @@ use cli::{
     run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
 use config::{
-    lint_profile_pack_dir, lint_ranking_config_dir, load_profile_pack_manifest,
-    resolve_profile_pack_runtime_selection, resolve_runtime_path, AppSettings,
-    ProfilePackLintSummary, RankingConfigLintSummary, DEFAULT_PROFILE_ID,
-    DEFAULT_PROFILE_PACKS_DIR,
+    lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
+    load_profile_pack_manifest, resolve_profile_pack_runtime_selection, resolve_runtime_path,
+    AppSettings, ProfilePackLintFile, ProfilePackLintSummary, ProfilePackManifest,
+    RankingConfigLintSummary, DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
@@ -64,6 +64,10 @@ enum Command {
     Replay {
         #[command(subcommand)]
         target: ReplayCommand,
+    },
+    Profile {
+        #[command(subcommand)]
+        target: ProfileCommand,
     },
     Config {
         #[command(subcommand)]
@@ -167,6 +171,39 @@ enum ReplayCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum ProfileCommand {
+    #[command(about = "List profile pack manifests with validated contract metadata")]
+    List {
+        #[arg(
+            long,
+            help = "Profile pack root directory or explicit profile.yaml file to list after validation. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+        )]
+        profiles_path: Option<PathBuf>,
+    },
+    #[command(about = "Validate profile pack manifests, reason catalogs, and local references")]
+    Validate {
+        #[arg(
+            long,
+            help = "Profile pack root directory or explicit profile.yaml file to validate. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+        )]
+        profiles_path: Option<PathBuf>,
+    },
+    #[command(about = "Inspect one profile pack manifest")]
+    Inspect {
+        #[arg(
+            long,
+            help = "Profile id to inspect. Defaults to PROFILE_ID, the selected profile.yaml file id, or local-discovery-generic."
+        )]
+        profile_id: Option<String>,
+        #[arg(
+            long,
+            help = "Profile pack root directory or explicit profile.yaml file to inspect. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+        )]
+        profiles_path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum ConfigCommand {
     #[command(about = "Lint active ranking config files and profile packs")]
     Lint {
@@ -177,7 +214,7 @@ enum ConfigCommand {
         path: Option<PathBuf>,
         #[arg(
             long,
-            help = "Profile pack directory or profile.yaml file to lint. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+            help = "Profile pack root directory or explicit profile.yaml file to lint. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
     },
@@ -336,6 +373,53 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         },
+        Command::Profile { target } => match target {
+            ProfileCommand::List { profiles_path } => {
+                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                    "PROFILE_PACKS_DIR",
+                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                )?);
+                let summary = lint_profile_pack_dir(profiles_path)?;
+                println!("{}", format_profile_list_summary(&summary));
+            }
+            ProfileCommand::Validate { profiles_path } => {
+                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                    "PROFILE_PACKS_DIR",
+                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                )?);
+                let summary = lint_profile_pack_dir(profiles_path)?;
+                println!("{}", format_profile_validate_summary(&summary));
+            }
+            ProfileCommand::Inspect {
+                profile_id,
+                profiles_path,
+            } => {
+                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                    "PROFILE_PACKS_DIR",
+                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                )?);
+                let requested_profile_id =
+                    requested_profile_id_for_inspect(profile_id, &profiles_path)?;
+                let manifest_path = profile_manifest_path_for_inspect(
+                    &profiles_path,
+                    requested_profile_id.as_deref(),
+                )?;
+                let (manifest, lint_file) = load_and_lint_profile_pack_file(&manifest_path)?;
+                if let Some(profile_id) = requested_profile_id.as_deref() {
+                    ensure!(
+                        lint_file.profile_id == profile_id,
+                        "profile pack {} profile_id {} does not match requested profile_id {}",
+                        manifest_path.display(),
+                        lint_file.profile_id,
+                        profile_id
+                    );
+                }
+                println!(
+                    "{}",
+                    format_profile_inspect_summary(&manifest_path, &manifest, &lint_file)
+                );
+            }
+        },
         Command::Config { target } => match target {
             ConfigCommand::Lint {
                 path,
@@ -453,6 +537,52 @@ fn profile_id_for_lint(profiles_path: &Path) -> anyhow::Result<String> {
     }
 }
 
+fn profile_manifest_path_for_inspect(
+    profiles_path: &Path,
+    profile_id: Option<&str>,
+) -> anyhow::Result<PathBuf> {
+    if profiles_path.is_file() {
+        return Ok(profiles_path.to_path_buf());
+    }
+    let profile_id = profile_id.with_context(|| {
+        format!(
+            "profile_id is required when profiles_path {} is a directory",
+            profiles_path.display()
+        )
+    })?;
+    ensure_profile_id(profile_id)?;
+    Ok(profiles_path.join(profile_id).join("profile.yaml"))
+}
+
+fn requested_profile_id_for_inspect(
+    profile_id: Option<String>,
+    profiles_path: &Path,
+) -> anyhow::Result<Option<String>> {
+    if let Some(profile_id) = profile_id {
+        ensure_profile_id(&profile_id)?;
+        return Ok(Some(profile_id));
+    }
+    if let Some(profile_id) = config::env_optional_non_empty("PROFILE_ID")? {
+        ensure_profile_id(&profile_id)?;
+        return Ok(Some(profile_id));
+    }
+    if profiles_path.is_file() {
+        Ok(None)
+    } else {
+        Ok(Some(DEFAULT_PROFILE_ID.to_string()))
+    }
+}
+
+fn ensure_profile_id(profile_id: &str) -> anyhow::Result<()> {
+    ensure!(
+        config::is_profile_id(profile_id),
+        "invalid profile_id '{}': {}",
+        profile_id,
+        config::PROFILE_ID_RULE_DESCRIPTION
+    );
+    Ok(())
+}
+
 fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> {
     Ok(config::env_path_optional(name)?.unwrap_or_else(|| resolve_runtime_path(default)))
 }
@@ -512,28 +642,130 @@ fn format_config_lint_summary(
         )
     }));
     lines.push("profile packs:".to_string());
-    lines.extend(profiles.files.iter().map(|file| {
-        let content_kinds = file
-            .supported_content_kinds
-            .iter()
-            .map(|kind| kind.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        format!(
-            "- {} profile_id={} schema_version={} kind={} manifest_version={} content_kinds={} reasons={} fixtures={} source_manifests={} optional_crawler_manifests={}",
-            file.path.display(),
-            file.profile_id,
-            file.schema_version,
-            file.kind.as_str(),
-            file.manifest_version,
-            content_kinds,
-            file.reason_count,
-            file.fixture_count,
-            file.source_manifest_count,
-            file.optional_crawler_manifest_count
-        )
-    }));
+    lines.extend(profiles.files.iter().map(format_profile_lint_file_line));
     lines.join("\n")
+}
+
+fn format_profile_list_summary(summary: &ProfilePackLintSummary) -> String {
+    let mut lines = vec![format!(
+        "profile list ok: profile_packs={}",
+        summary.files.len()
+    )];
+    lines.extend(summary.files.iter().map(format_profile_lint_file_line));
+    lines.join("\n")
+}
+
+fn format_profile_validate_summary(summary: &ProfilePackLintSummary) -> String {
+    let mut lines = vec![format!(
+        "profile validate ok: profile_packs={}, ranking_config_dirs={}",
+        summary.files.len(),
+        summary.ranking_configs.len()
+    )];
+    lines.extend(summary.files.iter().map(format_profile_lint_file_line));
+    lines.join("\n")
+}
+
+fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
+    let content_kinds = file
+        .supported_content_kinds
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "- {} profile_id={} schema_version={} kind={} manifest_version={} content_kinds={} reasons={} fixtures={} source_manifests={} optional_crawler_manifests={}",
+        file.path.display(),
+        file.profile_id,
+        file.schema_version,
+        file.kind.as_str(),
+        file.manifest_version,
+        content_kinds,
+        file.reason_count,
+        file.fixture_count,
+        file.source_manifest_count,
+        file.optional_crawler_manifest_count
+    )
+}
+
+fn format_profile_inspect_summary(
+    manifest_path: &Path,
+    manifest: &ProfilePackManifest,
+    lint_file: &ProfilePackLintFile,
+) -> String {
+    let content_kinds = manifest
+        .supported_content_kinds
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let context_inputs = manifest
+        .context_inputs
+        .iter()
+        .map(|input| input.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let mut lines = vec![
+        format!(
+            "profile inspect ok: profile_id={} display_name={:?}",
+            manifest.profile_id, manifest.display_name
+        ),
+        format!("manifest={}", manifest_path.display()),
+        format!(
+            "schema_version={} kind={} manifest_version={}",
+            manifest.schema_version,
+            manifest.kind.as_str(),
+            manifest.manifest_version
+        ),
+        format!("content_kinds={content_kinds}"),
+        format!("context_inputs={context_inputs}"),
+        format!("fallback_policy={}", manifest.fallback_policy),
+        format!("ranking_config_dir={}", manifest.ranking_config_dir),
+        format!(
+            "reason_catalog={} reasons={}",
+            manifest.reason_catalog, lint_file.reason_count
+        ),
+        format!("article_support={}", manifest.article_support.as_str()),
+    ];
+
+    if let Some(description) = manifest.description.as_deref() {
+        lines.push(format!("description={description:?}"));
+    }
+
+    lines.push("fixtures:".to_string());
+    if manifest.fixtures.is_empty() {
+        lines.push("- none".to_string());
+    } else {
+        lines.extend(manifest.fixtures.iter().map(|fixture| {
+            format!(
+                "- fixture_set_id={} path={}",
+                fixture.fixture_set_id, fixture.path
+            )
+        }));
+    }
+
+    push_profile_ref_summary(&mut lines, "source_manifests", &manifest.source_manifests);
+    push_profile_ref_summary(
+        &mut lines,
+        "event_csv_examples",
+        &manifest.event_csv_examples,
+    );
+    push_profile_ref_summary(
+        &mut lines,
+        "optional_crawler_manifests",
+        &manifest.optional_crawler_manifests,
+    );
+    push_profile_ref_summary(&mut lines, "examples", &manifest.examples);
+
+    lines.join("\n")
+}
+
+fn push_profile_ref_summary(lines: &mut Vec<String>, label: &str, refs: &[String]) {
+    if refs.is_empty() {
+        lines.push(format!("{label}=none"));
+    } else {
+        lines.push(format!("{label}={}", refs.join(",")));
+    }
 }
 
 fn format_source_manifest_lint_summary(summary: &SourceManifestLintSummary) -> String {
@@ -553,4 +785,86 @@ fn format_source_manifest_lint_summary(summary: &SourceManifestLintSummary) -> S
         )
     }));
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use config::{ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary};
+    use std::fs;
+
+    #[test]
+    fn profile_validate_summary_reports_profile_count() {
+        let summary = ProfilePackLintSummary {
+            files: vec![ProfilePackLintFile {
+                path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
+                profile_id: "local-discovery-generic".to_string(),
+                schema_version: 1,
+                kind: ProfilePackKind::ProfilePack,
+                manifest_version: 1,
+                supported_content_kinds: Vec::new(),
+                reason_count: 14,
+                fixture_count: 1,
+                source_manifest_count: 0,
+                optional_crawler_manifest_count: 0,
+            }],
+            ranking_configs: Vec::new(),
+        };
+
+        let rendered = format_profile_validate_summary(&summary);
+
+        assert!(rendered.contains("profile validate ok: profile_packs=1"));
+        assert!(rendered.contains("profile_id=local-discovery-generic"));
+    }
+
+    #[test]
+    fn profile_manifest_path_for_inspect_keeps_directory_selection_mode() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let other_profile_dir = profiles_dir.join("other-profile");
+        fs::create_dir_all(&other_profile_dir).expect("profile dir");
+        fs::write(
+            profiles_dir.join("profile.yaml"),
+            r#"
+schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: root-profile
+display_name: Root Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: custom_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("root profile manifest");
+        fs::write(
+            other_profile_dir.join("profile.yaml"),
+            r#"
+schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: other-profile
+display_name: Other Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: other_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("other profile manifest");
+
+        let path = profile_manifest_path_for_inspect(&profiles_dir, Some("other-profile"))
+            .expect("profile manifest path");
+
+        assert_eq!(path, other_profile_dir.join("profile.yaml"));
+    }
 }
