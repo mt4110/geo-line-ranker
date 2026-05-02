@@ -51,6 +51,7 @@ Run these from the repository root after reading the first-run path:
 | Run local evaluation tooling | `just eval` | [Testing](TESTING.md), [Operations](OPERATIONS.md) |
 | Change ranking scores, reasons, or fallback behavior | [Reason Catalog](REASON_CATALOG.md) | [Architecture](ARCHITECTURE.md), [Testing](TESTING.md), [Versioning](VERSIONING.md) |
 | Change public API fields | [API Spec](../API_SPEC.md) | [Versioning](VERSIONING.md), [Deprecation Policy](DEPRECATION_POLICY.md), [Testing](TESTING.md) |
+| Change config, profile, source, crawler, or fixture manifest contracts | [Versioning](VERSIONING.md) | [Deprecation Policy](DEPRECATION_POLICY.md), [Testing](TESTING.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md) |
 | Run or review the fixed public-MVP gate | [MVP Acceptance](MVP_ACCEPTANCE.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Testing](TESTING.md) |
 | Review optional crawler, full-mode, OpenSearch, or managed infrastructure evidence | [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md) | [Operations](OPERATIONS.md), [Data Sources](DATA_SOURCES.md), [Testing](TESTING.md) |
 | Add or adjust a profile pack | [Profile Packs](PROFILE_PACKS.md) | [Local Discovery Generic](../examples/local-discovery-generic/README.md), [School Event JP Reference](../examples/school-event-jp/README.md), [Versioning](VERSIONING.md) |

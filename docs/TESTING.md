@@ -18,11 +18,22 @@ cargo run -p crawler -- manifest lint
 `config lint` covers both active ranking config and committed profile pack
 manifests under `configs/profiles`.
 
+Config, profile, source, crawler, or fixture manifest contract changes should
+run the relevant lint or doctor command from the default set above. Those
+commands verify `schema_version`, `kind`, `manifest_version` where applicable,
+strict parsers that fail on unknown keys, local path references, and fixture
+checksums without changing ranking semantics or the public API shape.
+
 For docs-only changes, still run `git diff --check` and review the changed
 links and routing by hand. If no Rust code, public API, ranking semantics,
 database schema, OpenAPI, config, fixtures, or manifests changed, it is
 acceptable to skip cargo validation in the PR notes with that reason stated
 plainly. Do not use a docs-only reason to skip validation for behavior changes.
+For docs-heavy contract changes, also run the local spellcheck:
+
+```bash
+npx cspell --config cspell.json .
+```
 
 ## Contributor entrypoints
 

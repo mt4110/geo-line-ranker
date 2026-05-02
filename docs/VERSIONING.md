@@ -59,6 +59,38 @@ cargo run -p cli -- config lint --path /path/to/ranking-config --profiles-path /
 `configs/ranking/fallback.v020.yaml` is a legacy reference artifact, not part of
 the active runtime profile set.
 
+## Profile Packs
+
+Profile pack manifests in `configs/profiles/*/profile.yaml` use:
+
+```yaml
+schema_version: 1
+kind: profile_pack
+manifest_version: 1
+```
+
+Profile reason catalogs in `configs/profiles/*/reasons.yaml` use:
+
+```yaml
+schema_version: 1
+kind: profile_reason_catalog
+```
+
+Profile pack loading is strict:
+
+- `schema_version` must be supported by the current binary.
+- `kind` must match the document role.
+- Unknown keys fail profile manifest and reason catalog loading.
+- Profile-owned references to ranking configs, fixture manifests, source
+  manifests, crawler manifests, examples, and event CSV files must use portable
+  relative paths and resolve locally when linted.
+
+Run profile pack contract lint together with ranking config lint:
+
+```bash
+cargo run -p cli -- config lint
+```
+
 ## Source Manifests
 
 Import source manifests in `storage/sources` use:

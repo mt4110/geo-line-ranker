@@ -53,14 +53,14 @@ Reason-code removals should be rare. If a score component disappears because the
 underlying feature is removed, document the behavior change and update
 `docs/REASON_CATALOG.md`.
 
-## Current v0.2.3 Contract
+## Current Config Contract
 
 - Active ranking config files require `schema_version: 1` and a matching
   `kind`.
 - Import and crawler manifests carry `schema_version: 1` plus `kind`, while
   keeping `manifest_version` for audit history.
 - Committed fixture sets carry `schema_version: 1`, `kind: fixture_set`, and
-  `manifest_version: 1` plus per-file checksum and row-count metadata.
+  `manifest_version: 2` plus per-file checksum and row-count metadata.
 - Local lint commands cover the active config and manifest sets:
 
 ```bash
