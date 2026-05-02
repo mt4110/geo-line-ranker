@@ -25,6 +25,10 @@ fn test_settings(
             .join("configs/profiles/local-discovery-generic/profile.yaml")
             .display()
             .to_string(),
+        profile_reason_catalog_path: root
+            .join("configs/profiles/local-discovery-generic/reasons.yaml")
+            .display()
+            .to_string(),
         profile_fixture_set_id: Some("minimal".to_string()),
         ranking_config_dir: ranking_config_dir.display().to_string(),
         fixture_dir: root.join("storage/fixtures/minimal").display().to_string(),

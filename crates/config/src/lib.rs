@@ -72,6 +72,8 @@ pub struct AppSettings {
     pub redis_url: Option<String>,
     pub profile_id: String,
     pub profile_pack_manifest: String,
+    #[serde(default)]
+    pub profile_reason_catalog_path: String,
     pub profile_fixture_set_id: Option<String>,
     pub ranking_config_dir: String,
     pub fixture_dir: String,
@@ -197,6 +199,10 @@ impl AppSettings {
             profile_pack_manifest: runtime_profile
                 .as_ref()
                 .map(|profile| profile.profile_pack_manifest.display().to_string())
+                .unwrap_or_default(),
+            profile_reason_catalog_path: runtime_profile
+                .as_ref()
+                .map(|profile| profile.reason_catalog_path.display().to_string())
                 .unwrap_or_default(),
             profile_fixture_set_id: runtime_profile
                 .as_ref()
@@ -530,6 +536,8 @@ pub struct ProfileReason {
 pub struct ProfilePackLintFile {
     pub path: PathBuf,
     pub profile_id: String,
+    pub ranking_config_dir: PathBuf,
+    pub reason_catalog_path: PathBuf,
     pub schema_version: u32,
     pub kind: ProfilePackKind,
     pub manifest_version: u32,
@@ -550,6 +558,7 @@ pub struct ProfilePackLintSummary {
 pub struct ProfilePackRuntimeSelection {
     pub profile_id: String,
     pub profile_pack_manifest: PathBuf,
+    pub reason_catalog_path: PathBuf,
     pub ranking_config_dir: PathBuf,
     pub fixture_set_id: Option<String>,
     pub fixture_dir: Option<PathBuf>,
@@ -910,6 +919,9 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
     })?;
     let manifest = load_profile_pack_manifest(&profile_pack_manifest)?;
 
+    let reason_catalog_path =
+        resolve_runtime_reason_catalog_path(&profile_pack_manifest, &manifest)?;
+
     let ranking_config_dir = resolve_profile_ref(
         &profile_pack_manifest,
         "ranking_config_dir",
@@ -928,8 +940,52 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
         )
     })?;
 
+    build_profile_pack_runtime_selection(
+        profile_pack_manifest,
+        &manifest,
+        reason_catalog_path,
+        ranking_config_dir,
+        fixture_set_id,
+    )
+}
+
+pub fn resolve_linted_profile_pack_runtime_selection(
+    profile_pack_manifest: impl AsRef<Path>,
+    manifest: &ProfilePackManifest,
+    lint_file: &ProfilePackLintFile,
+    fixture_set_id: Option<&str>,
+) -> Result<ProfilePackRuntimeSelection> {
+    ensure!(
+        lint_file.profile_id == manifest.profile_id,
+        "profile pack lint file profile_id {} does not match loaded manifest profile_id {}",
+        lint_file.profile_id,
+        manifest.profile_id
+    );
+    let profile_pack_manifest = profile_pack_manifest.as_ref();
+    let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize profile pack manifest {}",
+            profile_pack_manifest.display()
+        )
+    })?;
+    build_profile_pack_runtime_selection(
+        profile_pack_manifest,
+        manifest,
+        lint_file.reason_catalog_path.clone(),
+        lint_file.ranking_config_dir.clone(),
+        fixture_set_id,
+    )
+}
+
+fn build_profile_pack_runtime_selection(
+    profile_pack_manifest: PathBuf,
+    manifest: &ProfilePackManifest,
+    reason_catalog_path: PathBuf,
+    ranking_config_dir: PathBuf,
+    fixture_set_id: Option<&str>,
+) -> Result<ProfilePackRuntimeSelection> {
     let selected_fixture =
-        select_runtime_fixture(&profile_pack_manifest, &manifest, fixture_set_id)?;
+        select_runtime_fixture(&profile_pack_manifest, manifest, fixture_set_id)?;
     let (fixture_set_id, fixture_dir) = match selected_fixture {
         Some(fixture) => {
             let fixture_dir =
@@ -959,12 +1015,28 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
     };
 
     Ok(ProfilePackRuntimeSelection {
-        profile_id: manifest.profile_id,
+        profile_id: manifest.profile_id.clone(),
         profile_pack_manifest,
+        reason_catalog_path,
         ranking_config_dir,
         fixture_set_id,
         fixture_dir,
     })
+}
+
+fn resolve_runtime_reason_catalog_path(
+    profile_pack_manifest: &Path,
+    manifest: &ProfilePackManifest,
+) -> Result<PathBuf> {
+    let (reason_catalog_path, _) =
+        load_profile_reason_catalog_for_manifest(profile_pack_manifest, manifest)?;
+    let reason_catalog_path = reason_catalog_path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize reason catalog {}",
+            reason_catalog_path.display()
+        )
+    })?;
+    Ok(reason_catalog_path)
 }
 
 fn ensure_valid_profile_id(profile_id: &str) -> Result<()> {
@@ -1121,22 +1193,21 @@ fn lint_loaded_profile_pack_file(
         lint_ranking_config_dir(&ranking_config_dir)?;
     }
 
-    let reason_catalog_path =
-        resolve_profile_ref(path, "reason_catalog", &manifest.reason_catalog)?;
-    ensure!(
-        reason_catalog_path.is_file(),
-        "profile pack {} reason_catalog {} is missing or not a file",
-        path.display(),
-        reason_catalog_path.display()
-    );
-    let reason_catalog = load_profile_reason_catalog(&reason_catalog_path)?;
-    ensure!(
-        reason_catalog.profile_id == manifest.profile_id,
-        "profile pack {} reason_catalog profile_id {} does not match {}",
-        path.display(),
-        reason_catalog.profile_id,
-        manifest.profile_id
-    );
+    let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            ranking_config_dir.display()
+        )
+    })?;
+
+    let (reason_catalog_path, reason_catalog) =
+        load_profile_reason_catalog_for_manifest(path, manifest)?;
+    let reason_catalog_path = reason_catalog_path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize reason catalog {}",
+            reason_catalog_path.display()
+        )
+    })?;
 
     let mut fixture_ids = BTreeSet::new();
     for fixture in &manifest.fixtures {
@@ -1197,6 +1268,8 @@ fn lint_loaded_profile_pack_file(
     Ok(ProfilePackLintFile {
         path: path.to_path_buf(),
         profile_id: manifest.profile_id.clone(),
+        ranking_config_dir,
+        reason_catalog_path,
         schema_version: manifest.schema_version,
         kind: manifest.kind,
         manifest_version: manifest.manifest_version,
@@ -1206,6 +1279,32 @@ fn lint_loaded_profile_pack_file(
         source_manifest_count: manifest.source_manifests.len(),
         optional_crawler_manifest_count: manifest.optional_crawler_manifests.len(),
     })
+}
+
+fn load_profile_reason_catalog_for_manifest(
+    profile_pack_manifest: &Path,
+    manifest: &ProfilePackManifest,
+) -> Result<(PathBuf, ProfileReasonCatalog)> {
+    let reason_catalog_path = resolve_profile_ref(
+        profile_pack_manifest,
+        "reason_catalog",
+        &manifest.reason_catalog,
+    )?;
+    ensure!(
+        reason_catalog_path.is_file(),
+        "profile pack {} reason_catalog {} is missing or not a file",
+        profile_pack_manifest.display(),
+        reason_catalog_path.display()
+    );
+    let reason_catalog = load_profile_reason_catalog(&reason_catalog_path)?;
+    ensure!(
+        reason_catalog.profile_id == manifest.profile_id,
+        "profile pack {} reason_catalog profile_id {} does not match {}",
+        profile_pack_manifest.display(),
+        reason_catalog.profile_id,
+        manifest.profile_id
+    );
+    Ok((reason_catalog_path, reason_catalog))
 }
 
 fn lint_ranking_config_dir_cached(
@@ -2238,6 +2337,13 @@ reasons:
                 .expect("manifest")
         );
         assert_eq!(
+            selection.reason_catalog_path,
+            profile_dir
+                .join("reasons.yaml")
+                .canonicalize()
+                .expect("reason catalog")
+        );
+        assert_eq!(
             selection.ranking_config_dir,
             ranking_dir.canonicalize().expect("ranking dir")
         );
@@ -2278,6 +2384,13 @@ reasons:
         .expect("runtime selection");
 
         assert_eq!(selection.profile_id, "example-profile");
+        assert_eq!(
+            selection.reason_catalog_path,
+            profile_dir
+                .join("reasons.yaml")
+                .canonicalize()
+                .expect("reason catalog")
+        );
         assert_eq!(
             selection.ranking_config_dir,
             ranking_dir.canonicalize().expect("ranking dir")
@@ -2342,6 +2455,7 @@ reasons:
         assert_eq!(settings.fixture_dir, fixture_dir.display().to_string());
         assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
         assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_reason_catalog_path.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();
     }
@@ -2367,6 +2481,7 @@ reasons:
         );
         assert!(Path::new(&settings.fixture_dir).ends_with(super::DEFAULT_FIXTURE_DIR));
         assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_reason_catalog_path.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();
     }
@@ -2388,8 +2503,42 @@ reasons:
         );
         assert!(Path::new(&settings.fixture_dir).ends_with(super::DEFAULT_FIXTURE_DIR));
         assert!(settings.profile_pack_manifest.is_empty());
+        assert!(settings.profile_reason_catalog_path.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_deserializes_legacy_payload_without_reason_catalog_path() {
+        let settings: AppSettings = serde_yaml::from_str(
+            r#"bind_addr: 127.0.0.1:4000
+database_url: postgres://postgres:postgres@127.0.0.1:5433/geo_line_ranker
+postgres_pool_max_size: 4
+redis_url: null
+profile_id: local-discovery-generic
+profile_pack_manifest: configs/profiles/local-discovery-generic/profile.yaml
+profile_fixture_set_id: minimal
+ranking_config_dir: configs/ranking
+fixture_dir: storage/fixtures/minimal
+raw_storage_dir: .storage/raw
+algorithm_version: phase8-policy-diversity-v1
+candidate_retrieval_mode: sql_only
+candidate_retrieval_limit: 256
+opensearch:
+  url: http://127.0.0.1:9200
+  index_name: geo_line_ranker_candidates
+  username: null
+  password: null
+  request_timeout_secs: 5
+recommendation_cache_ttl_secs: 120
+worker_poll_interval_ms: 1000
+worker_retry_delay_secs: 5
+worker_max_attempts: 3
+"#,
+        )
+        .expect("legacy settings payload");
+
+        assert!(settings.profile_reason_catalog_path.is_empty());
     }
 
     #[test]
@@ -2409,6 +2558,12 @@ reasons:
                 .join("profiles")
                 .join("local-discovery-generic")
                 .join("profile.yaml")
+        ));
+        assert!(Path::new(&settings.profile_reason_catalog_path).ends_with(
+            Path::new("configs")
+                .join("profiles")
+                .join("local-discovery-generic")
+                .join("reasons.yaml")
         ));
         assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
         clear_app_env();
@@ -2448,6 +2603,11 @@ reasons:
             Path::new("profiles")
                 .join("example-profile")
                 .join("profile.yaml")
+        ));
+        assert!(Path::new(&settings.profile_reason_catalog_path).ends_with(
+            Path::new("profiles")
+                .join("example-profile")
+                .join("reasons.yaml")
         ));
         assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
         clear_app_env();
@@ -2500,6 +2660,15 @@ article_support: reserved
                 .display()
                 .to_string()
         );
+        assert_eq!(
+            settings.profile_reason_catalog_path,
+            profile_dir
+                .join("reasons.yaml")
+                .canonicalize()
+                .expect("reason catalog")
+                .display()
+                .to_string()
+        );
         assert!(settings.fixture_dir.is_empty());
 
         let error =
@@ -2507,6 +2676,35 @@ article_support: reserved
 
         assert!(format!("{error:#}").contains("does not declare a runtime fixture"));
         clear_app_env();
+    }
+
+    #[test]
+    fn runtime_selection_rejects_missing_reason_catalog() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "example-profile",
+        );
+
+        let error = resolve_profile_pack_runtime_selection(&profiles_dir, "example-profile", None)
+            .expect_err("missing reason catalog");
+
+        assert!(format!("{error:#}").contains("reason_catalog"));
+        assert!(format!("{error:#}").contains("is missing or not a file"));
     }
 
     #[test]
