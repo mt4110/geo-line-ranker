@@ -4,10 +4,10 @@ Profile packs describe which deterministic recommendation profile owns a demo
 path, source mapping, reason labels, and operating assumptions. They are local
 manifests, not runtime plugins.
 
-For the broader docs map, start with [Documentation Index](README.md). Profile
-authors should use this document before changing profile manifests, fixture
-ownership, source mappings, or profile-owned reason labels. For the first local
-run, use [First 15 Minutes](FIRST_15_MINUTES.md) and
+For the broader docs map, start with [Documentation Index](README.md).
+Profile-pack authoring starts here: use this document before changing profile
+manifests, fixture ownership, source mappings, or profile-owned reason labels.
+For the first local run, use [First 15 Minutes](FIRST_15_MINUTES.md) and
 [Quickstart](QUICKSTART.md) first.
 
 ## Current Profiles
@@ -16,6 +16,35 @@ run, use [First 15 Minutes](FIRST_15_MINUTES.md) and
 |---|---|---|
 | `local-discovery-generic` | `configs/profiles/local-discovery-generic/profile.yaml` | Small SQL-only demo path backed by `storage/fixtures/minimal`. |
 | `school-event-jp` | `configs/profiles/school-event-jp/profile.yaml` | Maintained JP school/event reference profile backed by JP adapter fixtures and event CSV examples. |
+
+## Authoring Flow
+
+Use this order when adding or adjusting a profile pack:
+
+1. Choose the closest baseline. Start from `local-discovery-generic` for a
+   small SQL-only local discovery path, or compare against `school-event-jp`
+   when the profile owns JP source manifests and event CSV examples.
+2. Edit the local profile manifests under `configs/profiles/<profile_id>/`.
+   A profile pack is a manifest contract, not a runtime plugin, marketplace
+   package, dynamic loader, or remote code source.
+3. Wire only the committed local evidence the profile owns: fixture manifests,
+   source manifests, event CSV examples, optional crawler manifests, and
+   profile-owned reason labels. Keep crawler output optional and reviewed.
+4. Validate locally with the narrow profile CLI before widening the check:
+
+   ```bash
+   cargo run -p cli -- profile validate
+   cargo run -p cli -- profile inspect --profile-id <profile_id>
+   cargo run -p cli -- config lint
+   ```
+
+5. Update example README files only when their role, request samples, or data
+   inputs change. Update versioning or testing docs only when the profile
+   contract or validation workflow changes.
+
+Validation failures should be deterministic and local. Do not add OpenSearch,
+full mode, live crawler operation, managed infrastructure, runtime plugin ABI,
+or marketplace assumptions to the profile-author starting path.
 
 ## Contract
 

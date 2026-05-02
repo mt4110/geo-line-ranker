@@ -36,7 +36,7 @@ Run these from the repository root after reading the first-run path:
 | New contributor | [Project README](../README.md), then [First 15 Minutes](FIRST_15_MINUTES.md) | [Quickstart](QUICKSTART.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md), [Testing](TESTING.md) |
 | Operator | [First 15 Minutes](FIRST_15_MINUTES.md), then [Quickstart](QUICKSTART.md) | [MVP Acceptance](MVP_ACCEPTANCE.md), [Operations](OPERATIONS.md), [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md) |
 | Maintainer | [Contributor Rules](../AGENTS.md), then [Architecture](ARCHITECTURE.md) | [API Spec](../API_SPEC.md), [Versioning](VERSIONING.md), [Deprecation Policy](DEPRECATION_POLICY.md), [Testing](TESTING.md), [v0.2.1 to v0.2.5 Design Plan](V0_2_1_TO_V0_2_5_DESIGN_PLAN.md) |
-| Profile author | [Profile Packs](PROFILE_PACKS.md), then [Local Discovery Generic](../examples/local-discovery-generic/README.md) | [School Event JP Reference](../examples/school-event-jp/README.md), [Architecture](ARCHITECTURE.md), [Reason Catalog](REASON_CATALOG.md), [Versioning](VERSIONING.md) |
+| Profile author | [Profile Packs](PROFILE_PACKS.md) | [Local Discovery Generic](../examples/local-discovery-generic/README.md), [School Event JP Reference](../examples/school-event-jp/README.md), [Architecture](ARCHITECTURE.md), [Reason Catalog](REASON_CATALOG.md), [Versioning](VERSIONING.md) |
 | Connector author | [Data Sources](DATA_SOURCES.md), then [Data Licenses](DATA_LICENSES.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md), [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md) |
 
 ## Choose By Task
