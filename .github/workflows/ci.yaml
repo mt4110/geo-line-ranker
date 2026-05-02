@@ -1,3 +1,5 @@
+# cspell:ignore pipefail
+
 name: ci
 
 on:
@@ -26,6 +28,33 @@ jobs:
           cargo run -p crawler -- manifest lint
       - name: Local review evaluation self-test
         run: python3 scripts/local_review_eval.py --self-test
+
+  openapi-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: OpenAPI drift
+        run: ./scripts/openapi_drift_check.sh
+
+  node-and-frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            packages/ts-sdk/package-lock.json
+            examples/frontend-next/package-lock.json
+      - name: TypeScript SDK build
+        run: ./scripts/ts_sdk_check.sh
+      - name: Example frontend smoke
+        run: ./scripts/frontend_smoke.sh
 
   rust-unit-tests:
     runs-on: ubuntu-latest
@@ -166,13 +195,38 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install PostgreSQL client
+      - name: Expose PostgreSQL client from service container
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-      - name: Wait for PostgreSQL
-        run: |
-          deadline=$((SECONDS + 90))
+          set -euo pipefail
+
+          postgres_container_id="$(
+            docker ps \
+              --filter "ancestor=postgis/postgis:16-3.4" \
+              --format "{{.ID}}" \
+              | head -n 1
+          )"
+          test -n "$postgres_container_id"
+
+          mkdir -p .github/bin
+          cat > .github/bin/psql <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          if [[ "${1:-}" == postgres://* || "${1:-}" == postgresql://* ]]; then
+            shift
+          fi
+
+          exec docker exec -i "$POSTGRES_CONTAINER_ID" \
+            psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-geo_line_ranker}" "$@"
+          SH
+          chmod +x .github/bin/psql
+
+          export PATH="$PWD/.github/bin:$PATH"
+          export POSTGRES_CONTAINER_ID="$postgres_container_id"
+          echo "$PWD/.github/bin" >> "$GITHUB_PATH"
+          echo "POSTGRES_CONTAINER_ID=$postgres_container_id" >> "$GITHUB_ENV"
+
+          deadline=$((SECONDS + 60))
           until psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "SELECT NOT pg_is_in_recovery();" | grep -qx t; do
             if (( SECONDS >= deadline )); then
               echo "timed out waiting for PostgreSQL" >&2

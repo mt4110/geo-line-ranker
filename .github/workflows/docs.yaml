@@ -10,25 +10,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Dump OpenAPI
-        run: |
-          cargo run -p cli -- dump-openapi
-          git diff --exit-code -- schemas/openapi.json
-      - name: Check docs files
-        run: |
-          test -f README.md
-          test -f README_EN.md
-          test -f docs/QUICKSTART.md
-          test -f docs/ARCHITECTURE.md
-          test -f docs/MVP_ACCEPTANCE.md
-          test -f docs/README.md
-          test -f docs/TESTING.md
-          test -f docs/DATA_SOURCES.md
-          test -f docs/DATA_LICENSES.md
-          test -f docs/REASON_CATALOG.md
-          test -f docs/VERSIONING.md
-          test -f docs/DEPRECATION_POLICY.md
-          test -f docs/design_document/README_JA.md
-          test -f .github/pull_request_template.md
-          test -f docs/OPERATIONS.md
+      - name: Docs files and local links
+        run: ./scripts/docs_check.sh

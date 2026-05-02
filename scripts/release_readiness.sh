@@ -61,8 +61,10 @@ If just is unavailable:
   ./scripts/mvp_acceptance.sh
   DATA_QUALITY_FAIL_ON_WARNING=true ./scripts/data_quality_doctor.sh
 
-CI evidence to compare with local validation:
+CI evidence to review alongside local validation:
   rust-quality
+  openapi-drift
+  node-and-frontend
   rust-unit-tests
   rust-postgres-tests
   mvp-acceptance
