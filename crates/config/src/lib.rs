@@ -577,6 +577,7 @@ impl ProfilePackRegistry {
         }
 
         if self.root.is_file() {
+            ensure_profile_manifest_file_name(&self.root)?;
             return Ok(load_profile_pack_manifest(&self.root)?.profile_id);
         }
 
@@ -588,14 +589,9 @@ impl ProfilePackRegistry {
         ensure_valid_profile_id(profile_id)?;
 
         if self.root.is_file() {
+            ensure_profile_manifest_file_name(&self.root)?;
             self.ensure_manifest_profile_id(&self.root, profile_id)?;
             return Ok(self.root.clone());
-        }
-
-        let conventional_path = self.root.join(profile_id).join("profile.yaml");
-        if conventional_path.is_file() {
-            self.ensure_manifest_profile_id(&conventional_path, profile_id)?;
-            return Ok(conventional_path);
         }
 
         self.discovered_manifest_path_for_profile_id(profile_id)
@@ -1534,11 +1530,7 @@ fn list_profile_manifest_paths(path: &Path) -> Result<Vec<PathBuf>> {
 
 fn collect_profile_manifest_paths(path: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
     if path.is_file() {
-        ensure!(
-            path.file_name().and_then(|file_name| file_name.to_str()) == Some("profile.yaml"),
-            "expected profile manifest file named profile.yaml, got {}",
-            path.display()
-        );
+        ensure_profile_manifest_file_name(path)?;
         paths.push(path.to_path_buf());
         return Ok(());
     }
@@ -1559,6 +1551,15 @@ fn collect_profile_manifest_paths(path: &Path, paths: &mut Vec<PathBuf>) -> Resu
             paths.push(entry_path);
         }
     }
+    Ok(())
+}
+
+fn ensure_profile_manifest_file_name(path: &Path) -> Result<()> {
+    ensure!(
+        path.file_name().and_then(|file_name| file_name.to_str()) == Some("profile.yaml"),
+        "expected profile manifest file named profile.yaml, got {}",
+        path.display()
+    );
     Ok(())
 }
 
@@ -1925,6 +1926,56 @@ files: []
             .expect_err("duplicate profile id");
 
         assert!(format!("{error:#}").contains("contains duplicate profile_id duplicate-profile"));
+    }
+
+    #[test]
+    fn profile_registry_rejects_non_profile_yaml_file_roots() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example-profile.yaml");
+        write_minimal_profile_manifest(&manifest_path, "example-profile", "minimal");
+
+        let registry = ProfilePackRegistry::new(&manifest_path);
+
+        let selected_error = registry
+            .selected_profile_id(None, super::DEFAULT_PROFILE_ID)
+            .expect_err("non-profile root selection");
+        assert!(format!("{selected_error:#}")
+            .contains("expected profile manifest file named profile.yaml"));
+
+        let manifest_error = registry
+            .manifest_path_for_profile_id("example-profile")
+            .expect_err("non-profile root manifest");
+        assert!(format!("{manifest_error:#}")
+            .contains("expected profile manifest file named profile.yaml"));
+    }
+
+    #[test]
+    fn profile_registry_discovers_matching_manifest_after_conventional_mismatch() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let conventional_dir = profiles_dir.join("example-profile");
+        let nested_dir = profiles_dir.join("nested");
+        fs::create_dir_all(&conventional_dir).expect("conventional profile dir");
+        fs::create_dir_all(&nested_dir).expect("nested profile dir");
+        write_minimal_profile_manifest(
+            &conventional_dir.join("profile.yaml"),
+            "stale-profile",
+            "minimal",
+        );
+        write_minimal_profile_manifest(
+            &nested_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+
+        let registry = ProfilePackRegistry::new(&profiles_dir);
+
+        assert_eq!(
+            registry
+                .manifest_path_for_profile_id("example-profile")
+                .expect("discovered profile"),
+            nested_dir.join("profile.yaml")
+        );
     }
 
     #[test]
