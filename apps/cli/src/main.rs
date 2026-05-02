@@ -14,7 +14,7 @@ use cli::{
     run_replay_evaluate, run_snapshot_refresh, ImportTarget,
 };
 use config::{
-    lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
+    lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
     load_profile_pack_manifest, resolve_profile_pack_runtime_selection, resolve_runtime_path,
     AppSettings, ProfilePackLintFile, ProfilePackLintSummary, ProfilePackManifest,
     RankingConfigLintSummary, DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
@@ -176,7 +176,7 @@ enum ProfileCommand {
     List {
         #[arg(
             long,
-            help = "Profile pack directory or profile.yaml file to list after validation. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+            help = "Profile pack root directory or explicit profile.yaml file to list after validation. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
     },
@@ -184,7 +184,7 @@ enum ProfileCommand {
     Validate {
         #[arg(
             long,
-            help = "Profile pack directory or profile.yaml file to validate. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+            help = "Profile pack root directory or explicit profile.yaml file to validate. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
     },
@@ -197,7 +197,7 @@ enum ProfileCommand {
         profile_id: Option<String>,
         #[arg(
             long,
-            help = "Profile pack directory or profile.yaml file to inspect. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+            help = "Profile pack root directory or explicit profile.yaml file to inspect. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
     },
@@ -214,7 +214,7 @@ enum ConfigCommand {
         path: Option<PathBuf>,
         #[arg(
             long,
-            help = "Profile pack directory or profile.yaml file to lint. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+            help = "Profile pack root directory or explicit profile.yaml file to lint. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
     },
@@ -398,20 +398,22 @@ async fn main() -> anyhow::Result<()> {
                     "PROFILE_PACKS_DIR",
                     PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
                 )?);
-                let profile_id = match profile_id {
-                    Some(profile_id) => profile_id,
-                    None => profile_id_for_lint(&profiles_path)?,
-                };
-                let manifest_path = profile_manifest_path_for_inspect(&profiles_path, &profile_id)?;
-                let lint_file = lint_profile_pack_file(&manifest_path)?;
-                ensure!(
-                    lint_file.profile_id == profile_id,
-                    "profile pack {} profile_id {} does not match requested profile_id {}",
-                    manifest_path.display(),
-                    lint_file.profile_id,
-                    profile_id
-                );
-                let manifest = load_profile_pack_manifest(&manifest_path)?;
+                let requested_profile_id =
+                    requested_profile_id_for_inspect(profile_id, &profiles_path)?;
+                let manifest_path = profile_manifest_path_for_inspect(
+                    &profiles_path,
+                    requested_profile_id.as_deref(),
+                )?;
+                let (manifest, lint_file) = load_and_lint_profile_pack_file(&manifest_path)?;
+                if let Some(profile_id) = requested_profile_id.as_deref() {
+                    ensure!(
+                        lint_file.profile_id == profile_id,
+                        "profile pack {} profile_id {} does not match requested profile_id {}",
+                        manifest_path.display(),
+                        lint_file.profile_id,
+                        profile_id
+                    );
+                }
                 println!(
                     "{}",
                     format_profile_inspect_summary(&manifest_path, &manifest, &lint_file)
@@ -522,53 +524,63 @@ fn active_profile_selection_for_lint(
 ) -> anyhow::Result<config::ProfilePackRuntimeSelection> {
     let profile_id = profile_id_for_lint(profiles_path)?;
     let fixture_set_id = config::env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
-    let selection_path =
-        direct_profile_manifest_path(profiles_path).unwrap_or_else(|| profiles_path.to_path_buf());
-    resolve_profile_pack_runtime_selection(selection_path, &profile_id, fixture_set_id.as_deref())
+    resolve_profile_pack_runtime_selection(profiles_path, &profile_id, fixture_set_id.as_deref())
 }
 
 fn profile_id_for_lint(profiles_path: &Path) -> anyhow::Result<String> {
     match config::env_optional_non_empty("PROFILE_ID")? {
         Some(profile_id) => Ok(profile_id),
-        None => match direct_profile_manifest_path(profiles_path) {
-            Some(manifest_path) => Ok(load_profile_pack_manifest(manifest_path)?.profile_id),
-            None => Ok(DEFAULT_PROFILE_ID.to_string()),
-        },
+        None if profiles_path.is_file() => {
+            Ok(load_profile_pack_manifest(profiles_path)?.profile_id)
+        }
+        None => Ok(DEFAULT_PROFILE_ID.to_string()),
     }
 }
 
 fn profile_manifest_path_for_inspect(
     profiles_path: &Path,
-    profile_id: &str,
+    profile_id: Option<&str>,
 ) -> anyhow::Result<PathBuf> {
+    if profiles_path.is_file() {
+        return Ok(profiles_path.to_path_buf());
+    }
+    let profile_id = profile_id.with_context(|| {
+        format!(
+            "profile_id is required when profiles_path {} is a directory",
+            profiles_path.display()
+        )
+    })?;
+    ensure_profile_id(profile_id)?;
+    Ok(profiles_path.join(profile_id).join("profile.yaml"))
+}
+
+fn requested_profile_id_for_inspect(
+    profile_id: Option<String>,
+    profiles_path: &Path,
+) -> anyhow::Result<Option<String>> {
+    if let Some(profile_id) = profile_id {
+        ensure_profile_id(&profile_id)?;
+        return Ok(Some(profile_id));
+    }
+    if let Some(profile_id) = config::env_optional_non_empty("PROFILE_ID")? {
+        ensure_profile_id(&profile_id)?;
+        return Ok(Some(profile_id));
+    }
+    if profiles_path.is_file() {
+        Ok(None)
+    } else {
+        Ok(Some(DEFAULT_PROFILE_ID.to_string()))
+    }
+}
+
+fn ensure_profile_id(profile_id: &str) -> anyhow::Result<()> {
     ensure!(
         config::is_profile_id(profile_id),
         "invalid profile_id '{}': {}",
         profile_id,
         config::PROFILE_ID_RULE_DESCRIPTION
     );
-    if let Some(manifest_path) = direct_profile_manifest_path(profiles_path) {
-        let manifest = load_profile_pack_manifest(&manifest_path)?;
-        ensure!(
-            manifest.profile_id == profile_id,
-            "profile pack {} profile_id {} does not match requested profile_id {}",
-            manifest_path.display(),
-            manifest.profile_id,
-            profile_id
-        );
-        Ok(manifest_path)
-    } else {
-        Ok(profiles_path.join(profile_id).join("profile.yaml"))
-    }
-}
-
-fn direct_profile_manifest_path(profiles_path: &Path) -> Option<PathBuf> {
-    if profiles_path.is_file() {
-        Some(profiles_path.to_path_buf())
-    } else {
-        let manifest_path = profiles_path.join("profile.yaml");
-        manifest_path.is_file().then_some(manifest_path)
-    }
+    Ok(())
 }
 
 fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> {
@@ -695,7 +707,7 @@ fn format_profile_inspect_summary(
 
     let mut lines = vec![
         format!(
-            "profile inspect ok: profile_id={} display_name=\"{}\"",
+            "profile inspect ok: profile_id={} display_name={:?}",
             manifest.profile_id, manifest.display_name
         ),
         format!("manifest={}", manifest_path.display()),
@@ -717,7 +729,7 @@ fn format_profile_inspect_summary(
     ];
 
     if let Some(description) = manifest.description.as_deref() {
-        lines.push(format!("description=\"{}\"", description));
+        lines.push(format!("description={description:?}"));
     }
 
     lines.push("fixtures:".to_string());
@@ -806,18 +818,19 @@ mod tests {
     }
 
     #[test]
-    fn profile_manifest_path_for_inspect_accepts_profile_directory() {
+    fn profile_manifest_path_for_inspect_keeps_directory_selection_mode() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let profile_dir = temp.path().join("profiles").join("custom-profile");
-        fs::create_dir_all(&profile_dir).expect("profile dir");
+        let profiles_dir = temp.path().join("profiles");
+        let other_profile_dir = profiles_dir.join("other-profile");
+        fs::create_dir_all(&other_profile_dir).expect("profile dir");
         fs::write(
-            profile_dir.join("profile.yaml"),
+            profiles_dir.join("profile.yaml"),
             r#"
 schema_version: 1
 kind: profile_pack
 manifest_version: 1
-profile_id: custom-profile
-display_name: Custom Profile
+profile_id: root-profile
+display_name: Root Profile
 supported_content_kinds:
   - school
 context_inputs:
@@ -828,11 +841,30 @@ reason_catalog: reasons.yaml
 article_support: reserved
 "#,
         )
-        .expect("profile manifest");
+        .expect("root profile manifest");
+        fs::write(
+            other_profile_dir.join("profile.yaml"),
+            r#"
+schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: other-profile
+display_name: Other Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: other_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("other profile manifest");
 
-        let path = profile_manifest_path_for_inspect(&profile_dir, "custom-profile")
+        let path = profile_manifest_path_for_inspect(&profiles_dir, Some("other-profile"))
             .expect("profile manifest path");
 
-        assert_eq!(path, profile_dir.join("profile.yaml"));
+        assert_eq!(path, other_profile_dir.join("profile.yaml"));
     }
 }
