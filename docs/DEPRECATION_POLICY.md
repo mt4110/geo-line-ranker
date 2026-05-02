@@ -60,7 +60,7 @@ underlying feature is removed, document the behavior change and update
 - Import and crawler manifests carry `schema_version: 1` plus `kind`, while
   keeping `manifest_version` for audit history.
 - Committed fixture sets carry `schema_version: 1`, `kind: fixture_set`, and
-  `manifest_version: 1` plus per-file checksum and row-count metadata.
+  `manifest_version: 2` plus per-file checksum and row-count metadata.
 - Local lint commands cover the active config and manifest sets:
 
 ```bash

@@ -1476,6 +1476,35 @@ files:
     }
 
     #[test]
+    fn fixture_doctor_rejects_unknown_manifest_keys() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("data.csv"), "id,name\n1,Example\n").expect("fixture");
+        let checksum = checksum_file(&temp.path().join("data.csv")).expect("checksum");
+        std::fs::write(
+            temp.path().join("fixture_manifest.yaml"),
+            format!(
+                r#"
+schema_version: 1
+kind: fixture_set
+manifest_version: 2
+fixture_set_id: test
+unknown_key: true
+files:
+  - logical_name: data
+    path: data.csv
+    format: csv
+    checksum_sha256: {checksum}
+    row_count: 1
+"#
+            ),
+        )
+        .expect("manifest");
+
+        let error = run_fixture_doctor(temp.path()).expect_err("unknown key");
+        assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
+    }
+
+    #[test]
     fn fixture_doctor_invalid_profile_id_error_includes_value() {
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::write(

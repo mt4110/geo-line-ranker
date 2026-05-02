@@ -1578,12 +1578,13 @@ mod tests {
 
     use super::{
         is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
-        parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
-        resolve_profile_pack_runtime_selection, validate_portable_relative_path,
-        validate_profile_pack_contract, validate_profile_reason_catalog, AppSettings,
-        ArticleSupport, CandidateRetrievalMode, ProfileContextInput, ProfilePackKind,
-        ProfilePackManifest, ProfileReasonCatalog, ProfileReasonCatalogKind, RankingConfigKind,
-        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        load_profile_pack_manifest, load_profile_reason_catalog, parse_candidate_retrieval_mode,
+        parse_postgres_pool_max_size, resolve_profile_pack_runtime_selection,
+        validate_portable_relative_path, validate_profile_pack_contract,
+        validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
+        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfileReasonCatalog,
+        ProfileReasonCatalogKind, RankingConfigKind, RankingProfiles,
+        DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     use domain::ContentKind;
@@ -1735,6 +1736,80 @@ files: []
         );
         assert!(summary.files.iter().all(|file| file.reason_count > 0));
         assert_eq!(summary.ranking_configs.len(), 1);
+    }
+
+    #[test]
+    fn rejects_unknown_ranking_config_keys() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("schools.default.yaml"),
+            r#"schema_version: 1
+kind: ranking_schools
+limit_default: 3
+strict_min_candidates: 2
+direct_station_bonus: 3.0
+line_match_bonus: 1.25
+distance_scale_meters: 1600.0
+walking_scale_minutes: 20.0
+unknown_key: true
+"#,
+        )
+        .expect("write config");
+
+        let error = RankingProfiles::load_from_dir(temp.path()).expect_err("unknown key");
+        assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
+    }
+
+    #[test]
+    fn rejects_unknown_profile_pack_keys() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+unknown_key: true
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("unknown key");
+        assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
+    }
+
+    #[test]
+    fn rejects_unknown_profile_reason_catalog_keys() {
+        let temp = tempdir().expect("tempdir");
+        let catalog_path = temp.path().join("reasons.yaml");
+        fs::write(
+            &catalog_path,
+            r#"schema_version: 1
+kind: profile_reason_catalog
+profile_id: example-profile
+unknown_key: true
+reasons:
+  - feature: direct_station_bonus
+    reason_code: geo.direct_station
+    label: Direct station
+    layer: core
+"#,
+        )
+        .expect("reason catalog");
+
+        let error = load_profile_reason_catalog(&catalog_path).expect_err("unknown key");
+        assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
     }
 
     #[test]
