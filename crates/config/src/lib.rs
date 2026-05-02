@@ -536,6 +536,8 @@ pub struct ProfileReason {
 pub struct ProfilePackLintFile {
     pub path: PathBuf,
     pub profile_id: String,
+    pub ranking_config_dir: PathBuf,
+    pub reason_catalog_path: PathBuf,
     pub schema_version: u32,
     pub kind: ProfilePackKind,
     pub manifest_version: u32,
@@ -938,8 +940,52 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
         )
     })?;
 
+    build_profile_pack_runtime_selection(
+        profile_pack_manifest,
+        &manifest,
+        reason_catalog_path,
+        ranking_config_dir,
+        fixture_set_id,
+    )
+}
+
+pub fn resolve_linted_profile_pack_runtime_selection(
+    profile_pack_manifest: impl AsRef<Path>,
+    manifest: &ProfilePackManifest,
+    lint_file: &ProfilePackLintFile,
+    fixture_set_id: Option<&str>,
+) -> Result<ProfilePackRuntimeSelection> {
+    ensure!(
+        lint_file.profile_id == manifest.profile_id,
+        "profile pack lint file profile_id {} does not match loaded manifest profile_id {}",
+        lint_file.profile_id,
+        manifest.profile_id
+    );
+    let profile_pack_manifest = profile_pack_manifest.as_ref();
+    let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize profile pack manifest {}",
+            profile_pack_manifest.display()
+        )
+    })?;
+    build_profile_pack_runtime_selection(
+        profile_pack_manifest,
+        manifest,
+        lint_file.reason_catalog_path.clone(),
+        lint_file.ranking_config_dir.clone(),
+        fixture_set_id,
+    )
+}
+
+fn build_profile_pack_runtime_selection(
+    profile_pack_manifest: PathBuf,
+    manifest: &ProfilePackManifest,
+    reason_catalog_path: PathBuf,
+    ranking_config_dir: PathBuf,
+    fixture_set_id: Option<&str>,
+) -> Result<ProfilePackRuntimeSelection> {
     let selected_fixture =
-        select_runtime_fixture(&profile_pack_manifest, &manifest, fixture_set_id)?;
+        select_runtime_fixture(&profile_pack_manifest, manifest, fixture_set_id)?;
     let (fixture_set_id, fixture_dir) = match selected_fixture {
         Some(fixture) => {
             let fixture_dir =
@@ -969,7 +1015,7 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
     };
 
     Ok(ProfilePackRuntimeSelection {
-        profile_id: manifest.profile_id,
+        profile_id: manifest.profile_id.clone(),
         profile_pack_manifest,
         reason_catalog_path,
         ranking_config_dir,
@@ -1147,7 +1193,21 @@ fn lint_loaded_profile_pack_file(
         lint_ranking_config_dir(&ranking_config_dir)?;
     }
 
-    let (_, reason_catalog) = load_profile_reason_catalog_for_manifest(path, manifest)?;
+    let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            ranking_config_dir.display()
+        )
+    })?;
+
+    let (reason_catalog_path, reason_catalog) =
+        load_profile_reason_catalog_for_manifest(path, manifest)?;
+    let reason_catalog_path = reason_catalog_path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize reason catalog {}",
+            reason_catalog_path.display()
+        )
+    })?;
 
     let mut fixture_ids = BTreeSet::new();
     for fixture in &manifest.fixtures {
@@ -1208,6 +1268,8 @@ fn lint_loaded_profile_pack_file(
     Ok(ProfilePackLintFile {
         path: path.to_path_buf(),
         profile_id: manifest.profile_id.clone(),
+        ranking_config_dir,
+        reason_catalog_path,
         schema_version: manifest.schema_version,
         kind: manifest.kind,
         manifest_version: manifest.manifest_version,

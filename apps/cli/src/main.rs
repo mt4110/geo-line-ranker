@@ -15,9 +15,9 @@ use cli::{
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
-    resolve_runtime_path, AppSettings, ProfilePackLintFile, ProfilePackLintSummary,
-    ProfilePackManifest, ProfilePackRegistry, RankingConfigLintSummary, DEFAULT_PROFILE_ID,
-    DEFAULT_PROFILE_PACKS_DIR,
+    resolve_linted_profile_pack_runtime_selection, resolve_runtime_path, AppSettings,
+    ProfilePackLintFile, ProfilePackLintSummary, ProfilePackManifest, ProfilePackRegistry,
+    RankingConfigLintSummary, DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
@@ -406,9 +406,13 @@ async fn main() -> anyhow::Result<()> {
                 )?;
                 let fixture_set_id = config::env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
                 let manifest_path = registry.manifest_path_for_profile_id(&profile_id)?;
-                let runtime_selection =
-                    registry.runtime_selection(&profile_id, fixture_set_id.as_deref())?;
                 let (manifest, lint_file) = load_and_lint_profile_pack_file(&manifest_path)?;
+                let runtime_selection = resolve_linted_profile_pack_runtime_selection(
+                    &manifest_path,
+                    &manifest,
+                    &lint_file,
+                    fixture_set_id.as_deref(),
+                )?;
                 println!(
                     "{}",
                     format_profile_inspect_summary(
@@ -771,6 +775,10 @@ mod tests {
             files: vec![ProfilePackLintFile {
                 path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
                 profile_id: "local-discovery-generic".to_string(),
+                ranking_config_dir: PathBuf::from("configs/ranking"),
+                reason_catalog_path: PathBuf::from(
+                    "configs/profiles/local-discovery-generic/reasons.yaml",
+                ),
                 schema_version: 1,
                 kind: ProfilePackKind::ProfilePack,
                 manifest_version: 1,
@@ -812,6 +820,10 @@ article_support: reserved
         let lint_file = ProfilePackLintFile {
             path: manifest_path.clone(),
             profile_id: "local-discovery-generic".to_string(),
+            ranking_config_dir: PathBuf::from("configs/ranking"),
+            reason_catalog_path: PathBuf::from(
+                "configs/profiles/local-discovery-generic/reasons.yaml",
+            ),
             schema_version: 1,
             kind: ProfilePackKind::ProfilePack,
             manifest_version: 1,

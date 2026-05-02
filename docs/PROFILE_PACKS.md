@@ -114,11 +114,14 @@ explanation semantics.
 
 Setting either `RANKING_CONFIG_DIR` or `FIXTURE_DIR` keeps legacy path mode:
 the explicit directory is used, the other directory falls back to its built-in
-default, and startup does not require profile pack IO. `PROFILE_FIXTURE_SET_ID`
-is optional; when omitted, the first fixture declared by the selected profile
-is used. Profiles may omit fixtures for ranking-only runtimes. Commands that
-consume fixtures require either a selected profile fixture or an explicit
-`FIXTURE_DIR`.
+default, and startup does not require profile pack IO. In that mode, the
+profile-owned `reason_catalog` reference is also skipped and left unresolved
+because no runtime profile is selected; runtime continues to use the built-in
+ranking reason-code behavior instead of deriving reason labels from a manifest.
+`PROFILE_FIXTURE_SET_ID` is optional; when omitted, the first fixture declared
+by the selected profile is used. Profiles may omit fixtures for ranking-only
+runtimes. Commands that consume fixtures require either a selected profile
+fixture or an explicit `FIXTURE_DIR`.
 
 CLI commands that do not consume ranking configs or fixtures, such as
 `migrate`, explicit-manifest imports, `derive`, `index`, `projection`, and
