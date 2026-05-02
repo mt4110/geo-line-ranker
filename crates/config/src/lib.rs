@@ -464,6 +464,11 @@ pub struct ProfileFixtureRef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ProfilePackManifestIdentity {
+    profile_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct ProfileFixtureManifestHeader {
     schema_version: u32,
     kind: String,
@@ -621,8 +626,11 @@ impl ProfilePackRegistry {
     fn discovered_manifest_path_for_profile_id(&self, profile_id: &str) -> Result<PathBuf> {
         let mut matched_path = None;
         for manifest_path in self.manifest_paths()? {
-            let manifest = load_profile_pack_manifest(&manifest_path)?;
-            if manifest.profile_id != profile_id {
+            let Ok(candidate_profile_id) = load_profile_pack_manifest_identity(&manifest_path)
+            else {
+                continue;
+            };
+            if candidate_profile_id != profile_id {
                 continue;
             }
             ensure!(
@@ -1060,6 +1068,15 @@ pub fn load_profile_pack_manifest(path: impl AsRef<Path>) -> Result<ProfilePackM
         .with_context(|| format!("failed to parse profile pack manifest {}", path.display()))?;
     validate_profile_pack_contract(path, &manifest)?;
     Ok(manifest)
+}
+
+fn load_profile_pack_manifest_identity(path: impl AsRef<Path>) -> Result<String> {
+    let path = path.as_ref();
+    let raw = read_raw(path)
+        .with_context(|| format!("failed to read profile pack manifest {}", path.display()))?;
+    let identity: ProfilePackManifestIdentity = serde_yaml::from_str(&raw)
+        .with_context(|| format!("failed to parse profile pack manifest {}", path.display()))?;
+    Ok(identity.profile_id)
 }
 
 pub fn lint_profile_pack_file(path: impl AsRef<Path>) -> Result<ProfilePackLintFile> {
@@ -1976,6 +1993,32 @@ files: []
                 .expect("discovered profile"),
             nested_dir.join("profile.yaml")
         );
+    }
+
+    #[test]
+    fn profile_registry_skips_invalid_unrelated_manifests_during_selection() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let broken_dir = profiles_dir.join("broken-profile");
+        let selected_dir = profiles_dir.join("example-profile");
+        fs::create_dir_all(&broken_dir).expect("broken profile dir");
+        fs::create_dir_all(&selected_dir).expect("selected profile dir");
+        fs::write(broken_dir.join("profile.yaml"), "schema_version: [").expect("broken profile");
+        write_minimal_profile_manifest(
+            &selected_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+
+        let registry = ProfilePackRegistry::new(&profiles_dir);
+
+        assert_eq!(
+            registry
+                .manifest_path_for_profile_id("example-profile")
+                .expect("selected profile"),
+            selected_dir.join("profile.yaml")
+        );
+        assert!(lint_profile_pack_dir(&profiles_dir).is_err());
     }
 
     #[test]
