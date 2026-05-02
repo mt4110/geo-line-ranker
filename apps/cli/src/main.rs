@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{ensure, Context};
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use cli::{
     format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
@@ -15,9 +15,9 @@ use cli::{
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
-    load_profile_pack_manifest, resolve_profile_pack_runtime_selection, resolve_runtime_path,
-    AppSettings, ProfilePackLintFile, ProfilePackLintSummary, ProfilePackManifest,
-    RankingConfigLintSummary, DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
+    resolve_runtime_path, AppSettings, ProfilePackLintFile, ProfilePackLintSummary,
+    ProfilePackManifest, ProfilePackRegistry, RankingConfigLintSummary, DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_PACKS_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
@@ -398,22 +398,14 @@ async fn main() -> anyhow::Result<()> {
                     "PROFILE_PACKS_DIR",
                     PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
                 )?);
-                let requested_profile_id =
-                    requested_profile_id_for_inspect(profile_id, &profiles_path)?;
-                let manifest_path = profile_manifest_path_for_inspect(
-                    &profiles_path,
-                    requested_profile_id.as_deref(),
+                let registry = ProfilePackRegistry::new(&profiles_path);
+                let env_profile_id = config::env_optional_non_empty("PROFILE_ID")?;
+                let profile_id = registry.selected_profile_id(
+                    profile_id.as_deref().or(env_profile_id.as_deref()),
+                    DEFAULT_PROFILE_ID,
                 )?;
+                let manifest_path = registry.manifest_path_for_profile_id(&profile_id)?;
                 let (manifest, lint_file) = load_and_lint_profile_pack_file(&manifest_path)?;
-                if let Some(profile_id) = requested_profile_id.as_deref() {
-                    ensure!(
-                        lint_file.profile_id == profile_id,
-                        "profile pack {} profile_id {} does not match requested profile_id {}",
-                        manifest_path.display(),
-                        lint_file.profile_id,
-                        profile_id
-                    );
-                }
                 println!(
                     "{}",
                     format_profile_inspect_summary(&manifest_path, &manifest, &lint_file)
@@ -522,65 +514,12 @@ async fn main() -> anyhow::Result<()> {
 fn active_profile_selection_for_lint(
     profiles_path: &Path,
 ) -> anyhow::Result<config::ProfilePackRuntimeSelection> {
-    let profile_id = profile_id_for_lint(profiles_path)?;
+    let registry = ProfilePackRegistry::new(profiles_path);
+    let requested_profile_id = config::env_optional_non_empty("PROFILE_ID")?;
+    let profile_id =
+        registry.selected_profile_id(requested_profile_id.as_deref(), DEFAULT_PROFILE_ID)?;
     let fixture_set_id = config::env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
-    resolve_profile_pack_runtime_selection(profiles_path, &profile_id, fixture_set_id.as_deref())
-}
-
-fn profile_id_for_lint(profiles_path: &Path) -> anyhow::Result<String> {
-    match config::env_optional_non_empty("PROFILE_ID")? {
-        Some(profile_id) => Ok(profile_id),
-        None if profiles_path.is_file() => {
-            Ok(load_profile_pack_manifest(profiles_path)?.profile_id)
-        }
-        None => Ok(DEFAULT_PROFILE_ID.to_string()),
-    }
-}
-
-fn profile_manifest_path_for_inspect(
-    profiles_path: &Path,
-    profile_id: Option<&str>,
-) -> anyhow::Result<PathBuf> {
-    if profiles_path.is_file() {
-        return Ok(profiles_path.to_path_buf());
-    }
-    let profile_id = profile_id.with_context(|| {
-        format!(
-            "profile_id is required when profiles_path {} is a directory",
-            profiles_path.display()
-        )
-    })?;
-    ensure_profile_id(profile_id)?;
-    Ok(profiles_path.join(profile_id).join("profile.yaml"))
-}
-
-fn requested_profile_id_for_inspect(
-    profile_id: Option<String>,
-    profiles_path: &Path,
-) -> anyhow::Result<Option<String>> {
-    if let Some(profile_id) = profile_id {
-        ensure_profile_id(&profile_id)?;
-        return Ok(Some(profile_id));
-    }
-    if let Some(profile_id) = config::env_optional_non_empty("PROFILE_ID")? {
-        ensure_profile_id(&profile_id)?;
-        return Ok(Some(profile_id));
-    }
-    if profiles_path.is_file() {
-        Ok(None)
-    } else {
-        Ok(Some(DEFAULT_PROFILE_ID.to_string()))
-    }
-}
-
-fn ensure_profile_id(profile_id: &str) -> anyhow::Result<()> {
-    ensure!(
-        config::is_profile_id(profile_id),
-        "invalid profile_id '{}': {}",
-        profile_id,
-        config::PROFILE_ID_RULE_DESCRIPTION
-    );
-    Ok(())
+    registry.runtime_selection(&profile_id, fixture_set_id.as_deref())
 }
 
 fn env_path_or_default(name: &str, default: PathBuf) -> anyhow::Result<PathBuf> {
@@ -818,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_manifest_path_for_inspect_keeps_directory_selection_mode() {
+    fn profile_registry_selects_manifest_by_profile_id() {
         let temp = tempfile::tempdir().expect("tempdir");
         let profiles_dir = temp.path().join("profiles");
         let other_profile_dir = profiles_dir.join("other-profile");
@@ -862,7 +801,10 @@ article_support: reserved
         )
         .expect("other profile manifest");
 
-        let path = profile_manifest_path_for_inspect(&profiles_dir, Some("other-profile"))
+        let registry = ProfilePackRegistry::new(&profiles_dir);
+
+        let path = registry
+            .manifest_path_for_profile_id("other-profile")
             .expect("profile manifest path");
 
         assert_eq!(path, other_profile_dir.join("profile.yaml"));

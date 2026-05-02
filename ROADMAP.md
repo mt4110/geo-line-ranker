@@ -11,9 +11,9 @@
   - keep AI / ML / embeddings / vector search out of the system
   - keep PostgreSQL/PostGIS as the reference implementation, Redis as cache only, and OpenSearch as optional candidate retrieval only
 
-- v0.2.19 profile CLI scaffold
-  - add thin `cli profile list`, `cli profile validate`, and `cli profile inspect` entry points over the existing profile-pack contract
-  - keep `config lint` as the combined active ranking config and profile-pack lint command
+- v0.2.20 profile registry scaffold
+  - add a small local `ProfilePackRegistry` helper for profile manifest discovery and `profile_id` selection
+  - keep `cli profile list`, `cli profile validate`, `cli profile inspect`, and `config lint` on the existing profile-pack contract
   - keep `school-event-jp` as the reference profile and `local-discovery-generic` as the small default demo
   - keep profile-pack work local and manifest-based without runtime plugin ABI, marketplace, or dynamic code loading
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
@@ -22,12 +22,13 @@
   - keep OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
   - keep public API shape unchanged
 
-## v0.2.19 Exit Gates
+## v0.2.20 Exit Gates
 
-- `ROADMAP.md` names v0.2.19 profile CLI scaffold as current and moves v0.2.18 config contract closeout into Recently Completed.
+- `ROADMAP.md` names v0.2.20 profile registry scaffold as current and moves v0.2.19 profile CLI scaffold into Recently Completed.
+- `ProfilePackRegistry` owns local manifest discovery, selected `profile_id` resolution, and runtime selection handoff without adding plugin loading.
 - `cargo run -p cli -- profile list` lists committed profile packs with validated manifest metadata.
 - `cargo run -p cli -- profile validate` validates profile pack manifests, reason catalogs, fixture references, and profile-owned local references through the existing contract checks.
-- `cargo run -p cli -- profile inspect --profile-id local-discovery-generic` shows one selected profile without changing runtime behavior.
+- `cargo run -p cli -- profile inspect --profile-id local-discovery-generic` shows one selected profile through the registry path without changing ranking semantics.
 - `cargo run -p cli -- config lint` keeps its current meaning as the combined active ranking config and profile-pack lint command.
 - `docs/PROFILE_PACKS.md`, `docs/TESTING.md`, `docs/CONTRIBUTING_LOCAL.md`, `docs/README.md`, and this roadmap route profile authors to the same minimal CLI entry points.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
@@ -44,6 +45,14 @@
 
 ## Recently Completed
 
+- v0.2.19 profile CLI scaffold
+  - added thin `cli profile list`, `cli profile validate`, and `cli profile inspect` entry points over the existing profile-pack contract
+  - kept `config lint` as the combined active ranking config and profile-pack lint command
+  - kept `school-event-jp` as the reference profile and `local-discovery-generic` as the small default demo
+  - kept profile-pack work local and manifest-based without runtime plugin ABI, marketplace, or dynamic code loading
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept optional full-mode, crawler, and managed infrastructure work outside the fixed gate
+  - kept public API shape unchanged
 - v0.2.18 config contract closeout
   - inventoried and closed out active ranking config, profile pack, import source manifest, crawler manifest, and fixture manifest contracts
   - kept `schema_version`, `kind`, `manifest_version`, strict unknown-key validation, and local lint docs aligned with implementation
@@ -288,13 +297,13 @@
 
 ## Next
 
-- After v0.2.19 profile CLI scaffold
+- After v0.2.20 profile registry scaffold
   - keep the first-run guide small as more contributor docs are added
   - keep the docs index useful as a routing map rather than turning it into a second runbook
   - add deeper profile-author and connector-author docs only when the underlying workflows change
   - use the profile CLI scaffold as the baseline for later profile-pack implementation work
   - keep public docs and non-engineer design docs aligned when the next sample or onboarding improvement lands
-- Later hardening after v0.2.19
+- Later hardening after v0.2.20
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

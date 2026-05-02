@@ -123,20 +123,25 @@ impl AppSettings {
                         "PROFILE_PACKS_DIR",
                         resolve_runtime_path(DEFAULT_PROFILE_PACKS_DIR),
                     )?;
-                    let profile_id = env_optional_non_empty("PROFILE_ID")?
-                        .unwrap_or_else(|| DEFAULT_PROFILE_ID.to_string());
+                    let requested_profile_id = env_optional_non_empty("PROFILE_ID")?;
                     let requested_fixture_set_id =
                         env_optional_non_empty("PROFILE_FIXTURE_SET_ID")?;
                     let legacy_path_mode =
                         ranking_config_dir_override.is_some() || fixture_dir_override.is_some();
-                    let runtime_profile = if legacy_path_mode {
-                        None
+                    let (profile_id, runtime_profile) = if legacy_path_mode {
+                        (
+                            requested_profile_id.unwrap_or_else(|| DEFAULT_PROFILE_ID.to_string()),
+                            None,
+                        )
                     } else {
-                        Some(resolve_profile_pack_runtime_selection(
-                            profile_packs_dir,
-                            &profile_id,
-                            requested_fixture_set_id.as_deref(),
-                        )?)
+                        let registry = ProfilePackRegistry::new(profile_packs_dir);
+                        let profile_id = registry.selected_profile_id(
+                            requested_profile_id.as_deref(),
+                            DEFAULT_PROFILE_ID,
+                        )?;
+                        let runtime_profile = registry
+                            .runtime_selection(&profile_id, requested_fixture_set_id.as_deref())?;
+                        (profile_id, Some(runtime_profile))
                     };
                     (
                         ranking_config_dir_override,
@@ -545,6 +550,104 @@ pub struct ProfilePackRuntimeSelection {
     pub fixture_dir: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfilePackRegistry {
+    root: PathBuf,
+}
+
+impl ProfilePackRegistry {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            root: path.as_ref().to_path_buf(),
+        }
+    }
+
+    pub fn manifest_paths(&self) -> Result<Vec<PathBuf>> {
+        list_profile_manifest_paths(&self.root)
+    }
+
+    pub fn selected_profile_id(
+        &self,
+        requested_profile_id: Option<&str>,
+        default_profile_id: &str,
+    ) -> Result<String> {
+        if let Some(profile_id) = requested_profile_id {
+            ensure_valid_profile_id(profile_id)?;
+            return Ok(profile_id.to_string());
+        }
+
+        if self.root.is_file() {
+            return Ok(load_profile_pack_manifest(&self.root)?.profile_id);
+        }
+
+        ensure_valid_profile_id(default_profile_id)?;
+        Ok(default_profile_id.to_string())
+    }
+
+    pub fn manifest_path_for_profile_id(&self, profile_id: &str) -> Result<PathBuf> {
+        ensure_valid_profile_id(profile_id)?;
+
+        if self.root.is_file() {
+            self.ensure_manifest_profile_id(&self.root, profile_id)?;
+            return Ok(self.root.clone());
+        }
+
+        let conventional_path = self.root.join(profile_id).join("profile.yaml");
+        if conventional_path.is_file() {
+            self.ensure_manifest_profile_id(&conventional_path, profile_id)?;
+            return Ok(conventional_path);
+        }
+
+        self.discovered_manifest_path_for_profile_id(profile_id)
+    }
+
+    pub fn runtime_selection(
+        &self,
+        profile_id: &str,
+        fixture_set_id: Option<&str>,
+    ) -> Result<ProfilePackRuntimeSelection> {
+        let profile_pack_manifest = self.manifest_path_for_profile_id(profile_id)?;
+        resolve_profile_pack_runtime_selection_from_manifest(profile_pack_manifest, fixture_set_id)
+    }
+
+    fn ensure_manifest_profile_id(&self, path: &Path, profile_id: &str) -> Result<()> {
+        let manifest = load_profile_pack_manifest(path)?;
+        ensure!(
+            manifest.profile_id == profile_id,
+            "profile pack {} profile_id {} does not match selected profile_id {}",
+            path.display(),
+            manifest.profile_id,
+            profile_id
+        );
+        Ok(())
+    }
+
+    fn discovered_manifest_path_for_profile_id(&self, profile_id: &str) -> Result<PathBuf> {
+        let mut matched_path = None;
+        for manifest_path in self.manifest_paths()? {
+            let manifest = load_profile_pack_manifest(&manifest_path)?;
+            if manifest.profile_id != profile_id {
+                continue;
+            }
+            ensure!(
+                matched_path.is_none(),
+                "profile pack path {} contains duplicate profile_id {}",
+                self.root.display(),
+                profile_id
+            );
+            matched_path = Some(manifest_path);
+        }
+
+        matched_path.with_context(|| {
+            format!(
+                "profile pack path {} does not contain profile_id {}",
+                self.root.display(),
+                profile_id
+            )
+        })
+    }
+}
+
 impl RankingProfiles {
     pub fn load_from_dir(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -787,18 +890,14 @@ pub fn resolve_profile_pack_runtime_selection(
     profile_id: &str,
     fixture_set_id: Option<&str>,
 ) -> Result<ProfilePackRuntimeSelection> {
-    ensure!(
-        is_profile_id(profile_id),
-        "invalid profile_id '{}': {}",
-        profile_id,
-        PROFILE_ID_RULE_DESCRIPTION
-    );
-    let profile_pack_path = profile_packs_dir.as_ref();
-    let profile_pack_manifest = if profile_pack_path.is_file() {
-        profile_pack_path.to_path_buf()
-    } else {
-        profile_pack_path.join(profile_id).join("profile.yaml")
-    };
+    ProfilePackRegistry::new(profile_packs_dir).runtime_selection(profile_id, fixture_set_id)
+}
+
+fn resolve_profile_pack_runtime_selection_from_manifest(
+    profile_pack_manifest: impl AsRef<Path>,
+    fixture_set_id: Option<&str>,
+) -> Result<ProfilePackRuntimeSelection> {
+    let profile_pack_manifest = profile_pack_manifest.as_ref();
     let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
         format!(
             "failed to canonicalize profile pack manifest {}",
@@ -806,13 +905,6 @@ pub fn resolve_profile_pack_runtime_selection(
         )
     })?;
     let manifest = load_profile_pack_manifest(&profile_pack_manifest)?;
-    ensure!(
-        manifest.profile_id == profile_id,
-        "profile pack {} profile_id {} does not match selected profile_id {}",
-        profile_pack_manifest.display(),
-        manifest.profile_id,
-        profile_id
-    );
 
     let ranking_config_dir = resolve_profile_ref(
         &profile_pack_manifest,
@@ -869,6 +961,16 @@ pub fn resolve_profile_pack_runtime_selection(
         fixture_set_id,
         fixture_dir,
     })
+}
+
+fn ensure_valid_profile_id(profile_id: &str) -> Result<()> {
+    ensure!(
+        is_profile_id(profile_id),
+        "invalid profile_id '{}': {}",
+        profile_id,
+        PROFILE_ID_RULE_DESCRIPTION
+    );
+    Ok(())
 }
 
 fn select_runtime_fixture<'a>(
@@ -1114,10 +1216,11 @@ fn lint_ranking_config_dir_cached(
 
 pub fn lint_profile_pack_dir(path: impl AsRef<Path>) -> Result<ProfilePackLintSummary> {
     let path = path.as_ref();
+    let registry = ProfilePackRegistry::new(path);
     let mut files = Vec::new();
     let mut seen_profile_ids = BTreeSet::new();
     let mut ranking_config_cache = BTreeMap::new();
-    for manifest_path in list_profile_manifest_paths(path)? {
+    for manifest_path in registry.manifest_paths()? {
         let file =
             lint_profile_pack_file_with_cache(&manifest_path, Some(&mut ranking_config_cache))?;
         ensure!(
@@ -1599,8 +1702,8 @@ mod tests {
         parse_postgres_pool_max_size, resolve_profile_pack_runtime_selection,
         validate_portable_relative_path, validate_profile_pack_contract,
         validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
-        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfileReasonCatalog,
-        ProfileReasonCatalogKind, RankingConfigKind, RankingProfiles,
+        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfilePackRegistry,
+        ProfileReasonCatalog, ProfileReasonCatalogKind, RankingConfigKind, RankingProfiles,
         DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
@@ -1753,6 +1856,75 @@ files: []
         );
         assert!(summary.files.iter().all(|file| file.reason_count > 0));
         assert_eq!(summary.ranking_configs.len(), 1);
+    }
+
+    #[test]
+    fn profile_registry_discovers_manifest_by_profile_id() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let other_profile_dir = profiles_dir.join("other-profile");
+        fs::create_dir_all(&other_profile_dir).expect("profile dir");
+        write_minimal_profile_manifest(&profiles_dir.join("profile.yaml"), "root-profile", "root");
+        write_minimal_profile_manifest(
+            &other_profile_dir.join("profile.yaml"),
+            "other-profile",
+            "minimal",
+        );
+
+        let registry = ProfilePackRegistry::new(&profiles_dir);
+
+        assert_eq!(
+            registry
+                .manifest_path_for_profile_id("root-profile")
+                .expect("root manifest"),
+            profiles_dir.join("profile.yaml")
+        );
+        assert_eq!(
+            registry
+                .manifest_path_for_profile_id("other-profile")
+                .expect("nested manifest"),
+            other_profile_dir.join("profile.yaml")
+        );
+        assert_eq!(
+            registry
+                .selected_profile_id(None, super::DEFAULT_PROFILE_ID)
+                .expect("default profile id"),
+            super::DEFAULT_PROFILE_ID
+        );
+
+        let file_registry = ProfilePackRegistry::new(profiles_dir.join("profile.yaml"));
+        assert_eq!(
+            file_registry
+                .selected_profile_id(None, super::DEFAULT_PROFILE_ID)
+                .expect("file profile id"),
+            "root-profile"
+        );
+    }
+
+    #[test]
+    fn profile_registry_rejects_duplicate_discovered_profile_ids() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let first_dir = profiles_dir.join("first");
+        let second_dir = profiles_dir.join("second");
+        fs::create_dir_all(&first_dir).expect("first profile dir");
+        fs::create_dir_all(&second_dir).expect("second profile dir");
+        write_minimal_profile_manifest(
+            &first_dir.join("profile.yaml"),
+            "duplicate-profile",
+            "minimal",
+        );
+        write_minimal_profile_manifest(
+            &second_dir.join("profile.yaml"),
+            "duplicate-profile",
+            "minimal",
+        );
+
+        let error = ProfilePackRegistry::new(&profiles_dir)
+            .manifest_path_for_profile_id("duplicate-profile")
+            .expect_err("duplicate profile id");
+
+        assert!(format!("{error:#}").contains("contains duplicate profile_id duplicate-profile"));
     }
 
     #[test]
@@ -2142,6 +2314,45 @@ reasons:
             Path::new("configs")
                 .join("profiles")
                 .join("local-discovery-generic")
+                .join("profile.yaml")
+        ));
+        assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
+        clear_app_env();
+    }
+
+    #[test]
+    fn app_settings_uses_profile_yaml_file_id_when_profile_env_is_missing() {
+        let _env_guard = env_lock().lock().expect("env lock");
+        clear_app_env();
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "example-profile",
+        );
+
+        env::set_var("PROFILE_PACKS_DIR", profile_dir.join("profile.yaml"));
+        env::set_var("CANDIDATE_RETRIEVAL_MODE", "sql_only");
+
+        let settings = AppSettings::from_env().expect("settings");
+
+        assert_eq!(settings.profile_id, "example-profile");
+        assert!(Path::new(&settings.profile_pack_manifest).ends_with(
+            Path::new("profiles")
+                .join("example-profile")
                 .join("profile.yaml")
         ));
         assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
