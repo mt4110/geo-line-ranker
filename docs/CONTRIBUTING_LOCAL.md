@@ -22,6 +22,7 @@ There is no standalone `station_converter_ja/` directory in this repository toda
 | Docs-only routing or onboarding | [Documentation Index](README.md), [First 15 Minutes](FIRST_15_MINUTES.md) | `git diff --check`, docs link/self-review |
 | Ranking behavior, reasons, or fallback | [Reason Catalog](REASON_CATALOG.md), [Architecture](ARCHITECTURE.md) | ranking tests, default validation |
 | Public API shape | [API Spec](../API_SPEC.md), [Versioning](VERSIONING.md) | OpenAPI/API docs update, default validation |
+| TypeScript SDK or example frontend | [Testing](TESTING.md) | `just ts-sdk-check`, `just frontend-smoke`, `just openapi-drift` when API shape is involved |
 | Profile pack or fixture ownership | [Profile Packs](PROFILE_PACKS.md) | `cargo run -p cli -- config lint`, fixture doctor |
 | Connector, source manifest, or crawler source | [Data Sources](DATA_SOURCES.md), [Data Licenses](DATA_LICENSES.md) | source-manifest lint, crawler manifest lint, fixture doctor |
 
@@ -39,6 +40,8 @@ There is no standalone `station_converter_ja/` directory in this repository toda
 - `storage/sources/jp_rail`, `storage/sources/jp_postal`, `storage/sources/jp_school`, `storage/sources/jp_school_geo`: source manifests for local import verification.
 - `storage/migrations/postgres`: PostgreSQL/PostGIS migrations.
 - `schemas/openapi.json`: generated OpenAPI artifact.
+- `packages/ts-sdk`: TypeScript SDK package.
+- `examples/frontend-next`: small Next.js example frontend.
 - `docs`: architecture, testing, operations, quickstart, and contributor docs.
 
 ## Exact Build, Lint, and Test Commands
@@ -62,6 +65,30 @@ Convenience commands are also available:
 just fmt
 just lint
 just test
+just smoke
+just docs
+just ts-sdk-check
+just frontend-smoke
+just openapi-drift
+just ci-local
+```
+
+`just ci-local` is intentionally heavier than the first-pass contributor
+commands. It mirrors selected separated local and CI concerns without changing
+the fixed public-MVP gate.
+
+Node and frontend checks:
+
+```bash
+just ts-sdk-check
+just frontend-smoke
+```
+
+If the public API shape changes, run the OpenAPI drift check and update both
+`schemas/openapi.json` and `API_SPEC.md` in the same change:
+
+```bash
+just openapi-drift
 ```
 
 ## DB-Specific Verification

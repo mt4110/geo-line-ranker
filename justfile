@@ -15,6 +15,22 @@ docs:
 eval:
   ./scripts/contributor_eval.sh
 
+openapi-drift:
+  ./scripts/openapi_drift_check.sh
+
+ts-sdk-check:
+  ./scripts/ts_sdk_check.sh
+
+frontend-smoke:
+  ./scripts/frontend_smoke.sh
+
+node-check:
+  ./scripts/ts_sdk_check.sh
+  ./scripts/frontend_smoke.sh
+
+ci-local:
+  ./scripts/ci_local.sh
+
 fmt:
   cargo fmt --all
 

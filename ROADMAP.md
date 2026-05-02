@@ -11,25 +11,25 @@
   - keep AI / ML / embeddings / vector search out of the system
   - keep PostgreSQL/PostGIS as the reference implementation, Redis as cache only, and OpenSearch as optional candidate retrieval only
 
-- v0.2.16 contributor just entrypoints
-  - add `just setup`, `just dev`, `just smoke`, `just docs`, and `just eval` as runnable contributor/operator entrypoints
-  - keep the v0.2.15 audience/task docs routing as the map and make the commands visible from README, docs index, Quickstart, and Testing
-  - keep `just smoke`, `just docs`, and `just eval` as contributor tooling rather than public-MVP gate expansion
+- v0.2.17 ci-local and frontend checks
+  - add separated local entrypoints for OpenAPI drift, TypeScript SDK build, example frontend smoke, and selected local CI mirroring
+  - make Node/TS SDK and example frontend build checks visible from contributor docs and pull request CI
+  - keep docs link checks, OpenAPI drift checks, frontend smoke, and `just ci-local` as contributor/CI tooling rather than public-MVP gate expansion
   - keep the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
   - keep `just mvp-acceptance` as the fixed six-case public-MVP gate
   - keep optional evidence handoff as review inventory and handoff support only, not a fixed gate
   - keep OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
   - keep public API shape unchanged
 
-## v0.2.16 Exit Gates
+## v0.2.17 Exit Gates
 
-- `ROADMAP.md` names v0.2.16 contributor just entrypoints as current and moves v0.2.15 docs index audience alignment into Recently Completed.
-- `just setup` prepares the SQL-only first-run baseline with `.env`, PostgreSQL/Redis, migrations, default sample seeding, and the operational `event-csv` sample import.
-- `just dev` starts the worker and API together for local development after setup.
-- `just smoke` runs read-only contributor smoke checks for config lint, source manifest lint, the default fixture doctor, crawler manifest lint, and whitespace.
-- `just docs` checks required docs files and local Markdown links as contributor tooling, not as a public-MVP gate.
-- `just eval` runs the offline local review evaluation self-test and can include replay evaluation only when traces exist and `RUN_REPLAY_EVAL=1` is set.
-- README, `docs/README.md`, `docs/FIRST_15_MINUTES.md`, `docs/QUICKSTART.md`, and `docs/TESTING.md` route readers to the new commands without duplicating the full runbook.
+- `ROADMAP.md` names v0.2.17 ci-local and frontend checks as current and moves v0.2.16 contributor just entrypoints into Recently Completed.
+- `just ts-sdk-check` installs locked `packages/ts-sdk` dependencies and runs the TypeScript SDK build.
+- `just frontend-smoke` installs locked `examples/frontend-next` dependencies and runs a production-build smoke without requiring a running API.
+- `just openapi-drift` regenerates `schemas/openapi.json` and fails on generated contract drift.
+- `just ci-local` mirrors selected separated Rust, smoke, OpenAPI drift, docs, TypeScript SDK, and frontend checks for local use.
+- Pull request CI shows Rust, OpenAPI drift, Node/TS frontend checks, docs links, spellcheck, public MVP acceptance, and data-quality evidence as separate concerns.
+- README, `docs/README.md`, `docs/TESTING.md`, and `docs/CONTRIBUTING_LOCAL.md` route contributors to the new checks without turning the docs index into a second runbook.
 - The public MVP gate remains `sql_only` + `event-csv` + PostgreSQL/PostGIS + Redis.
 - `just mvp-acceptance` remains the fixed six-case public-MVP gate.
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` remains strict release and post-MVP evidence; doctor `review_items` are classified by humans before issue or PR work starts.
@@ -44,6 +44,15 @@
 
 ## Recently Completed
 
+- v0.2.16 contributor just entrypoints
+  - added `just setup`, `just dev`, `just smoke`, `just docs`, and `just eval` as runnable contributor/operator entrypoints
+  - kept the v0.2.15 audience/task docs routing as the map and made the commands visible from README, docs index, Quickstart, and Testing
+  - kept `just smoke`, `just docs`, and `just eval` as contributor tooling rather than public-MVP gate expansion
+  - kept the public MVP gate fixed to `sql_only`, `event-csv`, PostgreSQL/PostGIS, and Redis
+  - kept `just mvp-acceptance` as the fixed six-case public-MVP gate
+  - kept optional evidence handoff as review inventory and handoff support only, not a fixed gate
+  - kept OpenSearch, `full` mode, live crawler operation, and managed infrastructure outside the fixed gate
+  - kept public API shape unchanged
 - v0.2.15 docs index audience alignment
   - made `docs/README.md` the routing map by audience and task
   - kept `docs/FIRST_15_MINUTES.md` focused on the first-run sequence and first success state
@@ -261,14 +270,12 @@
 
 ## Next
 
-- After v0.2.16 contributor just entrypoints
+- After v0.2.17 ci-local and frontend checks
   - keep the first-run guide small as more contributor docs are added
   - keep the docs index useful as a routing map rather than turning it into a second runbook
-  - consider docs link checking only as a contributor UX improvement, not as a new public-MVP gate
-  - consider `just ci-local` only after Rust, Node/TS, OpenAPI drift, and docs checks are clearly separated
   - add deeper profile-author and connector-author docs only when the underlying workflows change
   - keep public docs and non-engineer design docs aligned when the next sample or onboarding improvement lands
-- Later hardening after v0.2.16
+- Later hardening after v0.2.17
   - promote additional crawler manifests only after post-MVP graduation evidence is reviewed
   - consider broader full-mode automation only if operator comparisons show a clear need
   - add production hosting or managed infrastructure only through explicit review

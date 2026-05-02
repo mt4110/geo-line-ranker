@@ -27,6 +27,33 @@ jobs:
       - name: Local review evaluation self-test
         run: python3 scripts/local_review_eval.py --self-test
 
+  openapi-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: OpenAPI drift
+        run: ./scripts/openapi_drift_check.sh
+
+  node-and-frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            packages/ts-sdk/package-lock.json
+            examples/frontend-next/package-lock.json
+      - name: TypeScript SDK build
+        run: ./scripts/ts_sdk_check.sh
+      - name: Example frontend smoke
+        run: ./scripts/frontend_smoke.sh
+
   rust-unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20

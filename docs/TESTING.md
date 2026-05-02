@@ -32,6 +32,10 @@ Use these shorter entrypoints before choosing a broader validation set:
 just smoke
 just docs
 just eval
+just ts-sdk-check
+just frontend-smoke
+just openapi-drift
+just ci-local
 ```
 
 `just smoke` is a read-only SQL-only contributor smoke pass for config lint,
@@ -45,6 +49,24 @@ contributor tooling, not as a release gate expansion.
 `just eval` runs the offline local review evaluation self-test. After the
 database has recommendation traces, `RUN_REPLAY_EVAL=1 just eval` also runs
 `cargo run -p cli -- replay evaluate --limit 20`.
+
+`just ts-sdk-check` installs the locked `packages/ts-sdk` dependencies with
+`npm ci` and runs the TypeScript SDK build.
+
+`just frontend-smoke` installs the locked `examples/frontend-next`
+dependencies with `npm ci` and runs the example frontend production-build
+smoke. It does not require a running API.
+
+`just openapi-drift` regenerates `schemas/openapi.json` and fails if the
+generated file differs from the committed artifact. This is contract drift
+tooling; public API changes still require an intentional OpenAPI and
+`API_SPEC.md` update in the same change.
+
+`just ci-local` is a selected local mirror for separated CI concerns: Rust
+formatting, clippy, workspace tests, SQL-only contributor smoke, OpenAPI drift,
+docs links, TypeScript SDK build, and frontend smoke. It is not the fixed
+public-MVP gate and it is not a replacement for every GitHub Actions job; keep
+using `just mvp-acceptance` for the six-case gate.
 
 When the local PostgreSQL container is memory constrained, the workspace test
 can also be run with serialized Rust test execution:
@@ -63,8 +85,16 @@ Pull request CI keeps the static checks and test execution separate:
   tests.
 - `rust-postgres-tests`: PostgreSQL/Redis-backed shards for `api`, `cli`,
   `crawler`, and `worker` plus `storage-postgres`.
+- `openapi-drift`: generated OpenAPI contract drift check.
+- `node-and-frontend`: TypeScript SDK build and example frontend
+  production-build smoke.
 - `mvp-acceptance`: the public MVP acceptance flow.
 - `data-quality-doctor`: the read-only data quality evidence pass.
+
+The separate `docs` workflow runs required docs file and local Markdown link
+checks. The separate `spellcheck` workflow runs cspell. These checks are
+contributor and CI tooling; they do not add docs links, frontend builds, or
+OpenAPI drift to the fixed public-MVP gate.
 
 Each `rust-postgres-tests` shard gets its own GitHub Actions PostgreSQL and
 Redis services, and runs with `RUST_TEST_THREADS=1` inside the shard. This keeps

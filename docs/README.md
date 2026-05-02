@@ -24,6 +24,10 @@ Run these from the repository root after reading the first-run path:
 | `just smoke` | Run read-only SQL-only contributor smoke checks for configs, source manifests, the default fixture, crawler manifests, and whitespace. |
 | `just docs` | Check required docs files and local Markdown links. This is contributor tooling, not a public-MVP gate. |
 | `just eval` | Run the offline local review evaluation self-test. Set `RUN_REPLAY_EVAL=1` after capturing recommendation traces to include replay evaluation. |
+| `just ts-sdk-check` | Install locked TypeScript SDK dependencies and run the SDK build. |
+| `just frontend-smoke` | Install locked example frontend dependencies and run a production-build smoke. |
+| `just openapi-drift` | Regenerate `schemas/openapi.json` and fail if the generated contract has drifted. |
+| `just ci-local` | Run a selected local mirror for separated Rust, smoke, OpenAPI, docs, SDK, and frontend checks. |
 
 ## Choose By Audience
 
@@ -42,6 +46,8 @@ Run these from the repository root after reading the first-run path:
 | Run the baseline locally | [First 15 Minutes](FIRST_15_MINUTES.md), then `just setup` and `just dev` | [Quickstart](QUICKSTART.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
 | Make a bounded code change | [Local Contributing Guide](CONTRIBUTING_LOCAL.md), then `just smoke` | [Testing](TESTING.md), [Architecture](ARCHITECTURE.md) |
 | Check docs routing | `just docs` | [First 15 Minutes](FIRST_15_MINUTES.md), [Quickstart](QUICKSTART.md), [Testing](TESTING.md) |
+| Check SDK or frontend build health | `just ts-sdk-check` or `just frontend-smoke` | [Testing](TESTING.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md) |
+| Run selected CI-like checks locally before a broad PR | `just ci-local` | [Testing](TESTING.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md) |
 | Run local evaluation tooling | `just eval` | [Testing](TESTING.md), [Operations](OPERATIONS.md) |
 | Change ranking scores, reasons, or fallback behavior | [Reason Catalog](REASON_CATALOG.md) | [Architecture](ARCHITECTURE.md), [Testing](TESTING.md), [Versioning](VERSIONING.md) |
 | Change public API fields | [API Spec](../API_SPEC.md) | [Versioning](VERSIONING.md), [Deprecation Policy](DEPRECATION_POLICY.md), [Testing](TESTING.md) |
@@ -64,6 +70,10 @@ The fixed public-MVP path remains:
 OpenSearch, `full` mode, live crawler operation, JP demo imports, and managed
 infrastructure are optional paths. They can provide useful review evidence, but
 do not add them to the fixed gate without explicit review.
+
+Docs link checks, OpenAPI drift checks, TypeScript SDK builds, and frontend
+production-build smoke checks are contributor and CI tooling. They keep the
+workspace easy to verify, but they do not change the fixed public-MVP boundary.
 
 ## Reference List
 

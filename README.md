@@ -56,9 +56,14 @@ just dev    # worker and API in one terminal
 just smoke  # read-only SQL-only contributor smoke checks
 just docs   # required docs files and local Markdown links
 just eval   # offline local review evaluation self-test
+just ts-sdk-check    # TypeScript SDK build
+just frontend-smoke  # example frontend production-build smoke
+just openapi-drift   # generated OpenAPI drift check
+just ci-local        # selected local mirror for separated CI checks
 ```
 
-`just docs` は contributor tooling です。public-MVP gate を広げるものではありません。
+`just docs`、`just ts-sdk-check`、`just frontend-smoke`、`just openapi-drift`、
+`just ci-local` は contributor / CI tooling です。public-MVP gate を広げるものではありません。
 
 最短 local path:
 

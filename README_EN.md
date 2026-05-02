@@ -50,6 +50,24 @@ operational content, PostgreSQL/PostGIS, and Redis. OpenSearch, full mode, live
 crawler operation, and managed infrastructure are optional follow-on paths, not
 fixed gates.
 
+Contributor entrypoints:
+
+```bash
+just setup
+just dev
+just smoke
+just docs
+just eval
+just ts-sdk-check
+just frontend-smoke
+just openapi-drift
+just ci-local
+```
+
+Docs, SDK, frontend, OpenAPI drift, and `ci-local` checks are contributor and
+CI tooling. `just ci-local` is a selected local mirror, not a replacement for
+all GitHub Actions jobs. These checks do not expand the fixed public-MVP gate.
+
 Shortest local path:
 
 ```bash
