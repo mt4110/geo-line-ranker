@@ -5,6 +5,8 @@ mod feature;
 mod planning;
 mod profile;
 mod scoring;
+#[cfg(test)]
+mod test_utils;
 
 use config::RankingProfiles;
 use thiserror::Error;
@@ -40,8 +42,6 @@ pub fn reason_catalog_entry(feature: &str) -> Option<&'static ReasonCatalogEntry
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use config::RankingProfiles;
     use context::{
         AreaContext, ContextSource, ContextWarning, LineContext, PrivacyLevel, RankingContext,
@@ -54,25 +54,7 @@ mod tests {
     use test_support::load_fixture_dataset;
 
     use super::RankingEngine;
-
-    fn fixture_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../storage/fixtures/minimal")
-    }
-
-    fn config_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
-    }
-
-    fn query(target_station_id: &str, placement: PlacementKind) -> RankingQuery {
-        RankingQuery {
-            target_station_id: target_station_id.to_string(),
-            limit: Some(3),
-            user_id: None,
-            placement,
-            debug: false,
-            context: None,
-        }
-    }
+    use crate::test_utils::{config_root, fixture_root, query};
 
     fn request_area_context(
         city_name: Option<&str>,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use config::PlacementProfile;
 use domain::{
@@ -425,11 +425,16 @@ fn upsert_best_candidate(
     best_candidates: &mut HashMap<(ContentKind, String), ScoredCandidate>,
     candidate: ScoredCandidate,
 ) {
-    let entry = best_candidates
-        .entry((candidate.content_kind, candidate.content_id.clone()))
-        .or_insert_with(|| candidate.clone());
-    if compare_candidates(&candidate.item, &entry.item).is_lt() {
-        *entry = candidate;
+    let key = (candidate.content_kind, candidate.content_id.clone());
+    match best_candidates.entry(key) {
+        Entry::Vacant(entry) => {
+            entry.insert(candidate);
+        }
+        Entry::Occupied(mut entry) => {
+            if compare_candidates(&candidate.item, &entry.get().item).is_lt() {
+                entry.insert(candidate);
+            }
+        }
     }
 }
 

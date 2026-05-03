@@ -156,34 +156,15 @@ pub(crate) fn placement_label(placement: PlacementKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
 
     use config::RankingProfiles;
-    use domain::{ContentKind, PlacementKind, RankingQuery};
+    use domain::{ContentKind, PlacementKind};
     use test_support::load_fixture_dataset;
 
     use super::{build_diversity_impact_sentence, top_reason_labels};
     use crate::diversity::DiversitySelectionSummary;
+    use crate::test_utils::{config_root, fixture_root, query};
     use crate::RankingEngine;
-
-    fn fixture_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../storage/fixtures/minimal")
-    }
-
-    fn config_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
-    }
-
-    fn query(target_station_id: &str, placement: PlacementKind) -> RankingQuery {
-        RankingQuery {
-            target_station_id: target_station_id.to_string(),
-            limit: Some(3),
-            user_id: None,
-            placement,
-            debug: false,
-            context: None,
-        }
-    }
 
     #[test]
     fn emitted_score_components_are_backed_by_reason_catalog() {
