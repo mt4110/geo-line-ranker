@@ -84,6 +84,11 @@ pub fn scaffold_domain(request: ScaffoldDomainRequest) -> Result<ScaffoldDomainS
 
     let parsed_target = reqwest::Url::parse(&request.target_url)
         .with_context(|| format!("failed to parse target_url {}", request.target_url))?;
+    ensure!(
+        matches!(parsed_target.scheme(), "http" | "https"),
+        "target_url {} must use http or https",
+        request.target_url
+    );
     let host = parsed_target
         .host_str()
         .with_context(|| format!("target_url {} is missing a host", request.target_url))?;
@@ -667,7 +672,7 @@ fn build_scaffold_guide(
     };
 
     format!(
-        "# Crawler Scaffold: {source_name}\n\n## Snapshot\n\n- source_id: `{source_id}`\n- source_maturity: `{source_maturity}`\n- parser_key: `{parser_key}`\n- expected_shape: `{expected_shape}`\n- school_id: `{school_id}`\n- logical_name: `{logical_name}`\n- target_url: `{target_url}`\n- manifest: `{manifest_path}`\n- fixture: `{fixture_path}`\n\n## Generated Defaults\n\n- `logical_name={logical_name}`: {logical_name_reason}\n- `event_category={event_category}`: {event_category_reason}\n- `is_open_day={is_open_day}`: {is_open_day_reason}\n- `priority_weight={priority_weight}`: {priority_weight_reason}\n- `terms_url={terms_url}` starts as a temporary placeholder so the manifest stays runnable while policy review catches up.\n\n## Edit In This Order\n\n1. Confirm the parser key or replace the placeholder parser wiring.\n2. Replace `terms_url` with the real privacy / site-policy page and write a concrete `terms_note`.\n3. Trim the fixture to the smallest real snippet that still satisfies `{expected_shape}`.\n4. Add or update fixture-backed tests in `crates/crawler-core/src/lib.rs` and `apps/crawler/src/lib.rs`.\n5. Run `doctor`, `dry-run`, and `health`, then promote the source only when the checks are quiet.\n\n## Shape Contract\n\n{shape_contract}\n\n## Fixture Rules\n\n{fixture_rules}\n\n## Promotion Gate\n\n- `robots.txt` resolves and is plain text, not HTML.\n- `terms_url` resolves without auth or soft blocks.\n- `{school_id}` exists in `schools` for the environment you test against.\n- `expected_shape` matches the live target or the committed fixture.\n- `source_maturity` and `live_fetch_enabled` still say the same thing operationally.\n{live_ready_line}\n\n## Suggested Commands\n\n```bash\ncargo run -p crawler -- doctor --manifest {manifest_path}\ncargo run -p crawler -- dry-run --manifest {manifest_path}\ncargo run -p crawler -- health --manifest {manifest_path}\n```\n\n## Test Skeleton\n\n```rust\n#[tokio::test]\nasync fn fetch_and_parse_{test_name}_imports_seeded_school() -> anyhow::Result<()> {{\n    let fixture_name = \"{fixture_file}\";\n    let logical_name = \"{logical_name}\";\n    let manifest_path = \"{manifest_path}\";\n\n    // 1. serve the local fixture over axum\n    // 2. point a temporary manifest at that local server\n    // 3. run fetch -> parse -> health\n    // 4. assert imported rows for school_id = \"{school_id}\"\n    // 5. assert the earliest stable title/date pair\n    // 6. assert health text includes `source_maturity` and `expected_shape`\n\n    Ok(())\n}}\n```\n",
+        "# Crawler Scaffold: {source_name}\n\n## Snapshot\n\n- source_id: `{source_id}`\n- source_maturity: `{source_maturity}`\n- parser_key: `{parser_key}`\n- expected_shape: `{expected_shape}`\n- school_id: `{school_id}`\n- logical_name: `{logical_name}`\n- target_url: `{target_url}`\n- manifest: `{manifest_path}`\n- fixture: `{fixture_path}`\n\n## Generated Defaults\n\n- `logical_name={logical_name}`: {logical_name_reason}\n- `event_category={event_category}`: {event_category_reason}\n- `is_open_day={is_open_day}`: {is_open_day_reason}\n- `priority_weight={priority_weight}`: {priority_weight_reason}\n- `terms_url={terms_url}` starts as a temporary placeholder so the manifest stays runnable while policy review catches up.\n\n## Edit In This Order\n\n1. Confirm the parser key or replace the placeholder parser wiring.\n2. Replace `terms_url` with the real privacy / site-policy page and write a concrete `terms_note`.\n3. Trim the fixture to the smallest real snippet that still satisfies `{expected_shape}`.\n4. Add or update fixture-backed tests in `crates/crawler-core/src/lib.rs`, `apps/crawler/src/command.rs`, and `apps/crawler/src/manifest.rs`.\n5. Run `doctor`, `dry-run`, and `health`, then promote the source only when the checks are quiet.\n\n## Shape Contract\n\n{shape_contract}\n\n## Fixture Rules\n\n{fixture_rules}\n\n## Promotion Gate\n\n- `robots.txt` resolves and is plain text, not HTML.\n- `terms_url` resolves without auth or soft blocks.\n- `{school_id}` exists in `schools` for the environment you test against.\n- `expected_shape` matches the live target or the committed fixture.\n- `source_maturity` and `live_fetch_enabled` still say the same thing operationally.\n{live_ready_line}\n\n## Suggested Commands\n\n```bash\ncargo run -p crawler -- doctor --manifest {manifest_path}\ncargo run -p crawler -- dry-run --manifest {manifest_path}\ncargo run -p crawler -- health --manifest {manifest_path}\n```\n\n## Test Skeleton\n\n```rust\n#[tokio::test]\nasync fn fetch_and_parse_{test_name}_imports_seeded_school() -> anyhow::Result<()> {{\n    let fixture_name = \"{fixture_file}\";\n    let logical_name = \"{logical_name}\";\n    let manifest_path = \"{manifest_path}\";\n\n    // 1. serve the local fixture over axum\n    // 2. point a temporary manifest at that local server\n    // 3. run fetch -> parse -> health\n    // 4. assert imported rows for school_id = \"{school_id}\"\n    // 5. assert the earliest stable title/date pair\n    // 6. assert health text includes `source_maturity` and `expected_shape`\n\n    Ok(())\n}}\n```\n",
         source_name = request.source_name,
         source_id = request.source_id,
         source_maturity = request.source_maturity,
@@ -828,10 +833,34 @@ mod tests {
         assert!(fixture.contains("div class=\"schedule_box\""));
         assert!(guide.contains("Generated Defaults"));
         assert!(guide.contains("Shape Contract"));
+        assert!(guide.contains("apps/crawler/src/command.rs"));
+        assert!(guide.contains("apps/crawler/src/manifest.rs"));
         assert!(guide.contains("fetch_and_parse_sample_domain_imports_seeded_school"));
         assert!(summary_text.contains("expected_shape=html_monthly_dl_pairs"));
 
         Ok(())
+    }
+
+    #[test]
+    fn scaffold_domain_rejects_non_http_target_url() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let error = scaffold_domain(ScaffoldDomainRequest {
+            source_id: "sample-domain".to_string(),
+            source_name: "Sample Domain Events".to_string(),
+            school_id: "school_sample".to_string(),
+            parser_key: "sample_parser_v1".to_string(),
+            source_maturity: SourceMaturity::ParserOnly,
+            expected_shape: ParserExpectedShape::HtmlMonthlyDlPairs,
+            target_url: "ftp://example.com/events".to_string(),
+            logical_name: None,
+            manifest_dir: temp.path().join("configs/crawler/sources"),
+            fixture_dir: temp.path().join("storage/fixtures/crawler"),
+            guide_dir: temp.path().join("docs/crawler_scaffolds"),
+            force: false,
+        })
+        .expect_err("non-http target_url should fail");
+
+        assert!(error.to_string().contains("must use http or https"));
     }
 
     #[test]
