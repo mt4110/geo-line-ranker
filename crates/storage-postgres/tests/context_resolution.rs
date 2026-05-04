@@ -545,6 +545,66 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         assert_eq!(replay_profile_context.station_id(), Some("st_shibuya"));
 
         client
+            .batch_execute(
+                "ALTER TABLE user_events
+                    DROP CONSTRAINT IF EXISTS user_events_target_station_id_fkey;
+
+                INSERT INTO user_profile_contexts (
+                    user_id,
+                    area_id,
+                    line_id,
+                    station_id,
+                    context_source,
+                    confidence,
+                    consent_scope
+                ) VALUES (
+                    'stale-recent-search-user',
+                    NULL,
+                    NULL,
+                    'st_shibuya',
+                    'user_profile_area',
+                    0.7,
+                    'coarse_area'
+                )
+                ON CONFLICT (user_id) DO UPDATE
+                SET area_id = EXCLUDED.area_id,
+                    line_id = EXCLUDED.line_id,
+                    station_id = EXCLUDED.station_id,
+                    context_source = EXCLUDED.context_source,
+                    confidence = EXCLUDED.confidence,
+                    consent_scope = EXCLUDED.consent_scope;
+
+                INSERT INTO user_events (
+                    user_id,
+                    school_id,
+                    event_type,
+                    target_station_id,
+                    occurred_at,
+                    payload
+                ) VALUES (
+                    'stale-recent-search-user',
+                    NULL,
+                    'search_execute',
+                    'st_removed',
+                    NOW() - INTERVAL '1 hour',
+                    '{}'::jsonb
+                );",
+            )
+            .await?;
+        let stale_recent_search_context = repo
+            .resolve_context(
+                "req-context-stale-recent-search",
+                Some("stale-recent-search-user"),
+                &ContextInput::default(),
+            )
+            .await?;
+        assert_eq!(
+            stale_recent_search_context.context_source,
+            ContextSource::UserProfileArea
+        );
+        assert_eq!(stale_recent_search_context.station_id(), Some("st_shibuya"));
+
+        client
             .execute(
                 "INSERT INTO user_events (
                     user_id,

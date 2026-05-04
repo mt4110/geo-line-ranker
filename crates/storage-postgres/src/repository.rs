@@ -797,14 +797,16 @@ impl PgRepository {
     ) -> Result<Option<RankingContext>> {
         let row = client
             .query_opt(
-                "SELECT target_station_id
-                 FROM user_events
-                 WHERE user_id = $1
-                   AND event_type = 'search_execute'
-                   AND target_station_id IS NOT NULL
-                   AND occurred_at >= NOW() - ($2::INTEGER * INTERVAL '1 hour')
-                   AND occurred_at <= NOW()
-                 ORDER BY occurred_at DESC, id DESC
+                "SELECT event.target_station_id
+                 FROM user_events AS event
+                 INNER JOIN stations AS station
+                   ON station.id = event.target_station_id
+                 WHERE event.user_id = $1
+                   AND event.event_type = 'search_execute'
+                   AND event.target_station_id IS NOT NULL
+                   AND event.occurred_at >= NOW() - ($2::INTEGER * INTERVAL '1 hour')
+                   AND event.occurred_at <= NOW()
+                 ORDER BY event.occurred_at DESC, event.id DESC
                  LIMIT 1",
                 &[&user_id, &RECENT_SEARCH_CONTEXT_WINDOW_HOURS],
             )
