@@ -127,6 +127,10 @@ impl RankingContext {
             .as_ref()
             .and_then(|area| area.prefecture_name.as_deref())
     }
+
+    pub fn evidence_summary(&self) -> ContextEvidenceSummary {
+        ContextEvidenceSummary::from_context_source(&self.context_source, self.confidence)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -211,6 +215,78 @@ impl PrivacyLevel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextEvidenceKind {
+    RequestStation,
+    RequestLine,
+    RequestArea,
+    UserProfileContext,
+    SearchExecute,
+    RecentBehaviorContext,
+    DefaultSafeContext,
+}
+
+impl ContextEvidenceKind {
+    pub fn from_context_source(source: &ContextSource) -> Self {
+        match source {
+            ContextSource::RequestStation => Self::RequestStation,
+            ContextSource::RequestLine => Self::RequestLine,
+            ContextSource::RequestArea => Self::RequestArea,
+            ContextSource::UserProfileArea => Self::UserProfileContext,
+            ContextSource::RecentSearchContext => Self::SearchExecute,
+            ContextSource::RecentBehaviorContext => Self::RecentBehaviorContext,
+            ContextSource::DefaultSafeContext => Self::DefaultSafeContext,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::RequestStation => "request_station",
+            Self::RequestLine => "request_line",
+            Self::RequestArea => "request_area",
+            Self::UserProfileContext => "user_profile_context",
+            Self::SearchExecute => "search_execute",
+            Self::RecentBehaviorContext => "recent_behavior_context",
+            Self::DefaultSafeContext => "default_safe_context",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct ContextEvidenceSummary {
+    pub primary_kind: ContextEvidenceKind,
+    pub evidence_count: usize,
+    pub strongest_strength: f64,
+    pub has_search_execute: bool,
+}
+
+impl ContextEvidenceSummary {
+    pub fn from_context_source(source: &ContextSource, confidence: f64) -> Self {
+        if matches!(source, ContextSource::DefaultSafeContext) {
+            return Self::default();
+        }
+
+        Self {
+            primary_kind: ContextEvidenceKind::from_context_source(source),
+            evidence_count: 1,
+            strongest_strength: confidence,
+            has_search_execute: matches!(source, ContextSource::RecentSearchContext),
+        }
+    }
+}
+
+impl Default for ContextEvidenceSummary {
+    fn default() -> Self {
+        Self {
+            primary_kind: ContextEvidenceKind::DefaultSafeContext,
+            evidence_count: 0,
+            strongest_strength: 0.0,
+            has_search_execute: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ContextWarning {
     pub code: String,
     pub message: String,
@@ -237,7 +313,10 @@ fn default_country() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_request_context, AreaContextInput, ContextInput};
+    use super::{
+        build_request_context, AreaContextInput, ContextEvidenceKind, ContextInput, ContextSource,
+        RankingContext,
+    };
 
     #[test]
     fn target_station_id_is_normalized_into_context_station() {
@@ -334,5 +413,32 @@ mod tests {
         };
 
         assert!(input.is_empty());
+    }
+
+    #[test]
+    fn recent_search_context_summarizes_search_execute_evidence() {
+        let mut context = RankingContext::default_safe();
+        context.context_source = ContextSource::RecentSearchContext;
+        context.confidence = 0.88;
+
+        let summary = context.evidence_summary();
+
+        assert_eq!(summary.primary_kind, ContextEvidenceKind::SearchExecute);
+        assert_eq!(summary.evidence_count, 1);
+        assert_eq!(summary.strongest_strength, 0.88);
+        assert!(summary.has_search_execute);
+    }
+
+    #[test]
+    fn default_safe_context_has_no_real_evidence() {
+        let summary = RankingContext::default_safe().evidence_summary();
+
+        assert_eq!(
+            summary.primary_kind,
+            ContextEvidenceKind::DefaultSafeContext
+        );
+        assert_eq!(summary.evidence_count, 0);
+        assert_eq!(summary.strongest_strength, 0.0);
+        assert!(!summary.has_search_execute);
     }
 }

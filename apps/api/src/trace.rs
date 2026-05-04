@@ -6,6 +6,7 @@ use storage_postgres::PgRepository;
 #[derive(Clone)]
 pub(crate) struct TracePayloadInput<'a> {
     pub(crate) response_source: &'a str,
+    pub(crate) context: &'a context::RankingContext,
     pub(crate) mode: CandidateRetrievalMode,
     pub(crate) backend: &'a str,
     pub(crate) candidate_count: usize,
@@ -46,6 +47,13 @@ pub(crate) async fn record_trace_best_effort(
 pub(crate) fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
     serde_json::json!({
         "response_source": input.response_source,
+        "context": {
+            "context_source": input.context.context_source.as_str(),
+            "confidence": input.context.confidence,
+            "privacy_level": input.context.privacy_level.as_str(),
+            "evidence_summary": input.context.evidence_summary(),
+            "warning_count": input.context.warnings.len()
+        },
         "candidate_retrieval": {
             "mode": input.mode.as_str(),
             "backend": input.backend,
@@ -56,4 +64,39 @@ pub(crate) fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::V
             "neighbor_distance_cap_meters": input.neighbor_distance_cap_meters
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use config::CandidateRetrievalMode;
+
+    use super::{build_trace_payload, TracePayloadInput};
+
+    #[test]
+    fn trace_payload_includes_context_evidence_summary() {
+        let mut context = context::RankingContext::default_safe();
+        context.context_source = context::ContextSource::RecentSearchContext;
+        context.confidence = 0.88;
+
+        let payload = build_trace_payload(TracePayloadInput {
+            response_source: "fresh",
+            context: &context,
+            mode: CandidateRetrievalMode::SqlOnly,
+            backend: "postgres",
+            candidate_count: 3,
+            duration_ms: 12,
+            target_station_id: "st_tamachi",
+            candidate_limit: 256,
+            neighbor_distance_cap_meters: 5_000.0,
+        });
+
+        assert_eq!(
+            payload["context"]["evidence_summary"]["primary_kind"],
+            "search_execute"
+        );
+        assert_eq!(
+            payload["context"]["evidence_summary"]["has_search_execute"],
+            true
+        );
+    }
 }

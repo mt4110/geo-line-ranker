@@ -6,12 +6,13 @@ use std::{
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use cli::{
-    format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
-    format_job_list, format_job_mutation_summary, format_replay_evaluation_summary,
-    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture,
-    run_derive_school_station_links, run_event_csv_import, run_fixture_doctor, run_import_command,
-    run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
-    run_replay_evaluate, run_snapshot_refresh, ImportTarget,
+    format_context_inspect_summary, format_fixture_doctor_summary, format_job_enqueue_summary,
+    format_job_inspection, format_job_list, format_job_mutation_summary,
+    format_replay_evaluation_summary, format_snapshot_refresh_summary, format_summary,
+    generate_demo_jp_fixture, run_context_inspect, run_derive_school_station_links,
+    run_event_csv_import, run_fixture_doctor, run_import_command, run_job_due, run_job_enqueue,
+    run_job_inspect, run_job_list, run_job_retry, run_replay_evaluate, run_snapshot_refresh,
+    ContextInspectInput, ImportTarget,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -68,6 +69,10 @@ enum Command {
     Profile {
         #[command(subcommand)]
         target: ProfileCommand,
+    },
+    Context {
+        #[command(subcommand)]
+        target: ContextCommand,
     },
     Config {
         #[command(subcommand)]
@@ -200,6 +205,46 @@ enum ProfileCommand {
             help = "Profile pack root directory or explicit profile.yaml file to inspect. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ContextCommand {
+    #[command(
+        about = "Resolve and inspect ranking context without writing a trace",
+        long_about = "Resolve ranking context from explicit request hints or recent user search evidence, then print the normalized context and evidence summary without writing context_resolution_traces.",
+        after_long_help = "Examples:\n  geo-line-ranker-cli context inspect --city-name Minato --prefecture-name Tokyo\n  geo-line-ranker-cli context inspect --user-id manual-user-1 --json"
+    )]
+    Inspect {
+        #[arg(
+            long,
+            default_value = "cli-context-inspect",
+            help = "Opaque request id used only for read-only resolver diagnostics"
+        )]
+        request_id: String,
+        #[arg(
+            long,
+            help = "Optional user id for resolving recent search evidence or profile context"
+        )]
+        user_id: Option<String>,
+        #[arg(long, help = "Explicit station context hint")]
+        station_id: Option<String>,
+        #[arg(long, help = "Explicit line id context hint")]
+        line_id: Option<String>,
+        #[arg(long, help = "Explicit line name context hint")]
+        line_name: Option<String>,
+        #[arg(long, help = "Area country code; country-only input is ignored")]
+        country: Option<String>,
+        #[arg(long, help = "Explicit prefecture code context hint")]
+        prefecture_code: Option<String>,
+        #[arg(long, help = "Explicit prefecture name context hint")]
+        prefecture_name: Option<String>,
+        #[arg(long, help = "Explicit city code context hint")]
+        city_code: Option<String>,
+        #[arg(long, help = "Explicit city name context hint")]
+        city_name: Option<String>,
+        #[arg(long, help = "Print the resolved context summary as JSON")]
+        json: bool,
     },
 }
 
@@ -422,6 +467,46 @@ async fn main() -> anyhow::Result<()> {
                         &runtime_selection
                     )
                 );
+            }
+        },
+        Command::Context { target } => match target {
+            ContextCommand::Inspect {
+                request_id,
+                user_id,
+                station_id,
+                line_id,
+                line_name,
+                country,
+                prefecture_code,
+                prefecture_name,
+                city_code,
+                city_name,
+                json,
+            } => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
+                let summary = run_context_inspect(
+                    &settings,
+                    ContextInspectInput {
+                        request_id,
+                        user_id,
+                        station_id,
+                        line_id,
+                        line_name,
+                        area: context::AreaContextInput {
+                            country,
+                            prefecture_code,
+                            prefecture_name,
+                            city_code,
+                            city_name,
+                        },
+                    },
+                )
+                .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_context_inspect_summary(&summary));
+                }
             }
         },
         Command::Config { target } => match target {
@@ -766,8 +851,28 @@ fn format_source_manifest_lint_summary(summary: &SourceManifestLintSummary) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use config::{ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary};
     use std::fs;
+
+    #[test]
+    fn context_inspect_help_explains_read_only_evidence_flow() {
+        let mut command = Cli::command();
+        let context = command
+            .find_subcommand_mut("context")
+            .expect("context command");
+        let inspect = context
+            .find_subcommand_mut("inspect")
+            .expect("context inspect command");
+        let mut buffer = Vec::new();
+        inspect.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("without writing context_resolution_traces"));
+        assert!(help.contains("--user-id manual-user-1 --json"));
+        assert!(help.contains("recent search evidence"));
+        assert!(help.contains("country-only input is ignored"));
+    }
 
     #[test]
     fn profile_validate_summary_reports_profile_count() {

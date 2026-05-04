@@ -56,6 +56,7 @@ const POPULARITY_REFRESH_COALESCE_LOCK_KEY: i32 = 2;
 const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
 const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
 const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference validation: ";
+const RECENT_SEARCH_CONTEXT_WINDOW_HOURS: i32 = 72;
 
 #[derive(Debug, Clone)]
 pub struct PgRepository {
@@ -233,7 +234,7 @@ impl PgRepository {
         user_id: Option<&str>,
         input: &ContextInput,
     ) -> Result<RankingContext> {
-        self.resolve_context_inner(request_id, user_id, input, true)
+        self.resolve_context_inner(request_id, user_id, input, true, true)
             .await
     }
 
@@ -243,7 +244,17 @@ impl PgRepository {
         user_id: Option<&str>,
         input: &ContextInput,
     ) -> Result<RankingContext> {
-        self.resolve_context_inner(request_id, user_id, input, false)
+        self.resolve_context_inner(request_id, user_id, input, false, false)
+            .await
+    }
+
+    pub async fn resolve_context_read_only(
+        &self,
+        request_id: &str,
+        user_id: Option<&str>,
+        input: &ContextInput,
+    ) -> Result<RankingContext> {
+        self.resolve_context_inner(request_id, user_id, input, false, true)
             .await
     }
 
@@ -253,6 +264,7 @@ impl PgRepository {
         user_id: Option<&str>,
         input: &ContextInput,
         record_trace: bool,
+        use_recent_search_context: bool,
     ) -> Result<RankingContext> {
         let client = self.connect().await?;
         if input
@@ -289,9 +301,19 @@ impl PgRepository {
                 warnings: Vec::new(),
             }
         } else if let Some(user_id) = user_id {
-            self.resolve_user_profile_context(&client, user_id)
-                .await?
-                .unwrap_or_else(RankingContext::default_safe)
+            if use_recent_search_context {
+                if let Some(context) = self.resolve_recent_search_context(&client, user_id).await? {
+                    context
+                } else {
+                    self.resolve_user_profile_context(&client, user_id)
+                        .await?
+                        .unwrap_or_else(RankingContext::default_safe)
+                }
+            } else {
+                self.resolve_user_profile_context(&client, user_id)
+                    .await?
+                    .unwrap_or_else(RankingContext::default_safe)
+            }
         } else {
             RankingContext::default_safe()
         };
@@ -766,6 +788,44 @@ impl PgRepository {
                 warnings: Vec::new(),
             })
         }))
+    }
+
+    async fn resolve_recent_search_context(
+        &self,
+        client: &Client,
+        user_id: &str,
+    ) -> Result<Option<RankingContext>> {
+        let row = client
+            .query_opt(
+                "SELECT event.target_station_id
+                 FROM user_events AS event
+                 INNER JOIN stations AS station
+                   ON station.id = event.target_station_id
+                 WHERE event.user_id = $1
+                   AND event.event_type = 'search_execute'
+                   AND event.target_station_id IS NOT NULL
+                   AND event.occurred_at >= NOW() - ($2::INTEGER * INTERVAL '1 hour')
+                   AND event.occurred_at <= NOW()
+                 ORDER BY event.occurred_at DESC, event.id DESC
+                 LIMIT 1",
+                &[&user_id, &RECENT_SEARCH_CONTEXT_WINDOW_HOURS],
+            )
+            .await?;
+
+        let Some(station_id) = row.map(|row| row.get::<_, String>("target_station_id")) else {
+            return Ok(None);
+        };
+
+        let input = ContextInput {
+            station_id: Some(station_id.clone()),
+            ..Default::default()
+        };
+        let mut context = self
+            .resolve_station_context(client, &station_id, &input)
+            .await?;
+        context.context_source = ContextSource::RecentSearchContext;
+        context.confidence = 0.88;
+        Ok(Some(context))
     }
 
     async fn resolve_area_context(

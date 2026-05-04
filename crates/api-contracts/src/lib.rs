@@ -1,11 +1,11 @@
 use context::{
-    build_request_context, ContextInput, ContextSource, ContextWarning, PrivacyLevel,
-    RankingContext,
+    build_request_context, ContextEvidenceSummary, ContextInput, ContextSource, ContextWarning,
+    PrivacyLevel, RankingContext,
 };
 use domain::{
     ContentKind, EventKind, PlacementKind, RecommendationResult, ScoreComponent, UserEvent,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
@@ -127,13 +127,46 @@ pub struct RecommendationResponse {
     pub algorithm_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RecommendationContextDto {
     pub context_source: ContextSource,
     pub confidence: f64,
     pub privacy_level: PrivacyLevel,
+    #[schema(required)]
+    pub evidence_summary: ContextEvidenceSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ContextWarning>,
+}
+
+impl<'de> Deserialize<'de> for RecommendationContextDto {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RecommendationContextDtoCompat {
+            context_source: ContextSource,
+            confidence: f64,
+            privacy_level: PrivacyLevel,
+            #[serde(default)]
+            evidence_summary: Option<ContextEvidenceSummary>,
+            #[serde(default)]
+            warnings: Vec<ContextWarning>,
+        }
+
+        let value = RecommendationContextDtoCompat::deserialize(deserializer)?;
+        let evidence_summary = value.evidence_summary.unwrap_or_else(|| {
+            ContextEvidenceSummary::from_context_source(&value.context_source, value.confidence)
+        });
+
+        Ok(Self {
+            context_source: value.context_source,
+            confidence: value.confidence,
+            privacy_level: value.privacy_level,
+            evidence_summary,
+            warnings: value.warnings,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -341,10 +374,12 @@ impl From<RecommendationResult> for RecommendationResponse {
 
 impl From<RankingContext> for RecommendationContextDto {
     fn from(value: RankingContext) -> Self {
+        let evidence_summary = value.evidence_summary();
         Self {
             context_source: value.context_source,
             confidence: value.confidence,
             privacy_level: value.privacy_level,
+            evidence_summary,
             warnings: value.warnings,
         }
     }
@@ -387,6 +422,35 @@ mod tests {
         let item = &payload["items"][0];
         assert!(item.get("event_id").is_none());
         assert!(item.get("event_title").is_none());
+    }
+
+    #[test]
+    fn recommendation_response_reconstructs_cached_context_evidence_summary() {
+        let payload = serde_json::json!({
+            "items": [],
+            "explanation": "cached response",
+            "score_breakdown": [],
+            "fallback_stage": "strict_station",
+            "candidate_counts": {},
+            "context": {
+                "context_source": "request_station",
+                "confidence": 0.91,
+                "privacy_level": "coarse_area"
+            },
+            "profile_version": "phase6-profile",
+            "algorithm_version": "phase6-test"
+        });
+
+        let response =
+            serde_json::from_value::<RecommendationResponse>(payload).expect("cached response");
+        let context = response.context.expect("context dto");
+        assert_eq!(
+            context.evidence_summary.primary_kind,
+            context::ContextEvidenceKind::RequestStation
+        );
+        assert_eq!(context.evidence_summary.evidence_count, 1);
+        assert_eq!(context.evidence_summary.strongest_strength, 0.91);
+        assert!(!context.evidence_summary.has_search_execute);
     }
 
     #[test]

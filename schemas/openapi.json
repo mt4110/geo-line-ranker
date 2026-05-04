@@ -221,6 +221,43 @@
           }
         }
       },
+      "ContextEvidenceKind": {
+        "type": "string",
+        "enum": [
+          "request_station",
+          "request_line",
+          "request_area",
+          "user_profile_context",
+          "search_execute",
+          "recent_behavior_context",
+          "default_safe_context"
+        ]
+      },
+      "ContextEvidenceSummary": {
+        "type": "object",
+        "required": [
+          "primary_kind",
+          "evidence_count",
+          "strongest_strength",
+          "has_search_execute"
+        ],
+        "properties": {
+          "evidence_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "has_search_execute": {
+            "type": "boolean"
+          },
+          "primary_kind": {
+            "$ref": "#/components/schemas/ContextEvidenceKind"
+          },
+          "strongest_strength": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "ContextInput": {
         "type": "object",
         "properties": {
@@ -421,7 +458,8 @@
         "required": [
           "context_source",
           "confidence",
-          "privacy_level"
+          "privacy_level",
+          "evidence_summary"
         ],
         "properties": {
           "confidence": {
@@ -430,6 +468,9 @@
           },
           "context_source": {
             "$ref": "#/components/schemas/ContextSource"
+          },
+          "evidence_summary": {
+            "$ref": "#/components/schemas/ContextEvidenceSummary"
           },
           "privacy_level": {
             "$ref": "#/components/schemas/PrivacyLevel"

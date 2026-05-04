@@ -5,6 +5,7 @@
 - API: `cargo run -p api -- serve`
 - Worker: `cargo run -p worker -- serve`
 - CLI: `cargo run -p cli -- --help`
+- Context resolver inspection: `cargo run -p cli -- context inspect --city-name Minato --prefecture-name Tokyo`
 - Crawler: `cargo run -p crawler -- --help`
 - PostgreSQL/PostGIS: source of truth for recommendations, tracking, imports, and jobs
 - Redis: optional cache for recommendation responses
@@ -504,6 +505,18 @@ When you change either value, reapply snapshots with the current config:
 ```bash
 cargo run -p cli -- snapshot refresh
 ```
+
+After recording a `search_execute` event for a user, inspect how recent search
+evidence resolves without writing a trace:
+
+```bash
+cargo run -p cli -- context inspect --user-id manual-user-1
+```
+
+If the user has a `search_execute` with `target_station_id` in the last 72
+hours and the request has no explicit context, the resolver reports
+`recent_search_context` with `search_execute` evidence. Explicit station, line,
+or area request context still wins.
 
 Operational notes:
 

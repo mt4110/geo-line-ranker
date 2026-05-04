@@ -133,6 +133,7 @@ and does not require Docker.
 docker compose -f .docker/docker-compose.yaml up -d postgres redis
 cargo run -p cli -- migrate
 cargo run -p cli -- seed example
+cargo run -p cli -- context inspect --city-name Minato --prefecture-name Tokyo
 ```
 
 The manual smoke sections below are intentionally broader than the public-MVP release gate. For the fixed six-case acceptance flow that excludes live crawler and `full` mode, use [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md).
