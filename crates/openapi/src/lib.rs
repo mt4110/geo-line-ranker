@@ -4,8 +4,8 @@ use api_contracts::{
     TrackRequest, TrackResponse,
 };
 use context::{
-    AreaContext, AreaContextInput, ContextInput, ContextSource, ContextWarning, LineContext,
-    PrivacyLevel, RankingContext, StationContext,
+    AreaContext, AreaContextInput, ContextEvidenceKind, ContextEvidenceSummary, ContextInput,
+    ContextSource, ContextWarning, LineContext, PrivacyLevel, RankingContext, StationContext,
 };
 use utoipa::OpenApi;
 
@@ -77,6 +77,8 @@ fn track_doc() {}
             FallbackStageDto,
             AreaContext,
             AreaContextInput,
+            ContextEvidenceKind,
+            ContextEvidenceSummary,
             ContextInput,
             ContextSource,
             ContextWarning,

@@ -21,6 +21,7 @@ The response includes:
 - `context.context_source`
 - `context.confidence`
 - `context.privacy_level`
+- `context.evidence_summary`
 - `context.warnings`
 - `fallback_stage`
 - `candidate_counts`
@@ -39,6 +40,11 @@ Fallback stages are:
 
 `items[].fallback_stage` uses the same enum values as the top-level `fallback_stage`.
 Score reason codes are cataloged in `docs/REASON_CATALOG.md`.
+
+When a request has no explicit station, line, or area context, context
+resolution may use a user's recent `search_execute` station as context evidence.
+That path reports `context.context_source = recent_search_context` and
+`context.evidence_summary.primary_kind = search_execute`.
 
 Error responses use the common shape:
 

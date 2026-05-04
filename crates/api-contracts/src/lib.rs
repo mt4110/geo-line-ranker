@@ -1,6 +1,6 @@
 use context::{
-    build_request_context, ContextInput, ContextSource, ContextWarning, PrivacyLevel,
-    RankingContext,
+    build_request_context, ContextEvidenceSummary, ContextInput, ContextSource, ContextWarning,
+    PrivacyLevel, RankingContext,
 };
 use domain::{
     ContentKind, EventKind, PlacementKind, RecommendationResult, ScoreComponent, UserEvent,
@@ -132,6 +132,7 @@ pub struct RecommendationContextDto {
     pub context_source: ContextSource,
     pub confidence: f64,
     pub privacy_level: PrivacyLevel,
+    pub evidence_summary: ContextEvidenceSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ContextWarning>,
 }
@@ -341,10 +342,12 @@ impl From<RecommendationResult> for RecommendationResponse {
 
 impl From<RankingContext> for RecommendationContextDto {
     fn from(value: RankingContext) -> Self {
+        let evidence_summary = value.evidence_summary();
         Self {
             context_source: value.context_source,
             confidence: value.confidence,
             privacy_level: value.privacy_level,
+            evidence_summary,
             warnings: value.warnings,
         }
     }

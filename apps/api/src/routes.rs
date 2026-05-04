@@ -159,6 +159,7 @@ async fn recommend(
                     "cache",
                     build_trace_payload(TracePayloadInput {
                         response_source: "cache",
+                        context: &resolved_context,
                         mode: state.candidate_retrieval_mode,
                         backend: actual_candidate_backend,
                         candidate_count: 0,
@@ -292,6 +293,7 @@ async fn recommend(
         "fresh",
         build_trace_payload(TracePayloadInput {
             response_source: "fresh",
+            context: &resolved_context,
             mode: state.candidate_retrieval_mode,
             backend: actual_candidate_backend,
             candidate_count: candidate_links.len(),

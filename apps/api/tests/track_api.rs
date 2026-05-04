@@ -1375,6 +1375,10 @@ async fn recommend_endpoint_accepts_area_only_context() -> anyhow::Result<()> {
         let body = to_bytes(response.into_body(), usize::MAX).await?;
         let payload: serde_json::Value = serde_json::from_slice(&body)?;
         assert_eq!(payload["context"]["context_source"], "request_area");
+        assert_eq!(
+            payload["context"]["evidence_summary"]["primary_kind"],
+            "request_area"
+        );
         assert_eq!(payload["fallback_stage"], "same_city");
         assert!(payload["items"]
             .as_array()

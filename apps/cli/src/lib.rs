@@ -1,3 +1,4 @@
+mod context_inspect;
 mod fixtures;
 mod formatting;
 mod import;
@@ -6,6 +7,9 @@ mod replay;
 mod repository;
 mod snapshot;
 
+pub use context_inspect::{
+    format_context_inspect_summary, run_context_inspect, ContextInspectInput, ContextInspectSummary,
+};
 pub use fixtures::{
     generate_demo_jp_fixture, run_fixture_doctor, FixtureDoctorFile, FixtureDoctorSummary,
     FixtureFileManifest, FixtureManifestKind, FixtureSetManifest,

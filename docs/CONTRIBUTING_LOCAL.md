@@ -108,6 +108,7 @@ just openapi-drift
 docker compose -f .docker/docker-compose.yaml up -d postgres redis
 cargo run -p cli -- migrate
 cargo run -p cli -- seed example
+cargo run -p cli -- context inspect --city-name Minato --prefecture-name Tokyo
 ```
 
 ### JP import verification on PostgreSQL

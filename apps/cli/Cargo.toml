@@ -11,6 +11,7 @@ cache = { path = "../../crates/cache" }
 chrono.workspace = true
 clap.workspace = true
 config = { path = "../../crates/config" }
+context = { path = "../../crates/context" }
 generic-csv = { path = "../../crates/connectors/generic-csv" }
 jp-postal = { path = "../../crates/connectors/jp-postal" }
 jp-rail = { path = "../../crates/connectors/jp-rail" }
