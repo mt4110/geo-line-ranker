@@ -234,7 +234,7 @@ impl PgRepository {
         user_id: Option<&str>,
         input: &ContextInput,
     ) -> Result<RankingContext> {
-        self.resolve_context_inner(request_id, user_id, input, true)
+        self.resolve_context_inner(request_id, user_id, input, true, true)
             .await
     }
 
@@ -244,7 +244,7 @@ impl PgRepository {
         user_id: Option<&str>,
         input: &ContextInput,
     ) -> Result<RankingContext> {
-        self.resolve_context_read_only(request_id, user_id, input)
+        self.resolve_context_inner(request_id, user_id, input, false, false)
             .await
     }
 
@@ -254,7 +254,7 @@ impl PgRepository {
         user_id: Option<&str>,
         input: &ContextInput,
     ) -> Result<RankingContext> {
-        self.resolve_context_inner(request_id, user_id, input, false)
+        self.resolve_context_inner(request_id, user_id, input, false, true)
             .await
     }
 
@@ -264,6 +264,7 @@ impl PgRepository {
         user_id: Option<&str>,
         input: &ContextInput,
         record_trace: bool,
+        use_recent_search_context: bool,
     ) -> Result<RankingContext> {
         let client = self.connect().await?;
         if input
@@ -300,12 +301,18 @@ impl PgRepository {
                 warnings: Vec::new(),
             }
         } else if let Some(user_id) = user_id {
-            match self.resolve_recent_search_context(&client, user_id).await? {
-                Some(context) => context,
-                None => self
-                    .resolve_user_profile_context(&client, user_id)
+            if use_recent_search_context {
+                if let Some(context) = self.resolve_recent_search_context(&client, user_id).await? {
+                    context
+                } else {
+                    self.resolve_user_profile_context(&client, user_id)
+                        .await?
+                        .unwrap_or_else(RankingContext::default_safe)
+                }
+            } else {
+                self.resolve_user_profile_context(&client, user_id)
                     .await?
-                    .unwrap_or_else(RankingContext::default_safe),
+                    .unwrap_or_else(RankingContext::default_safe)
             }
         } else {
             RankingContext::default_safe()
