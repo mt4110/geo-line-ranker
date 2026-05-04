@@ -274,6 +274,17 @@ pub struct ContextEvidenceSummary {
     pub has_search_execute: bool,
 }
 
+impl Default for ContextEvidenceSummary {
+    fn default() -> Self {
+        Self {
+            primary_kind: ContextEvidenceKind::DefaultSafeContext,
+            evidence_count: 0,
+            strongest_strength: 0.0,
+            has_search_execute: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ContextWarning {
     pub code: String,

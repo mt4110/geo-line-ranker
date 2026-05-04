@@ -132,6 +132,8 @@ pub struct RecommendationContextDto {
     pub context_source: ContextSource,
     pub confidence: f64,
     pub privacy_level: PrivacyLevel,
+    #[schema(required)]
+    #[serde(default)]
     pub evidence_summary: ContextEvidenceSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ContextWarning>,
@@ -390,6 +392,35 @@ mod tests {
         let item = &payload["items"][0];
         assert!(item.get("event_id").is_none());
         assert!(item.get("event_title").is_none());
+    }
+
+    #[test]
+    fn recommendation_response_deserializes_cached_context_without_evidence_summary() {
+        let payload = serde_json::json!({
+            "items": [],
+            "explanation": "cached response",
+            "score_breakdown": [],
+            "fallback_stage": "strict_station",
+            "candidate_counts": {},
+            "context": {
+                "context_source": "default_safe_context",
+                "confidence": 0.0,
+                "privacy_level": "coarse_area"
+            },
+            "profile_version": "phase6-profile",
+            "algorithm_version": "phase6-test"
+        });
+
+        let response =
+            serde_json::from_value::<RecommendationResponse>(payload).expect("cached response");
+        let context = response.context.expect("context dto");
+        assert_eq!(
+            context.evidence_summary.primary_kind,
+            context::ContextEvidenceKind::DefaultSafeContext
+        );
+        assert_eq!(context.evidence_summary.evidence_count, 0);
+        assert_eq!(context.evidence_summary.strongest_strength, 0.0);
+        assert!(!context.evidence_summary.has_search_execute);
     }
 
     #[test]

@@ -796,6 +796,7 @@ impl PgRepository {
                    AND event_type = 'search_execute'
                    AND target_station_id IS NOT NULL
                    AND occurred_at >= NOW() - ($2::INTEGER * INTERVAL '1 hour')
+                   AND occurred_at <= NOW()
                  ORDER BY occurred_at DESC, id DESC
                  LIMIT 1",
                 &[&user_id, &RECENT_SEARCH_CONTEXT_WINDOW_HOURS],

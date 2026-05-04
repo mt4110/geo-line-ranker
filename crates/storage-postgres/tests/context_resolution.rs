@@ -477,6 +477,39 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
 
         client
             .execute(
+                "INSERT INTO user_events (
+                    user_id,
+                    school_id,
+                    event_type,
+                    target_station_id,
+                    occurred_at,
+                    payload
+                ) VALUES (
+                    'future-search-user',
+                    NULL,
+                    'search_execute',
+                    'st_tamachi',
+                    NOW() + INTERVAL '30 days',
+                    '{}'::jsonb
+                )",
+                &[],
+            )
+            .await?;
+        let future_search_context = repo
+            .resolve_context(
+                "req-context-future-search",
+                Some("future-search-user"),
+                &ContextInput::default(),
+            )
+            .await?;
+        assert_eq!(
+            future_search_context.context_source,
+            ContextSource::DefaultSafeContext
+        );
+        assert!(future_search_context.station.is_none());
+
+        client
+            .execute(
                 "INSERT INTO user_profile_contexts (
                     user_id,
                     area_id,
