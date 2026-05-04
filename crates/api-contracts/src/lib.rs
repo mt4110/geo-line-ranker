@@ -5,7 +5,7 @@ use context::{
 use domain::{
     ContentKind, EventKind, PlacementKind, RecommendationResult, ScoreComponent, UserEvent,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
@@ -127,16 +127,46 @@ pub struct RecommendationResponse {
     pub algorithm_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RecommendationContextDto {
     pub context_source: ContextSource,
     pub confidence: f64,
     pub privacy_level: PrivacyLevel,
     #[schema(required)]
-    #[serde(default)]
     pub evidence_summary: ContextEvidenceSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ContextWarning>,
+}
+
+impl<'de> Deserialize<'de> for RecommendationContextDto {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RecommendationContextDtoCompat {
+            context_source: ContextSource,
+            confidence: f64,
+            privacy_level: PrivacyLevel,
+            #[serde(default)]
+            evidence_summary: Option<ContextEvidenceSummary>,
+            #[serde(default)]
+            warnings: Vec<ContextWarning>,
+        }
+
+        let value = RecommendationContextDtoCompat::deserialize(deserializer)?;
+        let evidence_summary = value.evidence_summary.unwrap_or_else(|| {
+            ContextEvidenceSummary::from_context_source(&value.context_source, value.confidence)
+        });
+
+        Ok(Self {
+            context_source: value.context_source,
+            confidence: value.confidence,
+            privacy_level: value.privacy_level,
+            evidence_summary,
+            warnings: value.warnings,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -395,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn recommendation_response_deserializes_cached_context_without_evidence_summary() {
+    fn recommendation_response_reconstructs_cached_context_evidence_summary() {
         let payload = serde_json::json!({
             "items": [],
             "explanation": "cached response",
@@ -403,8 +433,8 @@ mod tests {
             "fallback_stage": "strict_station",
             "candidate_counts": {},
             "context": {
-                "context_source": "default_safe_context",
-                "confidence": 0.0,
+                "context_source": "request_station",
+                "confidence": 0.91,
                 "privacy_level": "coarse_area"
             },
             "profile_version": "phase6-profile",
@@ -416,10 +446,10 @@ mod tests {
         let context = response.context.expect("context dto");
         assert_eq!(
             context.evidence_summary.primary_kind,
-            context::ContextEvidenceKind::DefaultSafeContext
+            context::ContextEvidenceKind::RequestStation
         );
-        assert_eq!(context.evidence_summary.evidence_count, 0);
-        assert_eq!(context.evidence_summary.strongest_strength, 0.0);
+        assert_eq!(context.evidence_summary.evidence_count, 1);
+        assert_eq!(context.evidence_summary.strongest_strength, 0.91);
         assert!(!context.evidence_summary.has_search_execute);
     }
 

@@ -129,21 +129,7 @@ impl RankingContext {
     }
 
     pub fn evidence_summary(&self) -> ContextEvidenceSummary {
-        if matches!(self.context_source, ContextSource::DefaultSafeContext) {
-            return ContextEvidenceSummary {
-                primary_kind: ContextEvidenceKind::DefaultSafeContext,
-                evidence_count: 0,
-                strongest_strength: 0.0,
-                has_search_execute: false,
-            };
-        }
-
-        ContextEvidenceSummary {
-            primary_kind: ContextEvidenceKind::from_context_source(&self.context_source),
-            evidence_count: 1,
-            strongest_strength: self.confidence,
-            has_search_execute: matches!(self.context_source, ContextSource::RecentSearchContext),
-        }
+        ContextEvidenceSummary::from_context_source(&self.context_source, self.confidence)
     }
 }
 
@@ -272,6 +258,21 @@ pub struct ContextEvidenceSummary {
     pub evidence_count: usize,
     pub strongest_strength: f64,
     pub has_search_execute: bool,
+}
+
+impl ContextEvidenceSummary {
+    pub fn from_context_source(source: &ContextSource, confidence: f64) -> Self {
+        if matches!(source, ContextSource::DefaultSafeContext) {
+            return Self::default();
+        }
+
+        Self {
+            primary_kind: ContextEvidenceKind::from_context_source(source),
+            evidence_count: 1,
+            strongest_strength: confidence,
+            has_search_execute: matches!(source, ContextSource::RecentSearchContext),
+        }
+    }
 }
 
 impl Default for ContextEvidenceSummary {
