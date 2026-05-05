@@ -449,7 +449,6 @@ async fn main() -> anyhow::Result<()> {
                 json,
                 allow_blockers,
             } => {
-                config::load_dotenv();
                 let ranking_config_dir = match ranking_config_dir {
                     Some(path) => resolve_runtime_path(path),
                     None => env_path_or_default(

@@ -180,11 +180,12 @@ managed infrastructure to the release gate.
 `cargo run -p cli -- replay scenarios` is the DB-free golden quality check for
 ranking correctness. It replays the committed scenario pack under
 `configs/evaluation/scenarios`, checks fallback stage, expected order,
-pairwise ordering, reason-code integrity, and explanation template consistency,
-and exits non-zero when any blocker fails. Use `--json` when capturing a release
-candidate artifact, and `--allow-blockers` only for report-only investigation.
-Use `--ranking-config-dir` and `--algorithm-version` for explicit local
-what-if checks without changing environment variables.
+pairwise ordering, optional `candidate_counts` stage assertions when declared,
+reason-code integrity, and explanation template consistency, and exits non-zero
+when any blocker fails. Use `--json` when capturing a release candidate
+artifact, and `--allow-blockers` only for report-only investigation. Use
+`--ranking-config-dir` and `--algorithm-version` for explicit local what-if
+checks without changing environment variables.
 
 For data quality review changes, run the read-only doctor against a
 bootstrapped PostgreSQL database:

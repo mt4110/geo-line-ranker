@@ -1182,7 +1182,10 @@ fn fallback_stage_label(fallback_stage: &FallbackStageDto) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{
+        collections::BTreeSet,
+        path::{Path, PathBuf},
+    };
 
     use super::{
         normalize_fallback_stage, run_replay_scenarios, stored_response_order,
@@ -1230,7 +1233,20 @@ mod tests {
         )
         .expect("committed replay scenarios");
 
-        assert_eq!(summary.scenarios, 4);
+        let scenario_ids = summary
+            .cases
+            .iter()
+            .map(|case| case.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for expected_id in [
+            "S01_HOKKAIDO_GUARDRAIL",
+            "S02_LINE_INTENT",
+            "S03_CITY_FALLBACK",
+            "S04_COLD_START",
+        ] {
+            assert!(scenario_ids.contains(expected_id));
+        }
+        assert!(summary.scenarios >= 4);
         assert_eq!(summary.blockers, 0);
         assert!(summary.pairwise_total >= 3);
         assert!(summary.explanation_integrity_total >= summary.scenarios * 6);
