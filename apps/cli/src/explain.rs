@@ -133,6 +133,9 @@ pub fn explain_trace_row(trace: &RecommendationTraceReadRow) -> ExplainTraceRepo
         }
     }
 
+    // Intentional: current API trace payloads do not include suppressed_items.
+    // v0.3.1 explain trace surfaces that evidence gap when diversity caps affected
+    // the response explanation, without changing ranking or replay behavior.
     if parsed_response
         .as_ref()
         .is_some_and(|response| response.explanation.contains("多様性上限"))
@@ -199,7 +202,7 @@ fn summarize_request(
             ));
             ExplainTraceRequestSummary {
                 request_id: string_field(request_payload, "request_id"),
-                user_id_present: string_field(request_payload, "user_id").is_some(),
+                user_id_present: field_present(request_payload, "user_id"),
                 target_station_id: string_field(request_payload, "target_station_id"),
                 placement: string_field(request_payload, "placement"),
                 limit: usize_field(request_payload, "limit"),
@@ -379,6 +382,10 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
+fn field_present(value: &Value, key: &str) -> bool {
+    value.get(key).is_some_and(|value| !value.is_null())
+}
+
 fn bool_field(value: &Value, key: &str) -> Option<bool> {
     value.get(key).and_then(Value::as_bool)
 }
@@ -437,6 +444,25 @@ mod tests {
 
         assert!(report.request.user_id_present);
         assert!(!rendered.contains("raw-user-123"));
+    }
+
+    #[test]
+    fn explain_trace_reports_malformed_user_id_presence_by_key() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.request_payload["user_id"] = json!({ "legacy": 123 });
+
+        let report = explain_trace_row(&trace);
+
+        assert!(report.request.user_id_present);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("RecommendationRequest shape")));
     }
 
     #[test]
