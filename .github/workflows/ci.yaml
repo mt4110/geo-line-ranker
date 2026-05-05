@@ -19,13 +19,14 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - name: Config, manifest, and fixture lint
+      - name: Config, manifest, fixture, and scenario lint
         run: |
           cargo run -p cli -- config lint
           cargo run -p cli -- source-manifest lint
           cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
           cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
           cargo run -p crawler -- manifest lint
+          cargo run -p cli -- replay scenarios
       - name: Local review evaluation self-test
         run: python3 scripts/local_review_eval.py --self-test
 

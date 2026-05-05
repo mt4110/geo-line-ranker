@@ -49,6 +49,7 @@ Required local validation:
   cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
   cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
   cargo run -p crawler -- manifest lint
+  cargo run -p cli -- replay scenarios
   just mvp-acceptance
   git diff --check
 
@@ -62,7 +63,7 @@ If just is unavailable:
   DATA_QUALITY_FAIL_ON_WARNING=true ./scripts/data_quality_doctor.sh
 
 CI evidence to review alongside local validation:
-  rust-quality
+  rust-quality (includes golden replay scenarios)
   openapi-drift
   node-and-frontend
   rust-unit-tests
@@ -75,7 +76,9 @@ CI evidence to review alongside local validation:
 Release notes baseline:
   Public MVP runs on sql_only candidate retrieval with event-csv operational
   content, PostgreSQL/PostGIS as the reference write store, and Redis as cache
-  only. Rail/station freshness is the latest available MLIT N02 snapshot.
+  only. Correctness was checked with committed golden replay scenarios, the
+  fixed MVP acceptance flow, and data-quality evidence. Rail/station freshness
+  is the latest available MLIT N02 snapshot.
 
 This script is read-only. It does not run validation or change local services.
 EOF

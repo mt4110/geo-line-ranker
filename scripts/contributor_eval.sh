@@ -11,6 +11,7 @@ run() {
 }
 
 run python3 scripts/local_review_eval.py --self-test
+run cargo run -p cli -- replay scenarios
 
 if [[ "${RUN_REPLAY_EVAL:-0}" == "1" ]]; then
   run cargo run -p cli -- replay evaluate --limit "${REPLAY_EVAL_LIMIT:-20}"

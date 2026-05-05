@@ -167,6 +167,32 @@ text.
 
 ## Replay evaluation
 
+Replay the committed golden scenarios without requiring PostgreSQL traces:
+
+```bash
+cargo run -p cli -- replay scenarios
+```
+
+The golden scenario report is the first DB-free quality check for ranking correctness.
+It prints:
+
+- `scenarios`, `passed`, and `blocked`: scenario-level health.
+- `blockers`: failed checks that block a release candidate.
+- `pairwise`: ordering expectations that passed out of total pairwise checks.
+- `explanation_integrity`: reason-code and explanation-template checks that
+  passed out of total integrity checks.
+
+Each scenario line shows expected and actual fallback stage and item order. On
+failure, the report includes failed checks with `severity=blocker`; treat those
+as release blockers until the ranking change or scenario expectation is
+intentionally updated. Use `--json` for release evidence capture, and reserve
+`--allow-blockers` for local investigation when you need a report without a
+non-zero exit.
+
+The command is DB-free. It reads `RANKING_CONFIG_DIR` and `ALGORITHM_VERSION`
+for parity with runtime ranking config, or accepts `--ranking-config-dir` and
+`--algorithm-version` overrides for local what-if checks.
+
 Replay recent persisted recommendation traces against the current SQL-only
 ranking path:
 
@@ -184,6 +210,9 @@ Replay evaluation compares fallback stage and item order. Use it after ranking
 profile changes, explanation integrity changes, event CSV imports, and snapshot
 refreshes. Full-mode/OpenSearch comparison remains a separate compatibility
 flow; replay evaluation intentionally exercises the SQL-only reference path.
+When recommendation traces are unavailable, the committed golden scenarios
+still provide the DB-free baseline; when traces exist, run both checks before
+calling the release candidate correct.
 
 ## Event CSV import
 

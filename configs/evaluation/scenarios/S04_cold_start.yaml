@@ -1,0 +1,89 @@
+schema_version: 1
+kind: replay_scenario
+id: S04_COLD_START
+title: Cold start safe global baseline
+description: With only default safe context, ranking remains deterministic and marks safe-global fallback.
+tags:
+  - v0.3.1
+  - cold_start
+  - safe_global
+query:
+  target_station_id: st_default_seed
+  limit: 2
+  placement: search
+  debug: false
+  context:
+    context_source: default_safe_context
+    confidence: 0.2
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+    warnings: []
+dataset:
+  schools:
+    - id: school_cold_near
+      name: Cold Start Near High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_cold_near
+    - id: school_cold_far
+      name: Cold Start Far High
+      area: Naha
+      prefecture_name: Okinawa
+      school_type: high_school
+      group_id: group_cold_far
+  events: []
+  stations:
+    - id: st_default_seed
+      name: Default Seed
+      line_name: Seed Line
+      latitude: 35.6500
+      longitude: 139.7500
+    - id: st_cold_near
+      name: Cold Near
+      line_name: Nearby Line
+      latitude: 35.6510
+      longitude: 139.7510
+    - id: st_cold_far
+      name: Cold Far
+      line_name: Remote Line
+      latitude: 26.2124
+      longitude: 127.6792
+  school_station_links:
+    - school_id: school_cold_near
+      station_id: st_cold_near
+      walking_minutes: 7
+      distance_meters: 540
+      hop_distance: 0
+      line_name: Nearby Line
+    - school_id: school_cold_far
+      station_id: st_cold_far
+      walking_minutes: 13
+      distance_meters: 1200
+      hop_distance: 0
+      line_name: Remote Line
+  popularity_snapshots: []
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: safe_global_popular
+  ordered:
+    - "school:school_cold_near"
+    - "school:school_cold_far"
+  pairwise:
+    - higher: "school:school_cold_near"
+      lower: "school:school_cold_far"
+      note: deterministic geo signals should order the safe-global cold start
+  candidate_counts:
+    strict_station: 0
+    same_line: 0
+    same_city: 0
+    same_prefecture: 0
+    neighbor_area: 0
+    safe_global_popular: 2
+  required_reason_codes:
+    "school:school_cold_near":
+      - geo.station_distance
+      - geo.walking_minutes
+      - fallback.safe_global_distance_penalty
