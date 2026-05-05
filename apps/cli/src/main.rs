@@ -459,6 +459,7 @@ async fn main() -> anyhow::Result<()> {
                 let algorithm_version = algorithm_version
                     .or(config::env_optional_non_empty("ALGORITHM_VERSION")?)
                     .unwrap_or_else(|| DEFAULT_ALGORITHM_VERSION.to_string());
+                let path = resolve_runtime_path(path);
                 let summary = run_replay_scenarios(path, ranking_config_dir, &algorithm_version)?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&summary)?);

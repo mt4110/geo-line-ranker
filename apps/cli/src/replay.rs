@@ -447,15 +447,7 @@ fn validate_item_key(scenario_id: &str, field: &str, item_key: &str) -> Result<(
 }
 
 fn is_known_fallback_stage(stage: &str) -> bool {
-    matches!(
-        stage,
-        "strict_station"
-            | "same_line"
-            | "same_city"
-            | "same_prefecture"
-            | "neighbor_area"
-            | "safe_global_popular"
-    )
+    serde_yaml::from_value::<FallbackStage>(serde_yaml::Value::String(stage.to_string())).is_ok()
 }
 
 fn evaluate_replay_scenario(
