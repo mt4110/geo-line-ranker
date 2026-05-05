@@ -197,8 +197,9 @@ fn summarize_request(
             debug: Some(request.debug),
         },
         Err(error) => {
+            let error_category = serde_error_category(&error);
             warnings.push(format!(
-                "request_payload could not be parsed as the current RecommendationRequest shape: {error}"
+                "request_payload could not be parsed as the current RecommendationRequest shape (category: {error_category})"
             ));
             ExplainTraceRequestSummary {
                 request_id: string_field(request_payload, "request_id"),
@@ -260,11 +261,7 @@ fn summarize_response(
                 "response_payload could not be parsed as the current RecommendationResponse shape: {error}"
             ));
             let summary = ExplainTraceResponseSummary {
-                payload_shape: if stored_order.is_empty() {
-                    "invalid".to_string()
-                } else {
-                    "legacy_or_invalid".to_string()
-                },
+                payload_shape: "legacy_or_invalid".to_string(),
                 request_id: string_field(&trace.response_payload, "request_id"),
                 db_fallback_stage,
                 response_fallback_stage: fallback_stage,
@@ -415,6 +412,15 @@ fn f64_field(value: &Value, key: &str) -> Option<f64> {
     value.get(key).and_then(Value::as_f64)
 }
 
+fn serde_error_category(error: &serde_json::Error) -> &'static str {
+    match error.classify() {
+        serde_json::error::Category::Io => "io",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "data",
+        serde_json::error::Category::Eof => "eof",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -472,7 +478,28 @@ mod tests {
         assert!(report
             .warnings
             .iter()
-            .any(|warning| warning.contains("RecommendationRequest shape")));
+            .any(|warning| warning.contains("RecommendationRequest shape (category: data)")));
+    }
+
+    #[test]
+    fn explain_trace_does_not_leak_scalar_request_payload_parse_errors() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.request_payload = json!("raw-user-123");
+
+        let report = explain_trace_row(&trace);
+        let rendered = serde_json::to_string(&report).expect("json report");
+
+        assert!(!report.request.user_id_present);
+        assert!(!rendered.contains("raw-user-123"));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("RecommendationRequest shape (category: data)")));
     }
 
     #[test]
@@ -538,6 +565,35 @@ mod tests {
             Some("strict_station")
         );
         assert_eq!(report.response.result_order, vec!["school:school_a"]);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("current RecommendationResponse shape")));
+    }
+
+    #[test]
+    fn explain_trace_keeps_legacy_empty_order_readable() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.response_payload = json!({
+            "items": [],
+            "fallback_stage": "same_line"
+        });
+        trace.fallback_stage = "same_line".to_string();
+
+        let report = explain_trace_row(&trace);
+
+        assert_eq!(report.status, ExplainTraceStatus::Warning);
+        assert_eq!(report.response.payload_shape, "legacy_or_invalid");
+        assert_eq!(
+            report.response.response_fallback_stage.as_deref(),
+            Some("same_line")
+        );
+        assert!(report.response.result_order.is_empty());
         assert!(report
             .warnings
             .iter()
