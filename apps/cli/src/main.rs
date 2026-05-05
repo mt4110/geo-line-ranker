@@ -8,17 +8,19 @@ use clap::{Parser, Subcommand};
 use cli::{
     format_context_inspect_summary, format_fixture_doctor_summary, format_job_enqueue_summary,
     format_job_inspection, format_job_list, format_job_mutation_summary,
-    format_replay_evaluation_summary, format_snapshot_refresh_summary, format_summary,
-    generate_demo_jp_fixture, run_context_inspect, run_derive_school_station_links,
-    run_event_csv_import, run_fixture_doctor, run_import_command, run_job_due, run_job_enqueue,
-    run_job_inspect, run_job_list, run_job_retry, run_replay_evaluate, run_snapshot_refresh,
-    ContextInspectInput, ImportTarget,
+    format_replay_evaluation_summary, format_replay_scenario_summary,
+    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture, run_context_inspect,
+    run_derive_school_station_links, run_event_csv_import, run_fixture_doctor, run_import_command,
+    run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
+    run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
+    ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
     resolve_linted_profile_pack_runtime_selection, resolve_runtime_path, AppSettings,
     ProfilePackLintFile, ProfilePackLintSummary, ProfilePackManifest, ProfilePackRegistry,
-    RankingConfigLintSummary, DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
+    RankingConfigLintSummary, DEFAULT_ALGORITHM_VERSION, DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_PACKS_DIR, DEFAULT_RANKING_CONFIG_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 use storage_opensearch::ProjectionSyncService;
@@ -172,6 +174,29 @@ enum ReplayCommand {
         limit: i64,
         #[arg(long, help = "Exit non-zero when any replay mismatches or fails")]
         fail_on_mismatch: bool,
+    },
+    #[command(about = "Replay committed golden scenarios without requiring persisted traces")]
+    Scenarios {
+        #[arg(
+            long,
+            default_value = DEFAULT_REPLAY_SCENARIO_PATH,
+            help = "Scenario YAML file or directory to replay"
+        )]
+        path: PathBuf,
+        #[arg(
+            long,
+            help = "Ranking config directory. Defaults to RANKING_CONFIG_DIR or configs/ranking."
+        )]
+        ranking_config_dir: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Algorithm version label for report parity. Defaults to ALGORITHM_VERSION or the runtime default."
+        )]
+        algorithm_version: Option<String>,
+        #[arg(long, help = "Print the scenario report as JSON")]
+        json: bool,
+        #[arg(long, help = "Exit zero even when blocker checks fail")]
+        allow_blockers: bool,
     },
 }
 
@@ -415,6 +440,34 @@ async fn main() -> anyhow::Result<()> {
                         summary.mismatched,
                         summary.failed
                     );
+                }
+            }
+            ReplayCommand::Scenarios {
+                path,
+                ranking_config_dir,
+                algorithm_version,
+                json,
+                allow_blockers,
+            } => {
+                let ranking_config_dir = match ranking_config_dir {
+                    Some(path) => resolve_runtime_path(path),
+                    None => env_path_or_default(
+                        "RANKING_CONFIG_DIR",
+                        PathBuf::from(DEFAULT_RANKING_CONFIG_DIR),
+                    )?,
+                };
+                let algorithm_version = algorithm_version
+                    .or(config::env_optional_non_empty("ALGORITHM_VERSION")?)
+                    .unwrap_or_else(|| DEFAULT_ALGORITHM_VERSION.to_string());
+                let path = resolve_runtime_path(path);
+                let summary = run_replay_scenarios(path, ranking_config_dir, &algorithm_version)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_replay_scenario_summary(&summary));
+                }
+                if summary.has_blockers() && !allow_blockers {
+                    anyhow::bail!("replay scenarios had blocker checks={}", summary.blockers);
                 }
             }
         },

@@ -15,6 +15,7 @@ pub const DEFAULT_PROFILE_PACKS_DIR: &str = "configs/profiles";
 pub const DEFAULT_PROFILE_ID: &str = "local-discovery-generic";
 pub const DEFAULT_RANKING_CONFIG_DIR: &str = "configs/ranking";
 pub const DEFAULT_FIXTURE_DIR: &str = "storage/fixtures/minimal";
+pub const DEFAULT_ALGORITHM_VERSION: &str = "phase8-policy-diversity-v1";
 pub const RANKING_CONFIG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_REASON_CATALOG_SCHEMA_VERSION: u32 = 1;
@@ -214,7 +215,7 @@ impl AppSettings {
             raw_storage_dir: env_string("RAW_STORAGE_DIR", ".storage/raw".to_string())?,
             algorithm_version: env_string(
                 "ALGORITHM_VERSION",
-                "phase8-policy-diversity-v1".to_string(),
+                DEFAULT_ALGORITHM_VERSION.to_string(),
             )?,
             candidate_retrieval_mode,
             candidate_retrieval_limit: parse_env("CANDIDATE_RETRIEVAL_LIMIT", 256)?,

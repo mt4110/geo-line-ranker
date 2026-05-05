@@ -392,6 +392,7 @@ dependencies = [
  "config",
  "context",
  "csv",
+ "domain",
  "generic-csv",
  "jp-postal",
  "jp-rail",

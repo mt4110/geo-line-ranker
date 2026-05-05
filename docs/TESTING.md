@@ -13,6 +13,7 @@ cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
+cargo run -p cli -- replay scenarios
 ```
 
 `config lint` covers both active ranking config and committed profile pack
@@ -68,8 +69,9 @@ source manifest lint, the default fixture doctor, crawler manifest lint, and
 `just docs` checks required docs files and local Markdown links. Treat this as
 contributor tooling, not as a release gate expansion.
 
-`just eval` runs the offline local review evaluation self-test. After the
-database has recommendation traces, `RUN_REPLAY_EVAL=1 just eval` also runs
+`just eval` runs the offline local review evaluation self-test and the
+committed golden replay scenarios. After the database has recommendation
+traces, `RUN_REPLAY_EVAL=1 just eval` also runs
 `cargo run -p cli -- replay evaluate --limit 20`.
 
 `just ts-sdk-check` installs the locked `packages/ts-sdk` dependencies with
@@ -101,8 +103,8 @@ RUST_TEST_THREADS=1 cargo test --workspace
 
 Pull request CI keeps the static checks and test execution separate:
 
-- `rust-quality`: formatting, clippy, config lint, manifest lint, and fixture
-  doctor checks for the full workspace.
+- `rust-quality`: formatting, clippy, config lint, manifest lint, fixture
+  doctor checks, and golden replay scenarios for the full workspace.
 - `rust-unit-tests`: DB-free packages and the mock OpenSearch compatibility
   tests.
 - `rust-postgres-tests`: PostgreSQL/Redis-backed shards for `api`, `cli`,
@@ -157,6 +159,7 @@ cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
+cargo run -p cli -- replay scenarios
 just mvp-acceptance
 git diff --check
 ```
@@ -173,6 +176,16 @@ not an additional acceptance-gate case. Run it with
 `DATA_QUALITY_FAIL_ON_WARNING=true` for release readiness so doctor warnings
 fail the evidence step. It does not add live crawler, full mode, OpenSearch, or
 managed infrastructure to the release gate.
+
+`cargo run -p cli -- replay scenarios` is the DB-free golden quality check for
+ranking correctness. It replays the committed scenario pack under
+`configs/evaluation/scenarios`, checks fallback stage, expected order,
+pairwise ordering, optional `candidate_counts` stage assertions when declared,
+reason-code integrity, and explanation template consistency, and exits non-zero
+when any blocker fails. Use `--json` when capturing a release candidate
+artifact, and `--allow-blockers` only for report-only investigation. Use
+`--ranking-config-dir` and `--algorithm-version` for explicit local what-if
+checks without changing environment variables.
 
 For data quality review changes, run the read-only doctor against a
 bootstrapped PostgreSQL database:

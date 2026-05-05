@@ -1,0 +1,93 @@
+schema_version: 1
+kind: replay_scenario
+id: S01_HOKKAIDO_GUARDRAIL
+title: Hokkaido area guardrail
+description: Hokkaido area intent must not be displaced by a remote Okinawa popularity signal.
+tags:
+  - v0.3.1
+  - area_context
+  - guardrail
+query:
+  target_station_id: st_sapporo
+  limit: 3
+  placement: search
+  debug: false
+  context:
+    context_source: request_area
+    confidence: 0.95
+    area:
+      country: JP
+      prefecture_name: Hokkaido
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+    warnings: []
+dataset:
+  schools:
+    - id: school_hokkaido
+      name: Hokkaido Local High
+      area: Sapporo
+      prefecture_name: Hokkaido
+      school_type: high_school
+      group_id: group_hokkaido
+    - id: school_okinawa
+      name: Okinawa Popular High
+      area: Naha
+      prefecture_name: Okinawa
+      school_type: high_school
+      group_id: group_okinawa
+  events: []
+  stations:
+    - id: st_sapporo
+      name: Sapporo
+      line_name: Sapporo Subway Namboku Line
+      latitude: 43.0618
+      longitude: 141.3545
+    - id: st_hokkaido_school
+      name: Hokkaido School Gate
+      line_name: Sapporo Subway Toho Line
+      latitude: 43.0640
+      longitude: 141.3600
+    - id: st_naha
+      name: Naha
+      line_name: Yui Rail
+      latitude: 26.2124
+      longitude: 127.6792
+  school_station_links:
+    - school_id: school_hokkaido
+      station_id: st_hokkaido_school
+      walking_minutes: 12
+      distance_meters: 900
+      hop_distance: 0
+      line_name: Sapporo Subway Toho Line
+    - school_id: school_okinawa
+      station_id: st_naha
+      walking_minutes: 2
+      distance_meters: 100
+      hop_distance: 0
+      line_name: Yui Rail
+  popularity_snapshots:
+    - school_id: school_okinawa
+      popularity_score: 100.0
+      total_events: 100
+      school_view_count: 100
+      school_save_count: 0
+      event_view_count: 0
+      apply_click_count: 0
+      share_count: 0
+      search_execute_count: 0
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: same_prefecture
+  ordered:
+    - "school:school_hokkaido"
+  absent_from_result:
+    - "school:school_okinawa"
+  candidate_counts:
+    same_prefecture: 1
+    safe_global_popular: 2
+  required_reason_codes:
+    "school:school_hokkaido":
+      - geo.station_distance
+      - geo.walking_minutes
