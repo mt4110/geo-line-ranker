@@ -122,7 +122,7 @@ pub fn explain_trace_row(trace: &RecommendationTraceReadRow) -> ExplainTraceRepo
     let mut warnings = Vec::new();
     let request = summarize_request(&trace.request_payload, &mut warnings);
     let (response, parsed_response) = summarize_response(trace, &mut warnings);
-    let trace_payload = summarize_trace_payload(&trace.trace_payload);
+    let trace_payload = summarize_trace_payload(&trace.trace_payload, &mut warnings);
 
     if let Some(response_stage) = response.response_fallback_stage.as_deref() {
         if response.db_fallback_stage != response_stage {
@@ -278,10 +278,22 @@ fn summarize_response(
     }
 }
 
-fn summarize_trace_payload(trace_payload: &Value) -> ExplainTracePayloadSummary {
+fn summarize_trace_payload(
+    trace_payload: &Value,
+    warnings: &mut Vec<String>,
+) -> ExplainTracePayloadSummary {
     let context = trace_payload.get("context");
     let candidate_retrieval = trace_payload.get("candidate_retrieval");
     let suppressed_items = trace_payload.get("suppressed_items");
+    let suppressed_item_count = match suppressed_items {
+        Some(Value::Array(items)) => Some(items.len()),
+        Some(_) => {
+            warnings
+                .push("trace_payload.suppressed_items must be an array when present".to_string());
+            None
+        }
+        None => None,
+    };
 
     ExplainTracePayloadSummary {
         response_source: string_field(trace_payload, "response_source"),
@@ -294,10 +306,8 @@ fn summarize_trace_payload(trace_payload: &Value) -> ExplainTracePayloadSummary 
         candidate_count: candidate_retrieval
             .and_then(|value| usize_field(value, "candidate_count")),
         duration_ms: candidate_retrieval.and_then(|value| u64_field(value, "duration_ms")),
-        suppressed_item_reasons_recorded: suppressed_items.is_some(),
-        suppressed_item_count: suppressed_items
-            .and_then(Value::as_array)
-            .map(|items| items.len()),
+        suppressed_item_reasons_recorded: suppressed_item_count.is_some(),
+        suppressed_item_count,
     }
 }
 
@@ -463,6 +473,27 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("RecommendationRequest shape")));
+    }
+
+    #[test]
+    fn explain_trace_marks_malformed_suppressed_items_shape_as_warning() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.trace_payload["suppressed_items"] = json!({ "school:school_b": "same_group_cap" });
+
+        let report = explain_trace_row(&trace);
+
+        assert_eq!(report.status, ExplainTraceStatus::Warning);
+        assert!(!report.trace_payload.suppressed_item_reasons_recorded);
+        assert_eq!(report.trace_payload.suppressed_item_count, None);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("trace_payload.suppressed_items")));
     }
 
     #[test]
