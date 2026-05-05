@@ -214,6 +214,28 @@ When recommendation traces are unavailable, the committed golden scenarios
 still provide the DB-free baseline; when traces exist, run both checks before
 calling the release candidate correct.
 
+Inspect one persisted recommendation trace when you need a human-readable
+explanation debugging entrypoint:
+
+```bash
+cargo run -p cli -- explain trace --id <trace_id>
+```
+
+Use JSON output for release or incident evidence:
+
+```bash
+cargo run -p cli -- explain trace --id <trace_id> --json
+```
+
+`explain trace` reads the stored `recommendation_traces` row. It does not replay
+ranking and does not change fallback semantics. The report shows request
+identity, whether a user id was present without printing the raw user id,
+response fallback stage, result order, reason codes, trace payload
+context/candidate retrieval details, and explanation integrity checks. Treat
+`status=warning`, failed integrity checks, fallback-stage mismatches, and
+`payload_shape=legacy_or_invalid` as debugging signals for that trace. A missing
+trace id is an error.
+
 ## Event CSV import
 
 Import operational events:
