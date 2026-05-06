@@ -1,4 +1,5 @@
 mod context_inspect;
+mod doctor;
 mod explain;
 mod explanation_integrity;
 mod fixtures;
@@ -12,6 +13,10 @@ mod snapshot;
 pub use context_inspect::{
     format_context_inspect_summary, run_context_inspect, ContextInspectInput, ContextInspectSummary,
 };
+pub use doctor::{
+    run_explanation_integrity_doctor, ExplanationIntegrityDoctorCase,
+    ExplanationIntegrityDoctorSummary,
+};
 pub use explain::{
     run_explain_trace, ExplainTraceCheck, ExplainTraceIntegritySummary, ExplainTraceItemSummary,
     ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport,
@@ -23,10 +28,10 @@ pub use fixtures::{
     FixtureFileManifest, FixtureManifestKind, FixtureSetManifest,
 };
 pub use formatting::{
-    format_explain_trace_report, format_fixture_doctor_summary, format_job_enqueue_summary,
-    format_job_inspection, format_job_list, format_job_mutation_summary,
-    format_replay_evaluation_summary, format_replay_scenario_summary,
-    format_snapshot_refresh_summary, format_summary,
+    format_explain_trace_report, format_explanation_integrity_doctor_summary,
+    format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
+    format_job_list, format_job_mutation_summary, format_replay_evaluation_summary,
+    format_replay_scenario_summary, format_snapshot_refresh_summary, format_summary,
 };
 pub use import::{
     run_derive_school_station_links, run_event_csv_import, run_import_command, CommandSummary,

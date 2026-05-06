@@ -193,6 +193,22 @@ The command is DB-free. It reads `RANKING_CONFIG_DIR` and `ALGORITHM_VERSION`
 for parity with runtime ranking config, or accepts `--ranking-config-dir` and
 `--algorithm-version` overrides for local what-if checks.
 
+Run the narrower explanation integrity doctor when you only need the reason
+catalog and explanation-template quality slice:
+
+```bash
+cargo run -p cli -- doctor explanation-integrity
+```
+
+This doctor reuses the same committed replay scenario pack and ranking config
+resolution as `replay scenarios`, but reports only `explanation_*` checks,
+including reason integrity and explanation template checks. A clean doctor
+result means explanation labels, reason codes, and fallback-stage wording are
+consistent for the scenario pack. It does not replace `replay scenarios`; it
+intentionally does not prove ordering, pairwise, or candidate-count correctness.
+Use `--json` for evidence capture and `--allow-blockers` only for local
+investigation.
+
 Replay recent persisted recommendation traces against the current SQL-only
 ranking path:
 
