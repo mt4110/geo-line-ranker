@@ -9,13 +9,14 @@ use cli::{
     format_context_inspect_summary, format_explain_trace_report,
     format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
     format_job_enqueue_summary, format_job_inspection, format_job_list,
-    format_job_mutation_summary, format_replay_evaluation_summary, format_replay_scenario_summary,
+    format_job_mutation_summary, format_profile_pack_doctor_summary,
+    format_replay_evaluation_summary, format_replay_scenario_summary,
     format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture, run_context_inspect,
     run_derive_school_station_links, run_event_csv_import, run_explain_trace,
     run_explanation_integrity_doctor, run_fixture_doctor, run_import_command, run_job_due,
-    run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_replay_evaluate,
-    run_replay_scenarios, run_snapshot_refresh, ContextInspectInput, ImportTarget,
-    DEFAULT_REPLAY_SCENARIO_PATH,
+    run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_profile_pack_doctor,
+    run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
+    ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -255,6 +256,20 @@ enum DoctorCommand {
             help = "Exit zero even when explanation integrity blocker checks fail"
         )]
         allow_blockers: bool,
+    },
+    #[command(
+        name = "profile-pack",
+        about = "Run the profile pack validation doctor against committed profile manifests",
+        long_about = "Run the profile pack validation doctor against committed profile manifests. This reuses the same manifest, reason catalog, ranking config, fixture, and local reference validation as `profile validate`, then prints operator-facing profile-pack coverage metrics.\n\nExamples:\n  geo-line-ranker-cli doctor profile-pack\n  geo-line-ranker-cli doctor profile-pack --json\n  geo-line-ranker-cli doctor profile-pack --profiles-path configs/profiles"
+    )]
+    ProfilePack {
+        #[arg(
+            long,
+            help = "Profile pack root directory or explicit profile.yaml file to diagnose. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+        )]
+        profiles_path: Option<PathBuf>,
+        #[arg(long, help = "Print the doctor report as JSON")]
+        json: bool,
     },
 }
 
@@ -573,6 +588,21 @@ async fn main() -> anyhow::Result<()> {
                     );
                 }
             }
+            DoctorCommand::ProfilePack {
+                profiles_path,
+                json,
+            } => {
+                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                    "PROFILE_PACKS_DIR",
+                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                )?);
+                let summary = run_profile_pack_doctor(profiles_path)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_profile_pack_doctor_summary(&summary));
+                }
+            }
         },
         Command::Profile { target } => match target {
             ProfileCommand::List { profiles_path } => {
@@ -865,7 +895,7 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "- {} profile_id={} schema_version={} kind={} manifest_version={} content_kinds={} reasons={} fixtures={} source_manifests={} optional_crawler_manifests={}",
+        "- {} profile_id={} schema_version={} kind={} manifest_version={} content_kinds={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
         file.path.display(),
         file.profile_id,
         file.schema_version,
@@ -875,6 +905,7 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         file.reason_count,
         file.fixture_count,
         file.source_manifest_count,
+        file.event_csv_example_count,
         file.optional_crawler_manifest_count
     )
 }
@@ -1071,6 +1102,66 @@ mod tests {
     }
 
     #[test]
+    fn profile_pack_doctor_help_points_to_profile_validation_metrics() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let profile_pack = doctor
+            .find_subcommand_mut("profile-pack")
+            .expect("doctor profile-pack command");
+        let mut buffer = Vec::new();
+        profile_pack
+            .write_long_help(&mut buffer)
+            .expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("reuses the same manifest"));
+        assert!(help.contains("operator-facing profile-pack coverage metrics"));
+        assert!(help.contains("doctor profile-pack --json"));
+        assert!(help.contains("--profiles-path configs/profiles"));
+    }
+
+    #[test]
+    fn profile_pack_doctor_summary_reports_profile_metrics() {
+        let summary = cli::ProfilePackDoctorSummary {
+            profile_packs: 1,
+            ranking_config_dirs: 1,
+            reason_count: 14,
+            fixture_references: 1,
+            source_manifest_references: 4,
+            event_csv_example_references: 1,
+            optional_crawler_manifest_references: 1,
+            files: vec![cli::ProfilePackDoctorFile {
+                path: PathBuf::from("configs/profiles/school-event-jp/profile.yaml"),
+                profile_id: "school-event-jp".to_string(),
+                ranking_config_dir: PathBuf::from("configs/ranking"),
+                reason_catalog_path: PathBuf::from("configs/profiles/school-event-jp/reasons.yaml"),
+                schema_version: 1,
+                kind: "profile_pack".to_string(),
+                manifest_version: 1,
+                supported_content_kinds: vec!["school".to_string(), "event".to_string()],
+                reason_count: 14,
+                fixture_references: 1,
+                source_manifest_references: 4,
+                event_csv_example_references: 1,
+                optional_crawler_manifest_references: 1,
+            }],
+        };
+
+        let rendered = format_profile_pack_doctor_summary(&summary);
+
+        assert!(rendered.contains("doctor profile-pack completed: profile_packs=1"));
+        assert!(rendered.contains("reasons=14"));
+        assert!(rendered.contains("fixture_references=1"));
+        assert!(rendered.contains("source_manifest_references=4"));
+        assert!(rendered.contains("event_csv_example_references=1"));
+        assert!(rendered.contains("optional_crawler_manifest_references=1"));
+        assert!(rendered.contains("event_csv_examples=1"));
+        assert!(rendered.contains("profile_id=school-event-jp"));
+    }
+
+    #[test]
     fn profile_validate_summary_reports_profile_count() {
         let summary = ProfilePackLintSummary {
             files: vec![ProfilePackLintFile {
@@ -1087,6 +1178,7 @@ mod tests {
                 reason_count: 14,
                 fixture_count: 1,
                 source_manifest_count: 0,
+                event_csv_example_count: 0,
                 optional_crawler_manifest_count: 0,
             }],
             ranking_configs: Vec::new(),
@@ -1132,6 +1224,7 @@ article_support: reserved
             reason_count: 14,
             fixture_count: 0,
             source_manifest_count: 0,
+            event_csv_example_count: 0,
             optional_crawler_manifest_count: 0,
         };
         let runtime_manifest_path = PathBuf::from("repo")

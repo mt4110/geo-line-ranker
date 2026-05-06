@@ -28,7 +28,17 @@ For profile-pack or profile CLI changes, also run:
 cargo run -p cli -- profile list
 cargo run -p cli -- profile validate
 cargo run -p cli -- profile inspect --profile-id local-discovery-generic
+cargo run -p cli -- doctor profile-pack
+cargo run -p cli -- doctor profile-pack --json
 ```
+
+Use `profile validate`, `profile list`, and `profile inspect` when changing or
+reviewing a profile pack because those commands are authoring-focused and show
+manifest-level details. Use `doctor profile-pack` when capturing
+operator-facing quality evidence: it reuses the same profile-pack validation
+logic, then summarizes profile count, reason count, fixture references, source
+manifest references, event CSV example references, and optional crawler
+manifest references.
 
 Config, profile, source, crawler, or fixture manifest contract changes should
 run the relevant lint, profile, or doctor command. Those commands verify
@@ -161,6 +171,7 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 cargo run -p cli -- replay scenarios
 cargo run -p cli -- doctor explanation-integrity
+cargo run -p cli -- doctor profile-pack
 just mvp-acceptance
 git diff --check
 ```
@@ -198,6 +209,14 @@ not a substitute for `replay scenarios`; ordering, pairwise, and candidate-count
 regressions belong to the full replay gate. The command supports `--json`,
 `--ranking-config-dir`, `--algorithm-version`, and `--allow-blockers` with the
 same intent as `replay scenarios`.
+
+`cargo run -p cli -- doctor profile-pack` is the Quality doctor v2 slice for
+profile-pack health. It is DB-free and reuses the profile manifest, reason
+catalog, ranking config, fixture, source manifest, event CSV example, and
+optional crawler manifest validation from `profile validate`, then emits
+compact coverage metrics for release evidence. It is not a replacement for
+`config lint`; ranking config contract drift still belongs to the combined
+config lint gate. Use `--json` when capturing evidence artifacts.
 
 When investigating a concrete persisted trace, use the explanation reader after
 PostgreSQL contains `recommendation_traces` rows:
