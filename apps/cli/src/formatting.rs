@@ -1,10 +1,12 @@
 use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 
 use crate::{
+    explain::{ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport},
+    explanation_integrity::QualityCheckStatus,
     fixtures::FixtureDoctorSummary,
     import::CommandSummary,
     jobs::JobEnqueueSummary,
-    replay::{QualityCheckStatus, ReplayEvaluationSummary, ReplayScenarioSummary},
+    replay::{ReplayEvaluationSummary, ReplayScenarioSummary},
     snapshot::SnapshotRefreshSummary,
 };
 
@@ -161,6 +163,88 @@ pub fn format_job_enqueue_summary(summary: &JobEnqueueSummary) -> String {
     )
 }
 
+pub fn format_explain_trace_report(report: &ExplainTraceReport) -> String {
+    let mut lines = vec![format!(
+        "explain trace: id={} status={} created_at={} algorithm_version={}",
+        report.trace_id,
+        report.status.as_str(),
+        report.created_at,
+        report.algorithm_version
+    )];
+
+    lines.push(format!(
+        "request: request_id={} user_id_present={} placement={} target_station_id={} limit={} debug={}",
+        optional_str(report.request.request_id.as_deref()),
+        report.request.user_id_present,
+        optional_str(report.request.placement.as_deref()),
+        optional_str(report.request.target_station_id.as_deref()),
+        optional_usize(report.request.limit),
+        optional_bool(report.request.debug)
+    ));
+    lines.push(format!(
+        "response: shape={} fallback={}=>{} items={}",
+        report.response.payload_shape,
+        report.response.db_fallback_stage,
+        optional_str(report.response.response_fallback_stage.as_deref()),
+        report.response.item_count
+    ));
+    lines.push(format!(
+        "result_order: {}",
+        format_order(&report.response.result_order)
+    ));
+    lines.push(format_trace_payload_summary(&report.trace_payload));
+    lines.push(format!(
+        "result_reasons: {}",
+        format_reasons(&report.response.top_reasons)
+    ));
+
+    if report.response.items.is_empty() {
+        lines.push("item_reasons: -".to_string());
+    } else {
+        lines.push("item_reasons:".to_string());
+        for item in &report.response.items {
+            lines.push(format!(
+                "  {} score={} fallback={} reasons={}",
+                item.item_key,
+                optional_f64(item.score),
+                optional_str(item.fallback_stage.as_deref()),
+                format_reasons(&item.reasons)
+            ));
+        }
+    }
+
+    lines.push(format!(
+        "integrity: passed={} failed={}",
+        report.integrity.passed, report.integrity.failed
+    ));
+    for check in report
+        .integrity
+        .checks
+        .iter()
+        .filter(|check| check.status == QualityCheckStatus::Failed)
+    {
+        lines.push(format!(
+            "  check={} severity={} status={} message={}",
+            check.name,
+            check.severity.as_str(),
+            check.status.as_str(),
+            check.message
+        ));
+    }
+
+    if !report.warnings.is_empty() {
+        lines.push("warnings:".to_string());
+        lines.extend(
+            report
+                .warnings
+                .iter()
+                .map(|warning| format!("  - {warning}")),
+        );
+    }
+
+    lines.join("\n")
+}
+
 pub fn format_replay_evaluation_summary(summary: &ReplayEvaluationSummary) -> String {
     let mut lines = vec![format!(
         "replay evaluation completed: evaluated={}, matched={}, mismatched={}, failed={}",
@@ -238,4 +322,70 @@ fn format_order(order: &[String]) -> String {
     } else {
         order.join(",")
     }
+}
+
+fn format_trace_payload_summary(summary: &ExplainTracePayloadSummary) -> String {
+    format!(
+        "trace_payload: response_source={} context={} confidence={} privacy={} retrieval={}/{} candidate_count={} duration_ms={} suppressed_item_reasons={}",
+        optional_str(summary.response_source.as_deref()),
+        optional_str(summary.context_source.as_deref()),
+        optional_f64(summary.context_confidence),
+        optional_str(summary.privacy_level.as_deref()),
+        optional_str(summary.candidate_retrieval_mode.as_deref()),
+        optional_str(summary.candidate_retrieval_backend.as_deref()),
+        optional_usize(summary.candidate_count),
+        optional_u64(summary.duration_ms),
+        if summary.suppressed_item_reasons_recorded {
+            match summary.suppressed_item_count {
+                Some(count) => format!("recorded({count})"),
+                None => "recorded".to_string(),
+            }
+        } else {
+            "not_recorded".to_string()
+        }
+    )
+}
+
+fn format_reasons(reasons: &[ExplainTraceReasonSummary]) -> String {
+    if reasons.is_empty() {
+        return "-".to_string();
+    }
+    reasons
+        .iter()
+        .map(|reason| {
+            format!(
+                "{}:{}({})={:.3}",
+                reason.feature, reason.reason_code, reason.label, reason.value
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn optional_str(value: Option<&str>) -> &str {
+    value.unwrap_or("-")
+}
+
+fn optional_bool(value: Option<bool>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn optional_usize(value: Option<usize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn optional_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn optional_f64(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.3}"))
+        .unwrap_or_else(|| "-".to_string())
 }

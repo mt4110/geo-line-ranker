@@ -17,6 +17,6 @@ pub use repository::{
     CrawlFetchLogEntry, CrawlParseErrorSnapshot, CrawlParseReportEntry, CrawlRunHealthPage,
     CrawlRunHealthSnapshot, CrawlRunState, DeriveLinksSummary, EventCsvRecord, ImportReportEntry,
     ImportRunFileAudit, ImportSummary, JobAttemptRow, JobInspection, JobMutationSummary,
-    JobQueuePressureRow, JobQueueRow, JobQueueSnapshot, PgRepository, RecommendationTraceReplayRow,
-    SourceManifestAudit, StoredCrawlFetchLog, StoredCrawlParseError,
+    JobQueuePressureRow, JobQueueRow, JobQueueSnapshot, PgRepository, RecommendationTraceReadRow,
+    RecommendationTraceReplayRow, SourceManifestAudit, StoredCrawlFetchLog, StoredCrawlParseError,
 };

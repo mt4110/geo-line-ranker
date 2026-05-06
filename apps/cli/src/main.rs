@@ -6,12 +6,12 @@ use std::{
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use cli::{
-    format_context_inspect_summary, format_fixture_doctor_summary, format_job_enqueue_summary,
-    format_job_inspection, format_job_list, format_job_mutation_summary,
-    format_replay_evaluation_summary, format_replay_scenario_summary,
+    format_context_inspect_summary, format_explain_trace_report, format_fixture_doctor_summary,
+    format_job_enqueue_summary, format_job_inspection, format_job_list,
+    format_job_mutation_summary, format_replay_evaluation_summary, format_replay_scenario_summary,
     format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture, run_context_inspect,
-    run_derive_school_station_links, run_event_csv_import, run_fixture_doctor, run_import_command,
-    run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
+    run_derive_school_station_links, run_event_csv_import, run_explain_trace, run_fixture_doctor,
+    run_import_command, run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
     run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
     ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
 };
@@ -67,6 +67,10 @@ enum Command {
     Replay {
         #[command(subcommand)]
         target: ReplayCommand,
+    },
+    Explain {
+        #[command(subcommand)]
+        target: ExplainCommand,
     },
     Profile {
         #[command(subcommand)]
@@ -197,6 +201,20 @@ enum ReplayCommand {
         json: bool,
         #[arg(long, help = "Exit zero even when blocker checks fail")]
         allow_blockers: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ExplainCommand {
+    #[command(
+        about = "Read one persisted recommendation trace and explain its request, response, reasons, and integrity",
+        long_about = "Read one recommendation_traces row without replaying ranking, then print the stored request, response fallback stage, result order, reason codes, trace payload, and explanation integrity checks.\n\nExamples:\n  geo-line-ranker-cli explain trace --id 42\n  geo-line-ranker-cli explain trace --id 42 --json"
+    )]
+    Trace {
+        #[arg(long, help = "recommendation_traces.id to inspect")]
+        id: i64,
+        #[arg(long, help = "Print the trace explanation report as JSON")]
+        json: bool,
     },
 }
 
@@ -468,6 +486,17 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if summary.has_blockers() && !allow_blockers {
                     anyhow::bail!("replay scenarios had blocker checks={}", summary.blockers);
+                }
+            }
+        },
+        Command::Explain { target } => match target {
+            ExplainCommand::Trace { id, json } => {
+                let settings = AppSettings::from_env_without_profile_pack()?;
+                let report = run_explain_trace(&settings, id).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("{}", format_explain_trace_report(&report));
                 }
             }
         },
@@ -925,6 +954,25 @@ mod tests {
         assert!(help.contains("--user-id manual-user-1 --json"));
         assert!(help.contains("recent search evidence"));
         assert!(help.contains("country-only input is ignored"));
+    }
+
+    #[test]
+    fn explain_trace_help_points_to_persisted_trace_debugging() {
+        let mut command = Cli::command();
+        let explain = command
+            .find_subcommand_mut("explain")
+            .expect("explain command");
+        let trace = explain
+            .find_subcommand_mut("trace")
+            .expect("explain trace command");
+        let mut buffer = Vec::new();
+        trace.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("recommendation_traces row"));
+        assert!(help.contains("reason codes"));
+        assert!(help.contains("explanation integrity checks"));
+        assert!(help.contains("explain trace --id 42 --json"));
     }
 
     #[test]

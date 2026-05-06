@@ -9,13 +9,17 @@ use api_contracts::{FallbackStageDto, RecommendationRequest, RecommendationRespo
 use config::{AppSettings, RankingProfiles};
 use domain::{
     FallbackStage, RankingDataset, RankingQuery, RecommendationItem, RecommendationResult,
-    ScoreComponent,
 };
 use ranking::RankingEngine;
 use serde::{Deserialize, Serialize};
 use storage_postgres::{PgRepository, RecommendationTraceReplayRow};
 
-use crate::repository::pg_repository;
+use crate::{
+    explanation_integrity::{
+        check_recommendation_result_integrity, QualityCheckStatus, QualitySeverity,
+    },
+    repository::pg_repository,
+};
 
 pub const DEFAULT_REPLAY_SCENARIO_PATH: &str = "configs/evaluation/scenarios";
 const REPLAY_SCENARIO_SCHEMA_VERSION: u32 = 1;
@@ -160,38 +164,6 @@ pub struct ReplayScenarioCheck {
     pub severity: QualitySeverity,
     pub status: QualityCheckStatus,
     pub message: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum QualitySeverity {
-    Blocker,
-    Warning,
-}
-
-impl QualitySeverity {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Blocker => "blocker",
-            Self::Warning => "warning",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum QualityCheckStatus {
-    Passed,
-    Failed,
-}
-
-impl QualityCheckStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-        }
-    }
 }
 
 pub fn run_replay_scenarios(
@@ -658,201 +630,13 @@ fn check_required_reason_codes(
 }
 
 fn check_explanation_integrity(case: &mut ReplayScenarioCase, result: &RecommendationResult) {
-    let component_failures = result
-        .items
-        .iter()
-        .flat_map(|item| {
-            item.score_breakdown
-                .iter()
-                .map(move |component| (item_key(item), component))
-        })
-        .chain(
-            result
-                .score_breakdown
-                .iter()
-                .map(|component| ("result".to_string(), component)),
-        )
-        .filter_map(|(scope, component)| reason_component_failure(&scope, component))
-        .collect::<Vec<_>>();
-    push_check(
-        case,
-        "explanation_integrity.reason_catalog",
-        QualitySeverity::Blocker,
-        component_failures.is_empty(),
-        format!(
-            "score component reason catalog failures: {}",
-            if component_failures.is_empty() {
-                "-".to_string()
-            } else {
-                component_failures.join("; ")
-            }
-        ),
-    );
-
-    let missing_labels = top_reason_labels(&result.score_breakdown)
-        .into_iter()
-        .filter(|label| !result.explanation.contains(label))
-        .collect::<Vec<_>>();
-    push_check(
-        case,
-        "explanation_integrity.top_reason_labels",
-        QualitySeverity::Blocker,
-        missing_labels.is_empty(),
-        format!(
-            "top-level explanation must mention top contributing labels; missing {}",
-            format_order(&missing_labels)
-        ),
-    );
-
-    let item_reason_label_failures = result
-        .items
-        .iter()
-        .filter_map(|item| {
-            let missing = top_reason_labels(&item.score_breakdown)
-                .into_iter()
-                .filter(|label| !item.explanation.contains(label))
-                .collect::<Vec<_>>();
-            (!missing.is_empty())
-                .then(|| format!("{} missing {}", item_key(item), missing.join(",")))
-        })
-        .collect::<Vec<_>>();
-    push_check(
-        case,
-        "explanation_integrity.item_reason_labels",
-        QualitySeverity::Blocker,
-        item_reason_label_failures.is_empty(),
-        format!(
-            "item explanations must mention top contributing labels; failures {}",
-            format_order(&item_reason_label_failures)
-        ),
-    );
-
-    let stage_markers = top_level_stage_markers(&result.fallback_stage);
-    push_check(
-        case,
-        "explanation_template.fallback_stage",
-        QualitySeverity::Blocker,
-        stage_markers
-            .iter()
-            .any(|marker| result.explanation.contains(marker)),
-        format!(
-            "top-level explanation must mention fallback stage {}; markers {}",
-            result.fallback_stage.as_str(),
-            stage_markers.join(",")
-        ),
-    );
-
-    let item_stage_failures = result
-        .items
-        .iter()
-        .filter(|item| item.fallback_stage.as_ref() != Some(&result.fallback_stage))
-        .map(item_key)
-        .collect::<Vec<_>>();
-    push_check(
-        case,
-        "explanation_integrity.item_fallback_stage",
-        QualitySeverity::Blocker,
-        item_stage_failures.is_empty(),
-        format!(
-            "items must carry actual fallback stage {}; mismatched items {}",
-            result.fallback_stage.as_str(),
-            format_order(&item_stage_failures)
-        ),
-    );
-
-    let item_markers = item_stage_markers(&result.fallback_stage);
-    let item_template_failures = result
-        .items
-        .iter()
-        .filter(|item| {
-            !item_markers
-                .iter()
-                .any(|marker| item.explanation.contains(marker))
-        })
-        .map(item_key)
-        .collect::<Vec<_>>();
-    push_check(
-        case,
-        "explanation_template.item_fallback_stage",
-        QualitySeverity::Blocker,
-        item_template_failures.is_empty(),
-        format!(
-            "item explanations must mention fallback stage {}; markers {}; missing items {}",
-            result.fallback_stage.as_str(),
-            item_markers.join(","),
-            format_order(&item_template_failures)
-        ),
-    );
-}
-
-fn reason_component_failure(scope: &str, component: &ScoreComponent) -> Option<String> {
-    let catalog_entry = match ranking::reason_catalog_entry(&component.feature) {
-        Some(entry) => entry,
-        None => {
-            return Some(format!(
-                "{scope}: feature {} is missing from reason catalog",
-                component.feature
-            ));
-        }
-    };
-    (component.reason_code != catalog_entry.reason_code).then(|| {
-        format!(
-            "{scope}: feature {} emitted reason_code {}, expected {}",
-            component.feature, component.reason_code, catalog_entry.reason_code
-        )
-    })
-}
-
-fn top_reason_labels(breakdown: &[ScoreComponent]) -> Vec<String> {
-    let mut components = breakdown
-        .iter()
-        .filter(|component| component.value > 0.0)
-        .collect::<Vec<_>>();
-    components.sort_by(|left, right| {
-        right
-            .value
-            .total_cmp(&left.value)
-            .then_with(|| left.feature.cmp(&right.feature))
-    });
-
-    let mut labels = Vec::new();
-    for component in components {
-        let label = ranking::reason_catalog_entry(&component.feature)
-            .map(|entry| entry.label.to_string())
-            .unwrap_or_else(|| "固定重み".to_string());
-        if labels.contains(&label) {
-            continue;
-        }
-        labels.push(label);
-        if labels.len() >= 2 {
-            break;
-        }
-    }
-    if labels.is_empty() {
-        labels.push("固定重み".to_string());
-    }
-    labels
-}
-
-fn top_level_stage_markers(stage: &FallbackStage) -> &'static [&'static str] {
-    match stage {
-        FallbackStage::StrictStation => &["直結の候補群"],
-        FallbackStage::SameLine => &["沿線の候補群"],
-        FallbackStage::SameCity => &["同一市区町村"],
-        FallbackStage::SamePrefecture => &["同一都道府県"],
-        FallbackStage::NeighborArea => &["近傍まで広げた候補群"],
-        FallbackStage::SafeGlobalPopular => &["広域人気を距離で抑制した候補群"],
-    }
-}
-
-fn item_stage_markers(stage: &FallbackStage) -> &'static [&'static str] {
-    match stage {
-        FallbackStage::StrictStation => &["指定駅直結"],
-        FallbackStage::SameLine => &["同一路線"],
-        FallbackStage::SameCity => &["同一市区町村"],
-        FallbackStage::SamePrefecture => &["同一都道府県"],
-        FallbackStage::NeighborArea => &["近隣エリア"],
-        FallbackStage::SafeGlobalPopular => &["広域fallback"],
+    for check in check_recommendation_result_integrity(result) {
+        case.checks.push(ReplayScenarioCheck {
+            name: check.name,
+            severity: check.severity,
+            status: check.status,
+            message: check.message,
+        });
     }
 }
 

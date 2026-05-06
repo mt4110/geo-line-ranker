@@ -167,6 +167,17 @@ pub struct RecommendationTraceReplayRow {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecommendationTraceReadRow {
+    pub id: i64,
+    pub request_payload: Value,
+    pub response_payload: Value,
+    pub trace_payload: Value,
+    pub fallback_stage: String,
+    pub algorithm_version: String,
+    pub created_at: String,
+}
+
 impl PgRepository {
     pub fn new(database_url: impl Into<String>) -> Self {
         Self {
@@ -1137,6 +1148,39 @@ impl PgRepository {
             })
             .collect::<Vec<_>>();
         Ok(rows)
+    }
+
+    pub async fn load_recommendation_trace(
+        &self,
+        trace_id: i64,
+    ) -> Result<Option<RecommendationTraceReadRow>> {
+        let client = self.connect().await?;
+        client
+            .query_opt(
+                r#"SELECT id,
+                          request_payload,
+                          response_payload,
+                          trace_payload,
+                          fallback_stage,
+                          algorithm_version,
+                          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+                   FROM recommendation_traces
+                   WHERE id = $1"#,
+                &[&trace_id],
+            )
+            .await
+            .map(|row| {
+                row.map(|row| RecommendationTraceReadRow {
+                    id: row.get("id"),
+                    request_payload: row.get("request_payload"),
+                    response_payload: row.get("response_payload"),
+                    trace_payload: row.get("trace_payload"),
+                    fallback_stage: row.get("fallback_stage"),
+                    algorithm_version: row.get("algorithm_version"),
+                    created_at: row.get("created_at"),
+                })
+            })
+            .context("failed to load recommendation trace")
     }
 
     pub async fn inspect_job(&self, job_id: i64) -> Result<JobInspection> {

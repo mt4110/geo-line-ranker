@@ -187,6 +187,23 @@ artifact, and `--allow-blockers` only for report-only investigation. Use
 `--ranking-config-dir` and `--algorithm-version` for explicit local what-if
 checks without changing environment variables.
 
+When investigating a concrete persisted trace, use the explanation reader after
+PostgreSQL contains `recommendation_traces` rows:
+
+```bash
+cargo run -p cli -- explain trace --id <trace_id>
+cargo run -p cli -- explain trace --id <trace_id> --json
+```
+
+This command is not a replacement for `replay scenarios`. It is a DB-backed
+debugging view for one real trace: request, response fallback stage, item order,
+reason codes, trace payload context/candidate retrieval fields, and explanation
+integrity checks. The report shows whether `user_id` was present, but does not
+print the raw value. A missing id fails the command. Old or malformed payloads
+and integrity problems are surfaced as `status=warning`, failed checks, or
+`payload_shape=legacy_or_invalid` so they can be attached to release/debug
+evidence without changing the ranking formula.
+
 For data quality review changes, run the read-only doctor against a
 bootstrapped PostgreSQL database:
 
