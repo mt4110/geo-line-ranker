@@ -160,6 +160,7 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 cargo run -p cli -- replay scenarios
+cargo run -p cli -- doctor explanation-integrity
 just mvp-acceptance
 git diff --check
 ```
@@ -186,6 +187,17 @@ when any blocker fails. Use `--json` when capturing a release candidate
 artifact, and `--allow-blockers` only for report-only investigation. Use
 `--ranking-config-dir` and `--algorithm-version` for explicit local what-if
 checks without changing environment variables.
+
+`cargo run -p cli -- doctor explanation-integrity` is the narrower Quality
+doctor v2 slice for explanation health. It uses the same committed replay
+scenario pack and ranking config resolution, then reports only
+`explanation_*` checks, including reason integrity and explanation template
+checks. Use it when a change touches reason-code emission, public explanation
+wording, or fallback stage templates. It is useful release evidence, but it is
+not a substitute for `replay scenarios`; ordering, pairwise, and candidate-count
+regressions belong to the full replay gate. The command supports `--json`,
+`--ranking-config-dir`, `--algorithm-version`, and `--allow-blockers` with the
+same intent as `replay scenarios`.
 
 When investigating a concrete persisted trace, use the explanation reader after
 PostgreSQL contains `recommendation_traces` rows:

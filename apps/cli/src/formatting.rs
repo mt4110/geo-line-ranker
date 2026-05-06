@@ -1,6 +1,7 @@
 use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 
 use crate::{
+    doctor::ExplanationIntegrityDoctorSummary,
     explain::{ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport},
     explanation_integrity::QualityCheckStatus,
     fixtures::FixtureDoctorSummary,
@@ -296,6 +297,52 @@ pub fn format_replay_scenario_summary(summary: &ReplayScenarioSummary) -> String
             case.actual_fallback_stage.as_deref().unwrap_or("-"),
             format_order(&case.expected_order),
             format_order(&case.actual_order),
+            case.path.display()
+        ));
+        for check in case
+            .checks
+            .iter()
+            .filter(|check| check.status == QualityCheckStatus::Failed)
+        {
+            lines.push(format!(
+                "    check={} severity={} status={} message={}",
+                check.name,
+                check.severity.as_str(),
+                check.status.as_str(),
+                check.message
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+pub fn format_explanation_integrity_doctor_summary(
+    summary: &ExplanationIntegrityDoctorSummary,
+) -> String {
+    let mut lines = vec![format!(
+        "doctor explanation-integrity completed: scenarios={}, passed={}, blocked={}, blockers={}, warnings={}, explanation_integrity={}/{}",
+        summary.scenarios,
+        summary.passed,
+        summary.blocked,
+        summary.blockers,
+        summary.warnings,
+        summary.explanation_integrity_passed,
+        summary.explanation_integrity_total
+    )];
+
+    for case in &summary.cases {
+        let case_passed = case
+            .checks
+            .iter()
+            .filter(|check| check.status == QualityCheckStatus::Passed)
+            .count();
+        lines.push(format!(
+            "  scenario_id={} status={} explanation_integrity={}/{} path={}",
+            case.id,
+            case.status.as_str(),
+            case_passed,
+            case.checks.len(),
             case.path.display()
         ));
         for check in case

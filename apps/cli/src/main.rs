@@ -6,14 +6,16 @@ use std::{
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use cli::{
-    format_context_inspect_summary, format_explain_trace_report, format_fixture_doctor_summary,
+    format_context_inspect_summary, format_explain_trace_report,
+    format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
     format_job_enqueue_summary, format_job_inspection, format_job_list,
     format_job_mutation_summary, format_replay_evaluation_summary, format_replay_scenario_summary,
     format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture, run_context_inspect,
-    run_derive_school_station_links, run_event_csv_import, run_explain_trace, run_fixture_doctor,
-    run_import_command, run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
-    run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
-    ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
+    run_derive_school_station_links, run_event_csv_import, run_explain_trace,
+    run_explanation_integrity_doctor, run_fixture_doctor, run_import_command, run_job_due,
+    run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_replay_evaluate,
+    run_replay_scenarios, run_snapshot_refresh, ContextInspectInput, ImportTarget,
+    DEFAULT_REPLAY_SCENARIO_PATH,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -71,6 +73,10 @@ enum Command {
     Explain {
         #[command(subcommand)]
         target: ExplainCommand,
+    },
+    Doctor {
+        #[command(subcommand)]
+        target: DoctorCommand,
     },
     Profile {
         #[command(subcommand)]
@@ -215,6 +221,40 @@ enum ExplainCommand {
         id: i64,
         #[arg(long, help = "Print the trace explanation report as JSON")]
         json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DoctorCommand {
+    #[command(
+        name = "explanation-integrity",
+        about = "Run the DB-free explanation integrity doctor against committed replay scenarios",
+        long_about = "Run the DB-free explanation integrity doctor against committed replay scenarios. This reports only reason-code integrity and explanation-template checks; use `replay scenarios` for the full ranking correctness gate.\n\nExamples:\n  geo-line-ranker-cli doctor explanation-integrity\n  geo-line-ranker-cli doctor explanation-integrity --json"
+    )]
+    ExplanationIntegrity {
+        #[arg(
+            long,
+            default_value = DEFAULT_REPLAY_SCENARIO_PATH,
+            help = "Scenario YAML file or directory to use as doctor input"
+        )]
+        path: PathBuf,
+        #[arg(
+            long,
+            help = "Ranking config directory. Defaults to RANKING_CONFIG_DIR or configs/ranking."
+        )]
+        ranking_config_dir: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Algorithm version label for report parity. Defaults to ALGORITHM_VERSION or the runtime default."
+        )]
+        algorithm_version: Option<String>,
+        #[arg(long, help = "Print the doctor report as JSON")]
+        json: bool,
+        #[arg(
+            long,
+            help = "Exit zero even when explanation integrity blocker checks fail"
+        )]
+        allow_blockers: bool,
     },
 }
 
@@ -497,6 +537,40 @@ async fn main() -> anyhow::Result<()> {
                     println!("{}", serde_json::to_string_pretty(&report)?);
                 } else {
                     println!("{}", format_explain_trace_report(&report));
+                }
+            }
+        },
+        Command::Doctor { target } => match target {
+            DoctorCommand::ExplanationIntegrity {
+                path,
+                ranking_config_dir,
+                algorithm_version,
+                json,
+                allow_blockers,
+            } => {
+                let ranking_config_dir = match ranking_config_dir {
+                    Some(path) => resolve_runtime_path(path),
+                    None => env_path_or_default(
+                        "RANKING_CONFIG_DIR",
+                        PathBuf::from(DEFAULT_RANKING_CONFIG_DIR),
+                    )?,
+                };
+                let algorithm_version = algorithm_version
+                    .or(config::env_optional_non_empty("ALGORITHM_VERSION")?)
+                    .unwrap_or_else(|| DEFAULT_ALGORITHM_VERSION.to_string());
+                let path = resolve_runtime_path(path);
+                let summary =
+                    run_explanation_integrity_doctor(path, ranking_config_dir, &algorithm_version)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_explanation_integrity_doctor_summary(&summary));
+                }
+                if summary.has_blockers() && !allow_blockers {
+                    anyhow::bail!(
+                        "doctor explanation-integrity had blocker checks={}",
+                        summary.blockers
+                    );
                 }
             }
         },
@@ -973,6 +1047,27 @@ mod tests {
         assert!(help.contains("reason codes"));
         assert!(help.contains("explanation integrity checks"));
         assert!(help.contains("explain trace --id 42 --json"));
+    }
+
+    #[test]
+    fn explanation_integrity_doctor_help_points_to_full_replay_gate() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let explanation_integrity = doctor
+            .find_subcommand_mut("explanation-integrity")
+            .expect("doctor explanation-integrity command");
+        let mut buffer = Vec::new();
+        explanation_integrity
+            .write_long_help(&mut buffer)
+            .expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("reason-code integrity"));
+        assert!(help.contains("explanation-template checks"));
+        assert!(help.contains("use `replay scenarios` for the full ranking correctness gate"));
+        assert!(help.contains("doctor explanation-integrity --json"));
     }
 
     #[test]
