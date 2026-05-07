@@ -347,10 +347,16 @@ fn expected_context_shapes(context_source: &str) -> ContextShapeExpectation {
             ContextShapeExpectation::Allowed(vec![context_shape(&["area"])])
         }
         source if source == ContextSource::RequestLine.as_str() => {
-            ContextShapeExpectation::Allowed(vec![context_shape(&["line"])])
+            ContextShapeExpectation::Allowed(vec![
+                context_shape(&["line"]),
+                context_shape(&["area", "line"]),
+            ])
         }
         source if source == ContextSource::RequestStation.as_str() => {
-            ContextShapeExpectation::Allowed(vec![context_shape(&["line", "station"])])
+            ContextShapeExpectation::Allowed(vec![
+                context_shape(&["line", "station"]),
+                context_shape(&["area", "line", "station"]),
+            ])
         }
         source if source == ContextSource::UserProfileArea.as_str() => {
             // User profile contexts can persist any non-empty coarse context shape.
@@ -797,7 +803,7 @@ expectations:
             temp.path().join("line_bad_shape.yaml"),
             context_coverage_scenario_yaml(
                 "S01_LINE_BAD_SHAPE",
-                "request_line",
+                "request_area",
                 r#"
     area:
       country: JP
@@ -809,6 +815,19 @@ expectations:
             ),
         )
         .expect("write line scenario");
+        std::fs::write(
+            temp.path().join("line.yaml"),
+            context_coverage_scenario_yaml(
+                "S01_LINE",
+                "request_line",
+                r#"
+    line:
+      line_name: Yamanote Line
+"#,
+                "same_line",
+            ),
+        )
+        .expect("write valid line scenario");
         std::fs::write(
             temp.path().join("default.yaml"),
             context_coverage_scenario_yaml(
@@ -827,8 +846,8 @@ expectations:
         assert_eq!(summary.context_shape_mismatches.len(), 1);
         let mismatch = &summary.context_shape_mismatches[0];
         assert_eq!(mismatch.id, "S01_LINE_BAD_SHAPE");
-        assert_eq!(mismatch.context_source, "request_line");
-        assert_eq!(mismatch.expected_shape, "line");
+        assert_eq!(mismatch.context_source, "request_area");
+        assert_eq!(mismatch.expected_shape, "area");
         assert_eq!(
             mismatch.actual_shape,
             vec!["area".to_string(), "line".to_string()]
@@ -862,6 +881,9 @@ expectations:
                 "S01_LINE",
                 "request_line",
                 r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
     line:
       line_name: Yamanote Line
 "#,
@@ -885,6 +907,9 @@ expectations:
                 "S03_REQUEST_STATION",
                 "request_station",
                 r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
     line:
       line_name: Yamanote Line
     station:
