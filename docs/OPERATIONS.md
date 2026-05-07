@@ -209,6 +209,24 @@ intentionally does not prove ordering, pairwise, or candidate-count correctness.
 Use `--json` for evidence capture and `--allow-blockers` only for local
 investigation.
 
+Run the ranking config doctor when you need the same strict contract check as
+`config lint`, but shaped as operator-facing Quality doctor v2 evidence:
+
+```bash
+cargo run -p cli -- doctor ranking-config
+cargo run -p cli -- doctor ranking-config --json
+```
+
+Use `config lint` while authoring ranking config or profile-pack changes and
+you want the direct lint view. Use `doctor ranking-config` for release,
+incident, or handoff evidence: it reuses the same lint readers, then summarizes
+active profile selection, ranking file kind counts, profile pack count, reason
+catalog references, referenced ranking config directory count, fixture
+references, source manifest references, event CSV example references, and
+optional crawler manifest references. Contract errors remain blocking and exit
+non-zero. The command supports `--path` and `--profiles-path` for local what-if
+checks without changing environment variables.
+
 Run the context coverage doctor when you need DB-free evidence that the
 committed replay scenario pack still covers the intended context inputs and
 fallback ladder slices:
