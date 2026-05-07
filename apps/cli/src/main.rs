@@ -10,13 +10,14 @@ use cli::{
     format_explain_trace_report, format_explanation_integrity_doctor_summary,
     format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
     format_job_list, format_job_mutation_summary, format_profile_pack_doctor_summary,
-    format_replay_evaluation_summary, format_replay_scenario_summary,
-    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture,
-    run_context_coverage_doctor, run_context_inspect, run_derive_school_station_links,
-    run_event_csv_import, run_explain_trace, run_explanation_integrity_doctor, run_fixture_doctor,
-    run_import_command, run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
-    run_profile_pack_doctor, run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh,
-    ContextInspectInput, ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
+    format_ranking_config_doctor_summary, format_replay_evaluation_summary,
+    format_replay_scenario_summary, format_snapshot_refresh_summary, format_summary,
+    generate_demo_jp_fixture, ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
+    run_context_inspect, run_derive_school_station_links, run_event_csv_import, run_explain_trace,
+    run_explanation_integrity_doctor, run_fixture_doctor, run_import_command, run_job_due,
+    run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_profile_pack_doctor,
+    run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
+    ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -227,6 +228,25 @@ enum ExplainCommand {
 
 #[derive(Debug, Subcommand)]
 enum DoctorCommand {
+    #[command(
+        name = "ranking-config",
+        about = "Run the ranking config contract doctor for operator-facing quality evidence",
+        long_about = "Run the ranking config contract doctor for operator-facing quality evidence. This reuses the same active ranking config and profile-pack lint path as `config lint`, then summarizes ranking file kinds, active profile selection, profile pack coverage, referenced ranking config directories, reason catalog references, fixture references, source manifest references, event CSV example references, and optional crawler manifest references.\n\nExamples:\n  geo-line-ranker-cli doctor ranking-config\n  geo-line-ranker-cli doctor ranking-config --json\n  geo-line-ranker-cli doctor ranking-config --path configs/ranking --profiles-path configs/profiles"
+    )]
+    RankingConfig {
+        #[arg(
+            long,
+            help = "Ranking config directory to diagnose. Defaults to RANKING_CONFIG_DIR or the selected profile pack."
+        )]
+        path: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Profile pack root directory or explicit profile.yaml file to diagnose. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+        )]
+        profiles_path: Option<PathBuf>,
+        #[arg(long, help = "Print the doctor report as JSON")]
+        json: bool,
+    },
     #[command(
         name = "explanation-integrity",
         about = "Run the DB-free explanation integrity doctor against committed replay scenarios",
@@ -571,6 +591,24 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Command::Doctor { target } => match target {
+            DoctorCommand::RankingConfig {
+                path,
+                profiles_path,
+                json,
+            } => {
+                let report = build_config_lint_report(path, profiles_path)?;
+                let summary = ranking_config_doctor_summary_from_lint(
+                    report.active_profile_id,
+                    report.fixture_set_id,
+                    report.ranking_summary,
+                    report.profile_summary,
+                );
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_ranking_config_doctor_summary(&summary));
+                }
+            }
             DoctorCommand::ExplanationIntegrity {
                 path,
                 ranking_config_dir,
@@ -732,47 +770,14 @@ async fn main() -> anyhow::Result<()> {
                 path,
                 profiles_path,
             } => {
-                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
-                    "PROFILE_PACKS_DIR",
-                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
-                )?);
-                let ranking_config_dir_override = config::env_path_optional("RANKING_CONFIG_DIR")?;
-                let path = path.map(resolve_runtime_path);
-                let needs_active_profile = path.is_none() && ranking_config_dir_override.is_none();
-                let active_profile = active_profile_selection_for_lint(&profiles_path)
-                    .map(Some)
-                    .or_else(|error| {
-                        if needs_active_profile {
-                            Err(error)
-                        } else {
-                            Ok(None)
-                        }
-                    })?;
-                let path = path
-                    .or(ranking_config_dir_override)
-                    .or_else(|| {
-                        active_profile
-                            .as_ref()
-                            .map(|profile| profile.ranking_config_dir.clone())
-                    })
-                    .context("active profile selection is required to choose ranking config dir")?;
-                let profile_summary = lint_profile_pack_dir(profiles_path)?;
-                let ranking_summary =
-                    match cached_ranking_summary_for_path(&profile_summary, &path)? {
-                        Some(summary) => ranking_summary_with_base_path(summary, &path),
-                        None => lint_ranking_config_dir(&path)?,
-                    };
+                let report = build_config_lint_report(path, profiles_path)?;
                 println!(
                     "{}",
                     format_config_lint_summary(
-                        active_profile
-                            .as_ref()
-                            .map(|profile| profile.profile_id.as_str()),
-                        active_profile
-                            .as_ref()
-                            .and_then(|profile| profile.fixture_set_id.as_deref()),
-                        &ranking_summary,
-                        &profile_summary
+                        report.active_profile_id.as_deref(),
+                        report.fixture_set_id.as_deref(),
+                        &report.ranking_summary,
+                        &report.profile_summary
                     )
                 );
             }
@@ -824,6 +829,58 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+struct ConfigLintReport {
+    active_profile_id: Option<String>,
+    fixture_set_id: Option<String>,
+    ranking_summary: RankingConfigLintSummary,
+    profile_summary: ProfilePackLintSummary,
+}
+
+fn build_config_lint_report(
+    path: Option<PathBuf>,
+    profiles_path: Option<PathBuf>,
+) -> anyhow::Result<ConfigLintReport> {
+    let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+        "PROFILE_PACKS_DIR",
+        PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+    )?);
+    let ranking_config_dir_override = config::env_path_optional("RANKING_CONFIG_DIR")?;
+    let path = path.map(resolve_runtime_path);
+    let needs_active_profile = path.is_none() && ranking_config_dir_override.is_none();
+    let active_profile = active_profile_selection_for_lint(&profiles_path)
+        .map(Some)
+        .or_else(|error| {
+            if needs_active_profile {
+                Err(error)
+            } else {
+                Ok(None)
+            }
+        })?;
+    let path = path
+        .or(ranking_config_dir_override)
+        .or_else(|| {
+            active_profile
+                .as_ref()
+                .map(|profile| profile.ranking_config_dir.clone())
+        })
+        .context("active profile selection is required to choose ranking config dir")?;
+    let profile_summary = lint_profile_pack_dir(profiles_path)?;
+    let ranking_summary = match cached_ranking_summary_for_path(&profile_summary, &path)? {
+        Some(summary) => ranking_summary_with_base_path(summary, &path),
+        None => lint_ranking_config_dir(&path)?,
+    };
+    Ok(ConfigLintReport {
+        active_profile_id: active_profile
+            .as_ref()
+            .map(|profile| profile.profile_id.clone()),
+        fixture_set_id: active_profile
+            .as_ref()
+            .and_then(|profile| profile.fixture_set_id.clone()),
+        ranking_summary,
+        profile_summary,
+    })
 }
 
 fn active_profile_selection_for_lint(
@@ -1071,7 +1128,10 @@ fn format_source_manifest_lint_summary(summary: &SourceManifestLintSummary) -> S
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use config::{ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary};
+    use config::{
+        ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary, RankingConfigKind,
+        RankingConfigLintFile, RankingConfigLintSummary,
+    };
     use std::{collections::BTreeMap, fs};
 
     #[test]
@@ -1131,6 +1191,43 @@ mod tests {
         assert!(help.contains("explanation-template checks"));
         assert!(help.contains("use `replay scenarios` for the full ranking correctness gate"));
         assert!(help.contains("doctor explanation-integrity --json"));
+    }
+
+    #[test]
+    fn doctor_help_lists_ranking_config_doctor() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let mut buffer = Vec::new();
+        doctor.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("ranking-config"));
+        assert!(help.contains("Run the ranking config contract doctor"));
+    }
+
+    #[test]
+    fn ranking_config_doctor_help_points_to_config_lint_reuse() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let ranking_config = doctor
+            .find_subcommand_mut("ranking-config")
+            .expect("doctor ranking-config command");
+        let mut buffer = Vec::new();
+        ranking_config
+            .write_long_help(&mut buffer)
+            .expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("reuses the same active ranking config"));
+        assert!(help.contains("profile-pack lint path as `config lint`"));
+        assert!(help.contains("referenced ranking config directories"));
+        assert!(help.contains("event CSV example references"));
+        assert!(help.contains("doctor ranking-config --json"));
+        assert!(help.contains("--path configs/ranking --profiles-path configs/profiles"));
     }
 
     #[test]
@@ -1288,6 +1385,132 @@ mod tests {
         assert!(rendered.contains("optional_crawler_manifest_references=1"));
         assert!(rendered.contains("event_csv_examples=1"));
         assert!(rendered.contains("profile_id=school-event-jp"));
+    }
+
+    #[test]
+    fn ranking_config_doctor_summary_reports_config_and_profile_metrics() {
+        let mut kind_counts = BTreeMap::new();
+        kind_counts.insert("ranking_placement".to_string(), 4);
+        kind_counts.insert("ranking_schools".to_string(), 1);
+        let summary = cli::RankingConfigDoctorSummary {
+            active_profile_id: Some("local-discovery-generic".to_string()),
+            fixture_set_id: Some("minimal".to_string()),
+            ranking_config_dir: PathBuf::from("configs/ranking"),
+            profile_version: "profile-version".to_string(),
+            ranking_files: 5,
+            ranking_kind_counts: kind_counts,
+            profile_packs: 1,
+            referenced_ranking_config_dirs: 1,
+            reason_catalog_references: 1,
+            reason_count: 14,
+            fixture_references: 1,
+            source_manifest_references: 2,
+            event_csv_example_references: 1,
+            optional_crawler_manifest_references: 1,
+            files: vec![cli::RankingConfigDoctorFile {
+                path: PathBuf::from("configs/ranking/schools.default.yaml"),
+                schema_version: 1,
+                kind: "ranking_schools".to_string(),
+            }],
+            profiles: vec![cli::RankingConfigDoctorProfile {
+                path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
+                profile_id: "local-discovery-generic".to_string(),
+                ranking_config_dir: PathBuf::from("configs/ranking"),
+                reason_catalog_path: PathBuf::from(
+                    "configs/profiles/local-discovery-generic/reasons.yaml",
+                ),
+                reason_count: 14,
+                fixture_references: 1,
+                source_manifest_references: 2,
+                event_csv_example_references: 1,
+                optional_crawler_manifest_references: 1,
+            }],
+        };
+
+        let rendered = format_ranking_config_doctor_summary(&summary);
+
+        assert!(rendered.contains("doctor ranking-config completed"));
+        assert!(rendered.contains("active_profile_id=local-discovery-generic"));
+        assert!(rendered.contains("fixture_set_id=minimal"));
+        assert!(rendered.contains("ranking_kinds=ranking_placement=4,ranking_schools=1"));
+        assert!(rendered.contains("referenced_ranking_config_dirs=1"));
+        assert!(rendered.contains("reason_catalog_references=1"));
+        assert!(rendered.contains("fixture_references=1"));
+        assert!(rendered.contains("ranking_config_dir=configs/ranking"));
+        assert!(rendered.contains("kind=ranking_schools"));
+        assert!(rendered.contains("profile_id=local-discovery-generic"));
+    }
+
+    #[test]
+    fn config_lint_report_reuses_profile_pack_ranking_summary_for_explicit_paths() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let report = build_config_lint_report(
+            Some(repo_root.join("configs/ranking")),
+            Some(repo_root.join("configs/profiles")),
+        );
+        let report = report.expect("config lint report");
+
+        assert_eq!(report.ranking_summary.files.len(), 8);
+        assert_eq!(report.profile_summary.files.len(), 2);
+        assert_eq!(report.profile_summary.ranking_configs.len(), 1);
+    }
+
+    #[test]
+    fn ranking_config_doctor_summary_from_config_lint_report_is_json_ready() {
+        let ranking_summary = RankingConfigLintSummary {
+            path: PathBuf::from("configs/ranking"),
+            profile_version: "profile-version".to_string(),
+            files: vec![
+                RankingConfigLintFile {
+                    path: PathBuf::from("configs/ranking/placement.home.yaml"),
+                    schema_version: 1,
+                    kind: RankingConfigKind::RankingPlacement,
+                },
+                RankingConfigLintFile {
+                    path: PathBuf::from("configs/ranking/schools.default.yaml"),
+                    schema_version: 1,
+                    kind: RankingConfigKind::RankingSchools,
+                },
+            ],
+        };
+        let profile_summary = ProfilePackLintSummary {
+            files: vec![ProfilePackLintFile {
+                path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
+                profile_id: "local-discovery-generic".to_string(),
+                ranking_config_dir: PathBuf::from("configs/ranking"),
+                reason_catalog_path: PathBuf::from(
+                    "configs/profiles/local-discovery-generic/reasons.yaml",
+                ),
+                schema_version: 1,
+                kind: ProfilePackKind::ProfilePack,
+                manifest_version: 1,
+                supported_content_kinds: Vec::new(),
+                reason_count: 14,
+                fixture_count: 1,
+                source_manifest_count: 2,
+                event_csv_example_count: 1,
+                optional_crawler_manifest_count: 1,
+            }],
+            ranking_configs: vec![RankingConfigLintSummary {
+                path: PathBuf::from("configs/ranking"),
+                profile_version: "profile-version".to_string(),
+                files: Vec::new(),
+            }],
+        };
+
+        let summary = ranking_config_doctor_summary_from_lint(
+            Some("local-discovery-generic".to_string()),
+            Some("minimal".to_string()),
+            ranking_summary,
+            profile_summary,
+        );
+        let json = serde_json::to_string(&summary).expect("json");
+
+        assert!(json.contains("\"active_profile_id\":\"local-discovery-generic\""));
+        assert!(json.contains("\"ranking_placement\":1"));
+        assert_eq!(summary.referenced_ranking_config_dirs, 1);
+        assert_eq!(summary.reason_catalog_references, 1);
+        assert_eq!(summary.source_manifest_references, 2);
     }
 
     #[test]

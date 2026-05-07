@@ -3,6 +3,7 @@ use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 use crate::{
     doctor::{
         ContextCoverageDoctorSummary, ExplanationIntegrityDoctorSummary, ProfilePackDoctorSummary,
+        RankingConfigDoctorSummary,
     },
     explain::{ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport},
     explanation_integrity::QualityCheckStatus,
@@ -392,6 +393,56 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
             file.reason_catalog_path.display()
         ));
     }
+
+    lines.join("\n")
+}
+
+pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary) -> String {
+    let mut lines = vec![format!(
+        "doctor ranking-config completed: active_profile_id={}, fixture_set_id={}, ranking_files={}, ranking_kinds={}, profile_packs={}, referenced_ranking_config_dirs={}, reason_catalog_references={}, reasons={}, fixture_references={}, source_manifest_references={}, event_csv_example_references={}, optional_crawler_manifest_references={}, profile_version={}",
+        summary.active_profile_id.as_deref().unwrap_or("not-selected"),
+        summary.fixture_set_id.as_deref().unwrap_or("none"),
+        summary.ranking_files,
+        format_counts(&summary.ranking_kind_counts),
+        summary.profile_packs,
+        summary.referenced_ranking_config_dirs,
+        summary.reason_catalog_references,
+        summary.reason_count,
+        summary.fixture_references,
+        summary.source_manifest_references,
+        summary.event_csv_example_references,
+        summary.optional_crawler_manifest_references,
+        summary.profile_version
+    )];
+
+    lines.push(format!(
+        "ranking_config_dir={}",
+        summary.ranking_config_dir.display()
+    ));
+    lines.push("ranking files:".to_string());
+    lines.extend(summary.files.iter().map(|file| {
+        format!(
+            "  path={} schema_version={} kind={}",
+            file.path.display(),
+            file.schema_version,
+            file.kind
+        )
+    }));
+    lines.push("profile packs:".to_string());
+    lines.extend(summary.profiles.iter().map(|profile| {
+        format!(
+            "  profile_id={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
+            profile.profile_id,
+            profile.reason_count,
+            profile.fixture_references,
+            profile.source_manifest_references,
+            profile.event_csv_example_references,
+            profile.optional_crawler_manifest_references,
+            profile.path.display(),
+            profile.ranking_config_dir.display(),
+            profile.reason_catalog_path.display()
+        )
+    }));
 
     lines.join("\n")
 }

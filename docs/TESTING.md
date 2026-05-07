@@ -14,11 +14,21 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 cargo run -p cli -- replay scenarios
+cargo run -p cli -- doctor ranking-config
 cargo run -p cli -- doctor context-coverage
 ```
 
 `config lint` covers both active ranking config and committed profile pack
 manifests under `configs/profiles`.
+
+Use `config lint` for authoring and review of config/profile contract changes:
+it gives the direct lint view over strict parsers, schema versions, kinds, and
+local references. Use `doctor ranking-config` when you need Quality doctor v2
+evidence for operators or release handoff. It reuses the same lint path, then
+summarizes active profile selection, ranking file kind counts, profile pack
+coverage, referenced ranking config directories, reason catalog references,
+fixture references, source manifests, event CSV examples, and optional crawler
+manifests. Both commands exit non-zero on contract failures.
 
 The `profile` commands are narrower profile-pack entry points for authors and
 reviewers. They do not change the fixed public-MVP gate.
@@ -171,6 +181,7 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 cargo run -p cli -- replay scenarios
+cargo run -p cli -- doctor ranking-config
 cargo run -p cli -- doctor explanation-integrity
 cargo run -p cli -- doctor context-coverage
 cargo run -p cli -- doctor profile-pack
@@ -200,6 +211,15 @@ when any blocker fails. Use `--json` when capturing a release candidate
 artifact, and `--allow-blockers` only for report-only investigation. Use
 `--ranking-config-dir` and `--algorithm-version` for explicit local what-if
 checks without changing environment variables.
+
+`cargo run -p cli -- doctor ranking-config` is the Quality doctor v2 slice for
+ranking config contract health. It is DB-free and reuses `config lint` loading
+for the active ranking config and profile packs, then emits operator-facing
+counts for ranking files, ranking kinds, selected profile, profile packs,
+referenced ranking config directories, reason catalog references, fixture
+references, source manifests, event CSV examples, and optional crawler
+manifests. Use `--json` when capturing evidence artifacts, and use `--path`
+plus `--profiles-path` for explicit local what-if checks.
 
 `cargo run -p cli -- doctor explanation-integrity` is the narrower Quality
 doctor v2 slice for explanation health. It uses the same committed replay

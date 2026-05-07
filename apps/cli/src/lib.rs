@@ -14,10 +14,12 @@ pub use context_inspect::{
     format_context_inspect_summary, run_context_inspect, ContextInspectInput, ContextInspectSummary,
 };
 pub use doctor::{
-    run_context_coverage_doctor, run_explanation_integrity_doctor, run_profile_pack_doctor,
-    ContextCoverageDoctorCase, ContextCoverageDoctorSummary, ContextCoverageRequirement,
-    ContextCoverageShapeMismatch, ExplanationIntegrityDoctorCase,
-    ExplanationIntegrityDoctorSummary, ProfilePackDoctorFile, ProfilePackDoctorSummary,
+    ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
+    run_explanation_integrity_doctor, run_profile_pack_doctor, ContextCoverageDoctorCase,
+    ContextCoverageDoctorSummary, ContextCoverageRequirement, ContextCoverageShapeMismatch,
+    ExplanationIntegrityDoctorCase, ExplanationIntegrityDoctorSummary, ProfilePackDoctorFile,
+    ProfilePackDoctorSummary, RankingConfigDoctorFile, RankingConfigDoctorProfile,
+    RankingConfigDoctorSummary,
 };
 pub use explain::{
     run_explain_trace, ExplainTraceCheck, ExplainTraceIntegritySummary, ExplainTraceItemSummary,
@@ -34,8 +36,8 @@ pub use formatting::{
     format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
     format_job_enqueue_summary, format_job_inspection, format_job_list,
     format_job_mutation_summary, format_profile_pack_doctor_summary,
-    format_replay_evaluation_summary, format_replay_scenario_summary,
-    format_snapshot_refresh_summary, format_summary,
+    format_ranking_config_doctor_summary, format_replay_evaluation_summary,
+    format_replay_scenario_summary, format_snapshot_refresh_summary, format_summary,
 };
 pub use import::{
     run_derive_school_station_links, run_event_csv_import, run_import_command, CommandSummary,

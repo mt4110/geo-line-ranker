@@ -4,7 +4,10 @@ use std::{
 };
 
 use anyhow::Result;
-use config::{lint_profile_pack_dir, ProfilePackLintFile, ProfilePackLintSummary};
+use config::{
+    lint_profile_pack_dir, ProfilePackLintFile, ProfilePackLintSummary, RankingConfigLintFile,
+    RankingConfigLintSummary,
+};
 use context::ContextSource;
 use serde::Serialize;
 
@@ -77,6 +80,46 @@ pub struct ProfilePackDoctorFile {
     pub kind: String,
     pub manifest_version: u32,
     pub supported_content_kinds: Vec<String>,
+    pub reason_count: usize,
+    pub fixture_references: usize,
+    pub source_manifest_references: usize,
+    pub event_csv_example_references: usize,
+    pub optional_crawler_manifest_references: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RankingConfigDoctorSummary {
+    pub active_profile_id: Option<String>,
+    pub fixture_set_id: Option<String>,
+    pub ranking_config_dir: PathBuf,
+    pub profile_version: String,
+    pub ranking_files: usize,
+    pub ranking_kind_counts: BTreeMap<String, usize>,
+    pub profile_packs: usize,
+    pub referenced_ranking_config_dirs: usize,
+    pub reason_catalog_references: usize,
+    pub reason_count: usize,
+    pub fixture_references: usize,
+    pub source_manifest_references: usize,
+    pub event_csv_example_references: usize,
+    pub optional_crawler_manifest_references: usize,
+    pub files: Vec<RankingConfigDoctorFile>,
+    pub profiles: Vec<RankingConfigDoctorProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RankingConfigDoctorFile {
+    pub path: PathBuf,
+    pub schema_version: u32,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RankingConfigDoctorProfile {
+    pub path: PathBuf,
+    pub profile_id: String,
+    pub ranking_config_dir: PathBuf,
+    pub reason_catalog_path: PathBuf,
     pub reason_count: usize,
     pub fixture_references: usize,
     pub source_manifest_references: usize,
@@ -178,6 +221,60 @@ pub fn run_profile_pack_doctor(
 ) -> Result<ProfilePackDoctorSummary> {
     let lint_summary = lint_profile_pack_dir(profiles_path)?;
     Ok(profile_pack_doctor_summary_from_lint(lint_summary))
+}
+
+pub fn ranking_config_doctor_summary_from_lint(
+    active_profile_id: Option<String>,
+    fixture_set_id: Option<String>,
+    ranking_summary: RankingConfigLintSummary,
+    profile_summary: ProfilePackLintSummary,
+) -> RankingConfigDoctorSummary {
+    let files = ranking_summary
+        .files
+        .into_iter()
+        .map(ranking_config_doctor_file)
+        .collect::<Vec<_>>();
+    let mut ranking_kind_counts = BTreeMap::new();
+    for file in &files {
+        increment(&mut ranking_kind_counts, &file.kind);
+    }
+    let referenced_ranking_config_dirs = profile_summary.ranking_configs.len();
+    let profiles = profile_summary
+        .files
+        .into_iter()
+        .map(ranking_config_doctor_profile)
+        .collect::<Vec<_>>();
+
+    RankingConfigDoctorSummary {
+        active_profile_id,
+        fixture_set_id,
+        ranking_config_dir: ranking_summary.path,
+        profile_version: ranking_summary.profile_version,
+        ranking_files: files.len(),
+        ranking_kind_counts,
+        profile_packs: profiles.len(),
+        referenced_ranking_config_dirs,
+        reason_catalog_references: profiles.len(),
+        reason_count: profiles.iter().map(|profile| profile.reason_count).sum(),
+        fixture_references: profiles
+            .iter()
+            .map(|profile| profile.fixture_references)
+            .sum(),
+        source_manifest_references: profiles
+            .iter()
+            .map(|profile| profile.source_manifest_references)
+            .sum(),
+        event_csv_example_references: profiles
+            .iter()
+            .map(|profile| profile.event_csv_example_references)
+            .sum(),
+        optional_crawler_manifest_references: profiles
+            .iter()
+            .map(|profile| profile.optional_crawler_manifest_references)
+            .sum(),
+        files,
+        profiles,
+    }
 }
 
 pub fn run_context_coverage_doctor(
@@ -573,13 +670,35 @@ fn profile_pack_doctor_file(file: ProfilePackLintFile) -> ProfilePackDoctorFile 
     }
 }
 
+fn ranking_config_doctor_file(file: RankingConfigLintFile) -> RankingConfigDoctorFile {
+    RankingConfigDoctorFile {
+        path: file.path,
+        schema_version: file.schema_version,
+        kind: file.kind.as_str().to_string(),
+    }
+}
+
+fn ranking_config_doctor_profile(file: ProfilePackLintFile) -> RankingConfigDoctorProfile {
+    RankingConfigDoctorProfile {
+        path: file.path,
+        profile_id: file.profile_id,
+        ranking_config_dir: file.ranking_config_dir,
+        reason_catalog_path: file.reason_catalog_path,
+        reason_count: file.reason_count,
+        fixture_references: file.fixture_count,
+        source_manifest_references: file.source_manifest_count,
+        event_csv_example_references: file.event_csv_example_count,
+        optional_crawler_manifest_references: file.optional_crawler_manifest_count,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use super::{
-        explanation_integrity_summary_from_replay, run_context_coverage_doctor,
-        run_explanation_integrity_doctor, run_profile_pack_doctor,
+        explanation_integrity_summary_from_replay, ranking_config_doctor_summary_from_lint,
+        run_context_coverage_doctor, run_explanation_integrity_doctor, run_profile_pack_doctor,
     };
     use crate::{
         explanation_integrity::{QualityCheckStatus, QualitySeverity},
@@ -685,6 +804,41 @@ mod tests {
         assert!(school_event_jp.source_manifest_references > 0);
         assert!(school_event_jp.event_csv_example_references > 0);
         assert!(school_event_jp.optional_crawler_manifest_references > 0);
+    }
+
+    #[test]
+    fn committed_config_lint_summary_feeds_ranking_config_doctor() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let ranking_summary =
+            config::lint_ranking_config_dir(repo_root.join("configs/ranking")).expect("ranking");
+        let profile_summary =
+            config::lint_profile_pack_dir(repo_root.join("configs/profiles")).expect("profiles");
+
+        let summary = ranking_config_doctor_summary_from_lint(
+            Some("local-discovery-generic".to_string()),
+            Some("minimal".to_string()),
+            ranking_summary,
+            profile_summary,
+        );
+
+        assert_eq!(
+            summary.active_profile_id.as_deref(),
+            Some("local-discovery-generic")
+        );
+        assert_eq!(summary.fixture_set_id.as_deref(), Some("minimal"));
+        assert_eq!(summary.ranking_files, 8);
+        assert_eq!(
+            summary.ranking_kind_counts.get("ranking_placement"),
+            Some(&4)
+        );
+        assert_eq!(summary.ranking_kind_counts.get("ranking_schools"), Some(&1));
+        assert_eq!(summary.profile_packs, 2);
+        assert_eq!(summary.referenced_ranking_config_dirs, 1);
+        assert_eq!(summary.reason_catalog_references, summary.profile_packs);
+        assert!(summary.reason_count > 0);
+        assert!(summary.fixture_references > 0);
+        assert_eq!(summary.files.len(), summary.ranking_files);
+        assert_eq!(summary.profiles.len(), summary.profile_packs);
     }
 
     #[test]
