@@ -685,9 +685,10 @@ fn run_retrieval_parity_case(input: RetrievalParityCaseInput) -> RetrievalParity
         .collect::<Vec<_>>();
     let mut actual_links = input_links;
     sort_candidate_links_for_retrieval(&mut actual_links, target_station_id);
+    let effective_limit = limit.clamp(1, 10_000);
     let actual_order = actual_links
         .iter()
-        .take(limit)
+        .take(effective_limit)
         .map(candidate_link_key)
         .collect::<Vec<_>>();
     let expected_order = expected_order
@@ -1123,6 +1124,28 @@ mod tests {
                 "school_direct@st_target".to_string(),
                 "school_neighbor@st_neighbor".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn retrieval_parity_case_clamps_candidate_limit_like_runtime() {
+        let case = super::run_retrieval_parity_case(super::RetrievalParityCaseInput {
+            id: "limit_zero_clamp",
+            description: "zero candidate limit uses the runtime minimum",
+            target_station_id: "st_target",
+            limit: 0,
+            input_links: vec![
+                super::retrieval_link("school_neighbor", "st_neighbor", 1, 10),
+                super::retrieval_link("school_direct", "st_target", 30, 300),
+            ],
+            expected_order: vec!["school_direct@st_target"],
+        });
+
+        assert!(case.passed);
+        assert_eq!(case.limit, 0);
+        assert_eq!(
+            case.actual_order,
+            vec!["school_direct@st_target".to_string()]
         );
     }
 
