@@ -439,7 +439,7 @@ pub fn format_context_coverage_doctor_summary(summary: &ContextCoverageDoctorSum
                 mismatch.id,
                 mismatch.context_source,
                 mismatch.expected_shape,
-                format_order(&mismatch.actual_shape),
+                format_shape(&mismatch.actual_shape),
                 mismatch.path.display()
             ));
         }
@@ -493,18 +493,22 @@ fn format_counts(counts: &std::collections::BTreeMap<String, usize>) -> String {
 fn format_context_shape(has_area: bool, has_line: bool, has_station: bool) -> String {
     let mut parts = Vec::new();
     if has_area {
-        parts.push("area");
+        parts.push("area".to_string());
     }
     if has_line {
-        parts.push("line");
+        parts.push("line".to_string());
     }
     if has_station {
-        parts.push("station");
+        parts.push("station".to_string());
     }
-    if parts.is_empty() {
-        "-".to_string()
+    format_shape(&parts)
+}
+
+fn format_shape(shape: &[String]) -> String {
+    if shape.is_empty() {
+        "none".to_string()
     } else {
-        parts.join(",")
+        shape.join(",")
     }
 }
 
