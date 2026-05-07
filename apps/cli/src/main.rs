@@ -1474,23 +1474,42 @@ mod tests {
             ],
         };
         let profile_summary = ProfilePackLintSummary {
-            files: vec![ProfilePackLintFile {
-                path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
-                profile_id: "local-discovery-generic".to_string(),
-                ranking_config_dir: PathBuf::from("configs/ranking"),
-                reason_catalog_path: PathBuf::from(
-                    "configs/profiles/local-discovery-generic/reasons.yaml",
-                ),
-                schema_version: 1,
-                kind: ProfilePackKind::ProfilePack,
-                manifest_version: 1,
-                supported_content_kinds: Vec::new(),
-                reason_count: 14,
-                fixture_count: 1,
-                source_manifest_count: 2,
-                event_csv_example_count: 1,
-                optional_crawler_manifest_count: 1,
-            }],
+            files: vec![
+                ProfilePackLintFile {
+                    path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
+                    profile_id: "local-discovery-generic".to_string(),
+                    ranking_config_dir: PathBuf::from("configs/ranking"),
+                    reason_catalog_path: PathBuf::from(
+                        "configs/profiles/local-discovery-generic/reasons.yaml",
+                    ),
+                    schema_version: 1,
+                    kind: ProfilePackKind::ProfilePack,
+                    manifest_version: 1,
+                    supported_content_kinds: Vec::new(),
+                    reason_count: 14,
+                    fixture_count: 1,
+                    source_manifest_count: 2,
+                    event_csv_example_count: 1,
+                    optional_crawler_manifest_count: 1,
+                },
+                ProfilePackLintFile {
+                    path: PathBuf::from("configs/profiles/school-event-jp/profile.yaml"),
+                    profile_id: "school-event-jp".to_string(),
+                    ranking_config_dir: PathBuf::from("configs/ranking"),
+                    reason_catalog_path: PathBuf::from(
+                        "configs/profiles/local-discovery-generic/reasons.yaml",
+                    ),
+                    schema_version: 1,
+                    kind: ProfilePackKind::ProfilePack,
+                    manifest_version: 1,
+                    supported_content_kinds: Vec::new(),
+                    reason_count: 7,
+                    fixture_count: 0,
+                    source_manifest_count: 1,
+                    event_csv_example_count: 0,
+                    optional_crawler_manifest_count: 0,
+                },
+            ],
             ranking_configs: vec![RankingConfigLintSummary {
                 path: PathBuf::from("configs/ranking"),
                 profile_version: "profile-version".to_string(),
@@ -1508,9 +1527,11 @@ mod tests {
 
         assert!(json.contains("\"active_profile_id\":\"local-discovery-generic\""));
         assert!(json.contains("\"ranking_placement\":1"));
+        assert_eq!(summary.profile_packs, 2);
         assert_eq!(summary.referenced_ranking_config_dirs, 1);
         assert_eq!(summary.reason_catalog_references, 1);
-        assert_eq!(summary.source_manifest_references, 2);
+        assert_eq!(summary.reason_count, 21);
+        assert_eq!(summary.source_manifest_references, 3);
     }
 
     #[test]

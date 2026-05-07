@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -244,6 +244,11 @@ pub fn ranking_config_doctor_summary_from_lint(
         .into_iter()
         .map(ranking_config_doctor_profile)
         .collect::<Vec<_>>();
+    let reason_catalog_references = profiles
+        .iter()
+        .map(|profile| profile.reason_catalog_path.clone())
+        .collect::<BTreeSet<_>>()
+        .len();
 
     RankingConfigDoctorSummary {
         active_profile_id,
@@ -254,7 +259,7 @@ pub fn ranking_config_doctor_summary_from_lint(
         ranking_kind_counts,
         profile_packs: profiles.len(),
         referenced_ranking_config_dirs,
-        reason_catalog_references: profiles.len(),
+        reason_catalog_references,
         reason_count: profiles.iter().map(|profile| profile.reason_count).sum(),
         fixture_references: profiles
             .iter()
