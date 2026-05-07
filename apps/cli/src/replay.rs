@@ -226,7 +226,9 @@ pub fn run_replay_scenarios(
     })
 }
 
-fn load_replay_scenarios(path: impl AsRef<Path>) -> Result<Vec<(PathBuf, ReplayScenario)>> {
+pub(crate) fn load_replay_scenarios(
+    path: impl AsRef<Path>,
+) -> Result<Vec<(PathBuf, ReplayScenario)>> {
     let path = path.as_ref();
     let mut scenario_paths = Vec::new();
     if path.is_dir() {

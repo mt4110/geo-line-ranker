@@ -14,7 +14,9 @@ pub use context_inspect::{
     format_context_inspect_summary, run_context_inspect, ContextInspectInput, ContextInspectSummary,
 };
 pub use doctor::{
-    run_explanation_integrity_doctor, run_profile_pack_doctor, ExplanationIntegrityDoctorCase,
+    run_context_coverage_doctor, run_explanation_integrity_doctor, run_profile_pack_doctor,
+    ContextCoverageDoctorCase, ContextCoverageDoctorSummary, ContextCoverageRequirement,
+    ContextCoverageShapeMismatch, ExplanationIntegrityDoctorCase,
     ExplanationIntegrityDoctorSummary, ProfilePackDoctorFile, ProfilePackDoctorSummary,
 };
 pub use explain::{
@@ -28,9 +30,10 @@ pub use fixtures::{
     FixtureFileManifest, FixtureManifestKind, FixtureSetManifest,
 };
 pub use formatting::{
-    format_explain_trace_report, format_explanation_integrity_doctor_summary,
-    format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
-    format_job_list, format_job_mutation_summary, format_profile_pack_doctor_summary,
+    format_context_coverage_doctor_summary, format_explain_trace_report,
+    format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
+    format_job_enqueue_summary, format_job_inspection, format_job_list,
+    format_job_mutation_summary, format_profile_pack_doctor_summary,
     format_replay_evaluation_summary, format_replay_scenario_summary,
     format_snapshot_refresh_summary, format_summary,
 };

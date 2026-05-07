@@ -14,6 +14,7 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 cargo run -p cli -- replay scenarios
+cargo run -p cli -- doctor context-coverage
 ```
 
 `config lint` covers both active ranking config and committed profile pack
@@ -171,6 +172,7 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 cargo run -p cli -- replay scenarios
 cargo run -p cli -- doctor explanation-integrity
+cargo run -p cli -- doctor context-coverage
 cargo run -p cli -- doctor profile-pack
 just mvp-acceptance
 git diff --check
@@ -209,6 +211,17 @@ not a substitute for `replay scenarios`; ordering, pairwise, and candidate-count
 regressions belong to the full replay gate. The command supports `--json`,
 `--ranking-config-dir`, `--algorithm-version`, and `--allow-blockers` with the
 same intent as `replay scenarios`.
+
+`cargo run -p cli -- doctor context-coverage` is the Quality doctor v2 slice
+for replay scenario coverage. It is DB-free and reads the committed scenario
+pack without running ranking, then reports `context_source` coverage, scenario
+tags, expected fallback stages, declared `candidate_counts` stages, and context
+source-to-shape mismatches. Missing coverage for `request_area`, `request_line`,
+or `default_safe_context` is a blocker, as is a scenario whose declared context
+source does not match its context shape. Use `--json` when capturing evidence
+artifacts. This doctor is not a substitute for `replay scenarios`; ranking
+output, pairwise ordering, candidate-count correctness, and explanation
+integrity still belong to the full replay gate.
 
 `cargo run -p cli -- doctor profile-pack` is the Quality doctor v2 slice for
 profile-pack health. It is DB-free and reuses the profile manifest, reason
