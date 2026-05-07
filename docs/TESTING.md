@@ -186,6 +186,7 @@ cargo run -p cli -- eval golden
 cargo run -p cli -- doctor ranking-config
 cargo run -p cli -- doctor explanation-integrity
 cargo run -p cli -- doctor context-coverage
+cargo run -p cli -- doctor retrieval-parity
 cargo run -p cli -- doctor profile-pack
 just mvp-acceptance
 git diff --check
@@ -246,6 +247,13 @@ source does not match its context shape. Use `--json` when capturing evidence
 artifacts. This doctor is not a substitute for `eval golden` or
 `replay scenarios`; ranking output, pairwise ordering, candidate-count
 correctness, and explanation integrity still belong to the full replay gate.
+
+`cargo run -p cli -- doctor retrieval-parity` is the DB-free full-mode
+retrieval ordering contract check. It verifies the candidate-slice ordering
+used before ranking: direct station first, then distance, walking minutes,
+school id, and station id. Use `--json` when capturing optional full-mode
+evidence. This doctor does not require PostgreSQL or OpenSearch, and it does
+not add full mode or OpenSearch to the public-MVP release gate.
 
 `cargo run -p cli -- doctor profile-pack` is the Quality doctor v2 slice for
 profile-pack health. It is DB-free and reuses the profile manifest, reason
@@ -494,6 +502,8 @@ python3 scripts/local_review_eval.py \
   allowlist fetch, parser registry selection, and crawl-to-events import flow work when PostgreSQL is reachable
 - compatibility integration test:
   SQL-only and full mode return the same recommendation ordering for the shared demo cases
+- retrieval parity doctor:
+  the full-mode candidate ordering contract remains direct station, distance, walking minutes, school id, and station id before ranking
 
 ## Manual smoke checks
 
@@ -645,4 +655,4 @@ python3 scripts/local_review_eval.py \
    ```
 
    The request payload hash now changes across placements, so `home` and `search` should not share the same cache entry.
-   Full-mode retrieval should keep the same candidate-slice ordering as SQL-only mode before ranking: direct station first, then distance, walking minutes, school id, and station id.
+   Full-mode retrieval should keep the same candidate-slice ordering as SQL-only mode before ranking: direct station first, then distance, walking minutes, school id, and station id. For DB-free evidence of that ordering contract, run `cargo run -p cli -- doctor retrieval-parity`.
