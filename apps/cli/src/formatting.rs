@@ -1,7 +1,9 @@
 use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 
 use crate::{
-    doctor::{ExplanationIntegrityDoctorSummary, ProfilePackDoctorSummary},
+    doctor::{
+        ContextCoverageDoctorSummary, ExplanationIntegrityDoctorSummary, ProfilePackDoctorSummary,
+    },
     explain::{ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport},
     explanation_integrity::QualityCheckStatus,
     fixtures::FixtureDoctorSummary,
@@ -392,6 +394,122 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
     }
 
     lines.join("\n")
+}
+
+pub fn format_context_coverage_doctor_summary(summary: &ContextCoverageDoctorSummary) -> String {
+    let mut lines = vec![format!(
+        "doctor context-coverage completed: scenarios={}, with_context={}, without_context={}, required_context_sources={}, context_shape_mismatches={}, candidate_count_scenarios={}, candidate_count_expectations={}",
+        summary.scenarios,
+        summary.scenarios_with_context,
+        summary.scenarios_without_context,
+        format_required_context_sources(summary),
+        summary.context_shape_mismatches.len(),
+        summary.scenarios_with_candidate_counts,
+        summary.candidate_count_expectations
+    )];
+
+    lines.push(format!(
+        "context_sources: {}",
+        format_counts(&summary.context_source_counts)
+    ));
+    lines.push(format!(
+        "context_tags: {}",
+        format_counts(&summary.tag_counts)
+    ));
+    lines.push(format!(
+        "fallback_stages: {}",
+        format_counts(&summary.fallback_stage_counts)
+    ));
+    lines.push(format!(
+        "candidate_count_stages: {}",
+        format_counts(&summary.candidate_count_stage_counts)
+    ));
+
+    if !summary.missing_required_context_sources.is_empty() {
+        lines.push(format!(
+            "missing_required_context_sources: {}",
+            summary.missing_required_context_sources.join(",")
+        ));
+    }
+    if !summary.context_shape_mismatches.is_empty() {
+        lines.push("context_shape_mismatches:".to_string());
+        for mismatch in &summary.context_shape_mismatches {
+            lines.push(format!(
+                "  scenario_id={} context_source={} expected={} actual={} path={}",
+                mismatch.id,
+                mismatch.context_source,
+                mismatch.expected_shape,
+                format_shape(&mismatch.actual_shape),
+                mismatch.path.display()
+            ));
+        }
+    }
+
+    for case in &summary.cases {
+        lines.push(format!(
+            "  scenario_id={} context_source={} tags={} fallback={} candidate_counts={} context_shape={} path={}",
+            case.id,
+            case.context_source.as_deref().unwrap_or("-"),
+            format_order(&case.tags),
+            case.fallback_stage,
+            format_order(&case.candidate_count_stages),
+            format_context_shape(case.has_area_context, case.has_line_context, case.has_station_context),
+            case.path.display()
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn format_required_context_sources(summary: &ContextCoverageDoctorSummary) -> String {
+    if summary.required_context_sources.is_empty() {
+        return "-".to_string();
+    }
+    summary
+        .required_context_sources
+        .iter()
+        .map(|source| {
+            if source.covered {
+                format!("{}={}", source.context_source, source.scenarios)
+            } else {
+                format!("{}=missing", source.context_source)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_counts(counts: &std::collections::BTreeMap<String, usize>) -> String {
+    if counts.is_empty() {
+        return "-".to_string();
+    }
+    counts
+        .iter()
+        .map(|(key, count)| format!("{key}={count}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_context_shape(has_area: bool, has_line: bool, has_station: bool) -> String {
+    let mut parts = Vec::new();
+    if has_area {
+        parts.push("area".to_string());
+    }
+    if has_line {
+        parts.push("line".to_string());
+    }
+    if has_station {
+        parts.push("station".to_string());
+    }
+    format_shape(&parts)
+}
+
+fn format_shape(shape: &[String]) -> String {
+    if shape.is_empty() {
+        "none".to_string()
+    } else {
+        shape.join(",")
+    }
 }
 
 fn format_order(order: &[String]) -> String {

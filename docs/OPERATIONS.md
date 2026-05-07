@@ -209,6 +209,26 @@ intentionally does not prove ordering, pairwise, or candidate-count correctness.
 Use `--json` for evidence capture and `--allow-blockers` only for local
 investigation.
 
+Run the context coverage doctor when you need DB-free evidence that the
+committed replay scenario pack still covers the intended context inputs and
+fallback ladder slices:
+
+```bash
+cargo run -p cli -- doctor context-coverage
+cargo run -p cli -- doctor context-coverage --json
+```
+
+This doctor reads the same replay scenario YAML files, but it does not execute
+ranking. It summarizes `context_source` counts, source-to-shape mismatches,
+scenario tags such as `area_context` and `line_context`, expected
+fallback-stage coverage, and declared `candidate_counts` coverage. The minimum
+required context sources are `request_area`, `request_line`, and
+`default_safe_context`; missing coverage or a context source whose declared
+shape does not match the scenario context is a blocker. Use `replay scenarios`
+when you need ranking correctness, ordering, pairwise, candidate-count, and
+explanation checks; use `doctor context-coverage` when you need a compact
+operator-facing coverage inventory.
+
 Run the profile-pack doctor when an operator needs a compact profile contract
 health summary rather than the authoring-oriented profile CLI:
 

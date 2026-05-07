@@ -6,17 +6,17 @@ use std::{
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use cli::{
-    format_context_inspect_summary, format_explain_trace_report,
-    format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
-    format_job_enqueue_summary, format_job_inspection, format_job_list,
-    format_job_mutation_summary, format_profile_pack_doctor_summary,
+    format_context_coverage_doctor_summary, format_context_inspect_summary,
+    format_explain_trace_report, format_explanation_integrity_doctor_summary,
+    format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
+    format_job_list, format_job_mutation_summary, format_profile_pack_doctor_summary,
     format_replay_evaluation_summary, format_replay_scenario_summary,
-    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture, run_context_inspect,
-    run_derive_school_station_links, run_event_csv_import, run_explain_trace,
-    run_explanation_integrity_doctor, run_fixture_doctor, run_import_command, run_job_due,
-    run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_profile_pack_doctor,
-    run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
-    ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
+    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture,
+    run_context_coverage_doctor, run_context_inspect, run_derive_school_station_links,
+    run_event_csv_import, run_explain_trace, run_explanation_integrity_doctor, run_fixture_doctor,
+    run_import_command, run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
+    run_profile_pack_doctor, run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh,
+    ContextInspectInput, ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -268,6 +268,21 @@ enum DoctorCommand {
             help = "Profile pack root directory or explicit profile.yaml file to diagnose. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
+        #[arg(long, help = "Print the doctor report as JSON")]
+        json: bool,
+    },
+    #[command(
+        name = "context-coverage",
+        about = "Run the DB-free context coverage doctor against committed replay scenarios",
+        long_about = "Run the DB-free context coverage doctor against committed replay scenarios. This reads scenario metadata and expectations only, then summarizes context source, context shape, scenario tags, fallback-stage, and candidate-count coverage; use `replay scenarios` for ranking correctness.\n\nExamples:\n  geo-line-ranker-cli doctor context-coverage\n  geo-line-ranker-cli doctor context-coverage --json\n  geo-line-ranker-cli doctor context-coverage --path configs/evaluation/scenarios"
+    )]
+    ContextCoverage {
+        #[arg(
+            long,
+            default_value = DEFAULT_REPLAY_SCENARIO_PATH,
+            help = "Scenario YAML file or directory to use as doctor input"
+        )]
+        path: PathBuf,
         #[arg(long, help = "Print the doctor report as JSON")]
         json: bool,
     },
@@ -601,6 +616,23 @@ async fn main() -> anyhow::Result<()> {
                     println!("{}", serde_json::to_string_pretty(&summary)?);
                 } else {
                     println!("{}", format_profile_pack_doctor_summary(&summary));
+                }
+            }
+            DoctorCommand::ContextCoverage { path, json } => {
+                let path = resolve_runtime_path(path);
+                let summary = run_context_coverage_doctor(path)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_context_coverage_doctor_summary(&summary));
+                }
+                if summary.has_blockers() {
+                    anyhow::bail!(
+                        "doctor context-coverage had blocker checks: {}",
+                        summary
+                            .blocker_message()
+                            .unwrap_or_else(|| "unknown".to_string())
+                    );
                 }
             }
         },
@@ -1040,7 +1072,7 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use config::{ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary};
-    use std::fs;
+    use std::{collections::BTreeMap, fs};
 
     #[test]
     fn context_inspect_help_explains_read_only_evidence_flow() {
@@ -1120,6 +1152,103 @@ mod tests {
         assert!(help.contains("operator-facing profile-pack coverage metrics"));
         assert!(help.contains("doctor profile-pack --json"));
         assert!(help.contains("--profiles-path configs/profiles"));
+    }
+
+    #[test]
+    fn context_coverage_doctor_help_points_to_replay_metadata_coverage() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let context_coverage = doctor
+            .find_subcommand_mut("context-coverage")
+            .expect("doctor context-coverage command");
+        let mut buffer = Vec::new();
+        context_coverage
+            .write_long_help(&mut buffer)
+            .expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("context source"));
+        assert!(help.contains("context shape"));
+        assert!(help.contains("scenario tags"));
+        assert!(help.contains("candidate-count coverage"));
+        assert!(help.contains("use `replay scenarios` for ranking correctness"));
+        assert!(help.contains("doctor context-coverage --json"));
+        assert!(help.contains("--path configs/evaluation/scenarios"));
+    }
+
+    #[test]
+    fn context_coverage_doctor_summary_reports_coverage_metrics() {
+        let mut context_source_counts = BTreeMap::new();
+        context_source_counts.insert("request_area".to_string(), 1);
+        context_source_counts.insert("request_line".to_string(), 1);
+        context_source_counts.insert("default_safe_context".to_string(), 1);
+        let mut tag_counts = BTreeMap::new();
+        tag_counts.insert("area_context".to_string(), 1);
+        tag_counts.insert("line_context".to_string(), 1);
+        let mut fallback_stage_counts = BTreeMap::new();
+        fallback_stage_counts.insert("same_city".to_string(), 1);
+        fallback_stage_counts.insert("same_line".to_string(), 1);
+        let mut candidate_count_stage_counts = BTreeMap::new();
+        candidate_count_stage_counts.insert("same_city".to_string(), 1);
+        candidate_count_stage_counts.insert("same_line".to_string(), 1);
+        let summary = cli::ContextCoverageDoctorSummary {
+            scenarios: 3,
+            scenarios_with_context: 3,
+            scenarios_without_context: 0,
+            scenarios_with_candidate_counts: 2,
+            candidate_count_expectations: 2,
+            context_shape_mismatches: Vec::new(),
+            context_source_counts,
+            tag_counts,
+            fallback_stage_counts,
+            candidate_count_stage_counts,
+            required_context_sources: vec![
+                cli::ContextCoverageRequirement {
+                    context_source: "request_area".to_string(),
+                    covered: true,
+                    scenarios: 1,
+                },
+                cli::ContextCoverageRequirement {
+                    context_source: "request_line".to_string(),
+                    covered: true,
+                    scenarios: 1,
+                },
+                cli::ContextCoverageRequirement {
+                    context_source: "default_safe_context".to_string(),
+                    covered: true,
+                    scenarios: 1,
+                },
+            ],
+            missing_required_context_sources: Vec::new(),
+            cases: vec![cli::ContextCoverageDoctorCase {
+                id: "S00_CONTEXT".to_string(),
+                title: "Context".to_string(),
+                path: PathBuf::from("configs/evaluation/scenarios/S00_context.yaml"),
+                context_source: Some("request_area".to_string()),
+                tags: vec!["area_context".to_string()],
+                fallback_stage: "same_city".to_string(),
+                candidate_count_stages: vec!["same_city".to_string()],
+                has_area_context: true,
+                has_line_context: false,
+                has_station_context: false,
+            }],
+        };
+
+        let rendered = format_context_coverage_doctor_summary(&summary);
+
+        assert!(rendered.contains("doctor context-coverage completed: scenarios=3"));
+        assert!(rendered.contains("context_shape_mismatches=0"));
+        assert!(rendered.contains(
+            "required_context_sources=request_area=1,request_line=1,default_safe_context=1"
+        ));
+        assert!(rendered
+            .contains("context_sources: default_safe_context=1,request_area=1,request_line=1"));
+        assert!(rendered.contains("context_tags: area_context=1,line_context=1"));
+        assert!(rendered.contains("fallback_stages: same_city=1,same_line=1"));
+        assert!(rendered.contains("candidate_count_stages: same_city=1,same_line=1"));
+        assert!(rendered.contains("context_shape=area"));
     }
 
     #[test]

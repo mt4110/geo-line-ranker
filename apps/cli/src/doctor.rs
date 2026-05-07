@@ -1,15 +1,32 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use config::{lint_profile_pack_dir, ProfilePackLintFile, ProfilePackLintSummary};
+use context::ContextSource;
 use serde::Serialize;
 
 use crate::{
     explanation_integrity::{QualityCheckStatus, QualitySeverity},
     replay::{
-        run_replay_scenarios, ReplayScenarioCheck, ReplayScenarioStatus, ReplayScenarioSummary,
+        load_replay_scenarios, run_replay_scenarios, ReplayScenario, ReplayScenarioCheck,
+        ReplayScenarioStatus, ReplayScenarioSummary,
     },
 };
+
+const REQUIRED_CONTEXT_SOURCES: &[ContextSource] = &[
+    ContextSource::RequestArea,
+    ContextSource::RequestLine,
+    ContextSource::DefaultSafeContext,
+];
+const UNHANDLED_CONTEXT_SHAPE: &str = "unhandled";
+
+enum ContextShapeExpectation {
+    Allowed(Vec<Vec<String>>),
+    Unhandled(&'static str),
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ExplanationIntegrityDoctorSummary {
@@ -67,6 +84,85 @@ pub struct ProfilePackDoctorFile {
     pub optional_crawler_manifest_references: usize,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ContextCoverageDoctorSummary {
+    pub scenarios: usize,
+    pub scenarios_with_context: usize,
+    pub scenarios_without_context: usize,
+    pub scenarios_with_candidate_counts: usize,
+    pub candidate_count_expectations: usize,
+    pub context_shape_mismatches: Vec<ContextCoverageShapeMismatch>,
+    pub context_source_counts: BTreeMap<String, usize>,
+    pub tag_counts: BTreeMap<String, usize>,
+    pub fallback_stage_counts: BTreeMap<String, usize>,
+    pub candidate_count_stage_counts: BTreeMap<String, usize>,
+    pub required_context_sources: Vec<ContextCoverageRequirement>,
+    pub missing_required_context_sources: Vec<String>,
+    pub cases: Vec<ContextCoverageDoctorCase>,
+}
+
+impl ContextCoverageDoctorSummary {
+    pub fn has_blockers(&self) -> bool {
+        !self.missing_required_context_sources.is_empty()
+            || !self.context_shape_mismatches.is_empty()
+    }
+
+    pub fn blocker_message(&self) -> Option<String> {
+        if !self.has_blockers() {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+        if !self.missing_required_context_sources.is_empty() {
+            parts.push(format!(
+                "missing_required_context_sources={}",
+                self.missing_required_context_sources.join(",")
+            ));
+        }
+        if !self.context_shape_mismatches.is_empty() {
+            parts.push(format!(
+                "context_shape_mismatches={}",
+                self.context_shape_mismatches
+                    .iter()
+                    .map(|mismatch| mismatch.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+        Some(parts.join("; "))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ContextCoverageRequirement {
+    pub context_source: String,
+    pub covered: bool,
+    pub scenarios: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ContextCoverageShapeMismatch {
+    pub id: String,
+    pub path: PathBuf,
+    pub context_source: String,
+    pub expected_shape: String,
+    pub actual_shape: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ContextCoverageDoctorCase {
+    pub id: String,
+    pub title: String,
+    pub path: PathBuf,
+    pub context_source: Option<String>,
+    pub tags: Vec<String>,
+    pub fallback_stage: String,
+    pub candidate_count_stages: Vec<String>,
+    pub has_area_context: bool,
+    pub has_line_context: bool,
+    pub has_station_context: bool,
+}
+
 pub fn run_explanation_integrity_doctor(
     scenario_path: impl AsRef<Path>,
     ranking_config_dir: impl AsRef<Path>,
@@ -82,6 +178,250 @@ pub fn run_profile_pack_doctor(
 ) -> Result<ProfilePackDoctorSummary> {
     let lint_summary = lint_profile_pack_dir(profiles_path)?;
     Ok(profile_pack_doctor_summary_from_lint(lint_summary))
+}
+
+pub fn run_context_coverage_doctor(
+    scenario_path: impl AsRef<Path>,
+) -> Result<ContextCoverageDoctorSummary> {
+    let scenarios = load_replay_scenarios(scenario_path)?;
+    Ok(context_coverage_summary_from_scenarios(scenarios))
+}
+
+fn context_coverage_summary_from_scenarios(
+    scenarios: Vec<(PathBuf, ReplayScenario)>,
+) -> ContextCoverageDoctorSummary {
+    let cases = scenarios
+        .into_iter()
+        .map(|(path, scenario)| context_coverage_case(path, scenario))
+        .collect::<Vec<_>>();
+
+    let mut context_source_counts = BTreeMap::new();
+    let mut tag_counts = BTreeMap::new();
+    let mut fallback_stage_counts = BTreeMap::new();
+    let mut candidate_count_stage_counts = BTreeMap::new();
+
+    for case in &cases {
+        if let Some(context_source) = &case.context_source {
+            increment(&mut context_source_counts, context_source);
+        }
+        for tag in &case.tags {
+            increment(&mut tag_counts, tag);
+        }
+        increment(&mut fallback_stage_counts, &case.fallback_stage);
+        for stage in &case.candidate_count_stages {
+            increment(&mut candidate_count_stage_counts, stage);
+        }
+    }
+
+    let required_context_sources = REQUIRED_CONTEXT_SOURCES
+        .iter()
+        .map(|source| {
+            let context_source = source.as_str();
+            let scenarios = context_source_counts
+                .get(context_source)
+                .copied()
+                .unwrap_or(0);
+            ContextCoverageRequirement {
+                context_source: context_source.to_string(),
+                covered: scenarios > 0,
+                scenarios,
+            }
+        })
+        .collect::<Vec<_>>();
+    let missing_required_context_sources = required_context_sources
+        .iter()
+        .filter(|source| !source.covered)
+        .map(|source| source.context_source.clone())
+        .collect::<Vec<_>>();
+    let context_shape_mismatches = cases
+        .iter()
+        .filter_map(context_shape_mismatch)
+        .collect::<Vec<_>>();
+
+    ContextCoverageDoctorSummary {
+        scenarios: cases.len(),
+        scenarios_with_context: cases
+            .iter()
+            .filter(|case| case.context_source.is_some())
+            .count(),
+        scenarios_without_context: cases
+            .iter()
+            .filter(|case| case.context_source.is_none())
+            .count(),
+        scenarios_with_candidate_counts: cases
+            .iter()
+            .filter(|case| !case.candidate_count_stages.is_empty())
+            .count(),
+        candidate_count_expectations: cases
+            .iter()
+            .map(|case| case.candidate_count_stages.len())
+            .sum(),
+        context_shape_mismatches,
+        context_source_counts,
+        tag_counts,
+        fallback_stage_counts,
+        candidate_count_stage_counts,
+        required_context_sources,
+        missing_required_context_sources,
+        cases,
+    }
+}
+
+fn context_coverage_case(path: PathBuf, scenario: ReplayScenario) -> ContextCoverageDoctorCase {
+    let context_source = scenario
+        .query
+        .context
+        .as_ref()
+        .map(|context| context.context_source.as_str().to_string());
+    let has_area_context = scenario
+        .query
+        .context
+        .as_ref()
+        .is_some_and(|context| context.area.is_some());
+    let has_line_context = scenario
+        .query
+        .context
+        .as_ref()
+        .is_some_and(|context| context.line.is_some());
+    let has_station_context = scenario
+        .query
+        .context
+        .as_ref()
+        .is_some_and(|context| context.station.is_some());
+
+    ContextCoverageDoctorCase {
+        id: scenario.id,
+        title: scenario.title,
+        path,
+        context_source,
+        tags: scenario.tags,
+        fallback_stage: scenario.expectations.fallback_stage.as_str().to_string(),
+        candidate_count_stages: scenario
+            .expectations
+            .candidate_counts
+            .keys()
+            .cloned()
+            .collect(),
+        has_area_context,
+        has_line_context,
+        has_station_context,
+    }
+}
+
+fn increment(counts: &mut BTreeMap<String, usize>, key: &str) {
+    *counts.entry(key.to_string()).or_insert(0) += 1;
+}
+
+fn context_shape_mismatch(
+    case: &ContextCoverageDoctorCase,
+) -> Option<ContextCoverageShapeMismatch> {
+    let context_source = case.context_source.as_deref()?;
+    let actual_shape = context_shape_parts(case);
+    match expected_context_shapes(context_source) {
+        ContextShapeExpectation::Allowed(expected_shapes) => {
+            if context_shape_matches(&actual_shape, &expected_shapes) {
+                return None;
+            }
+
+            Some(ContextCoverageShapeMismatch {
+                id: case.id.clone(),
+                path: case.path.clone(),
+                context_source: context_source.to_string(),
+                expected_shape: context_shapes_label(&expected_shapes),
+                actual_shape,
+            })
+        }
+        ContextShapeExpectation::Unhandled(expected_shape) => Some(ContextCoverageShapeMismatch {
+            id: case.id.clone(),
+            path: case.path.clone(),
+            context_source: context_source.to_string(),
+            expected_shape: expected_shape.to_string(),
+            actual_shape,
+        }),
+    }
+}
+
+fn expected_context_shapes(context_source: &str) -> ContextShapeExpectation {
+    match context_source {
+        source if source == ContextSource::RequestArea.as_str() => {
+            ContextShapeExpectation::Allowed(vec![context_shape(&["area"])])
+        }
+        source if source == ContextSource::RequestLine.as_str() => {
+            ContextShapeExpectation::Allowed(vec![
+                context_shape(&["line"]),
+                context_shape(&["area", "line"]),
+            ])
+        }
+        source if source == ContextSource::RequestStation.as_str() => {
+            ContextShapeExpectation::Allowed(vec![
+                context_shape(&["line", "station"]),
+                context_shape(&["area", "line", "station"]),
+            ])
+        }
+        source if source == ContextSource::UserProfileArea.as_str() => {
+            // User profile contexts can persist any non-empty coarse context shape.
+            ContextShapeExpectation::Allowed(vec![
+                context_shape(&["area"]),
+                context_shape(&["line"]),
+                context_shape(&["station"]),
+                context_shape(&["area", "line"]),
+                context_shape(&["area", "station"]),
+                context_shape(&["line", "station"]),
+                context_shape(&["area", "line", "station"]),
+            ])
+        }
+        source if source == ContextSource::RecentSearchContext.as_str() => {
+            ContextShapeExpectation::Allowed(vec![context_shape(&["line", "station"])])
+        }
+        source if source == ContextSource::RecentBehaviorContext.as_str() => {
+            // This enum variant is reserved, but there is no resolver-backed replay shape yet.
+            ContextShapeExpectation::Unhandled(UNHANDLED_CONTEXT_SHAPE)
+        }
+        source if source == ContextSource::DefaultSafeContext.as_str() => {
+            ContextShapeExpectation::Allowed(vec![Vec::new()])
+        }
+        _ => ContextShapeExpectation::Unhandled(UNHANDLED_CONTEXT_SHAPE),
+    }
+}
+
+fn context_shape(shape: &[&str]) -> Vec<String> {
+    shape.iter().map(|part| (*part).to_string()).collect()
+}
+
+fn context_shape_matches(actual_shape: &[String], expected_shapes: &[Vec<String>]) -> bool {
+    expected_shapes
+        .iter()
+        .any(|expected_shape| actual_shape == expected_shape)
+}
+
+fn context_shape_parts(case: &ContextCoverageDoctorCase) -> Vec<String> {
+    let mut parts = Vec::new();
+    if case.has_area_context {
+        parts.push("area".to_string());
+    }
+    if case.has_line_context {
+        parts.push("line".to_string());
+    }
+    if case.has_station_context {
+        parts.push("station".to_string());
+    }
+    parts
+}
+
+fn context_shape_label(shape: &[String]) -> String {
+    if shape.is_empty() {
+        "none".to_string()
+    } else {
+        shape.join(",")
+    }
+}
+
+fn context_shapes_label(shapes: &[Vec<String>]) -> String {
+    shapes
+        .iter()
+        .map(|shape| context_shape_label(shape))
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 fn explanation_integrity_summary_from_replay(
@@ -238,8 +578,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        explanation_integrity_summary_from_replay, run_explanation_integrity_doctor,
-        run_profile_pack_doctor,
+        explanation_integrity_summary_from_replay, run_context_coverage_doctor,
+        run_explanation_integrity_doctor, run_profile_pack_doctor,
     };
     use crate::{
         explanation_integrity::{QualityCheckStatus, QualitySeverity},
@@ -348,6 +688,343 @@ mod tests {
     }
 
     #[test]
+    fn committed_replay_scenarios_pass_context_coverage_doctor() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let summary = run_context_coverage_doctor(repo_root.join(DEFAULT_REPLAY_SCENARIO_PATH))
+            .expect("context coverage doctor");
+
+        assert!(summary.scenarios >= 4);
+        assert_eq!(summary.scenarios_without_context, 0);
+        assert!(!summary.has_blockers());
+        assert!(summary.context_shape_mismatches.is_empty());
+        for expected_source in ["request_area", "request_line", "default_safe_context"] {
+            assert!(summary
+                .required_context_sources
+                .iter()
+                .any(|source| source.context_source == expected_source && source.covered));
+        }
+        assert!(summary
+            .tag_counts
+            .get("area_context")
+            .is_some_and(|count| *count > 0));
+        assert!(summary
+            .tag_counts
+            .get("line_context")
+            .is_some_and(|count| *count > 0));
+        assert!(summary
+            .fallback_stage_counts
+            .get("safe_global_popular")
+            .is_some_and(|count| *count > 0));
+        assert_eq!(summary.scenarios_with_candidate_counts, summary.scenarios);
+        assert!(summary.candidate_count_expectations >= summary.scenarios);
+    }
+
+    #[test]
+    fn context_coverage_doctor_blocks_when_required_sources_are_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scenario_path = temp.path().join("request_area_only.yaml");
+        std::fs::write(
+            &scenario_path,
+            r#"
+schema_version: 1
+kind: replay_scenario
+id: S00_CONTEXT_COVERAGE
+title: Context coverage
+tags:
+  - area_context
+query:
+  target_station_id: st_tokyo
+  limit: 1
+  placement: search
+  debug: false
+  context:
+    context_source: request_area
+    confidence: 0.95
+    area:
+      country: JP
+      prefecture_name: Tokyo
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+dataset:
+  schools: []
+  events: []
+  stations: []
+  school_station_links: []
+  popularity_snapshots: []
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: same_city
+  ordered:
+    - "school:school_tokyo"
+  candidate_counts:
+    same_city: 0
+"#,
+        )
+        .expect("write scenario");
+
+        let summary = run_context_coverage_doctor(&scenario_path).expect("context coverage doctor");
+
+        assert!(summary.has_blockers());
+        assert_eq!(
+            summary.missing_required_context_sources,
+            vec![
+                "request_line".to_string(),
+                "default_safe_context".to_string()
+            ]
+        );
+        assert_eq!(summary.context_source_counts.get("request_area"), Some(&1));
+        assert_eq!(summary.scenarios_with_candidate_counts, 1);
+        assert_eq!(
+            summary.blocker_message().as_deref(),
+            Some("missing_required_context_sources=request_line,default_safe_context")
+        );
+    }
+
+    #[test]
+    fn context_coverage_doctor_blocks_when_context_source_shape_mismatches() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("area.yaml"),
+            context_coverage_scenario_yaml(
+                "S00_AREA",
+                "request_area",
+                r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
+"#,
+                "same_city",
+            ),
+        )
+        .expect("write area scenario");
+        std::fs::write(
+            temp.path().join("line_bad_shape.yaml"),
+            context_coverage_scenario_yaml(
+                "S01_LINE_BAD_SHAPE",
+                "request_area",
+                r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
+    line:
+      line_name: Yamanote Line
+"#,
+                "same_line",
+            ),
+        )
+        .expect("write line scenario");
+        std::fs::write(
+            temp.path().join("line.yaml"),
+            context_coverage_scenario_yaml(
+                "S01_LINE",
+                "request_line",
+                r#"
+    line:
+      line_name: Yamanote Line
+"#,
+                "same_line",
+            ),
+        )
+        .expect("write valid line scenario");
+        std::fs::write(
+            temp.path().join("default.yaml"),
+            context_coverage_scenario_yaml(
+                "S02_DEFAULT",
+                "default_safe_context",
+                "",
+                "safe_global_popular",
+            ),
+        )
+        .expect("write default scenario");
+
+        let summary = run_context_coverage_doctor(temp.path()).expect("context coverage doctor");
+
+        assert!(summary.has_blockers());
+        assert!(summary.missing_required_context_sources.is_empty());
+        assert_eq!(summary.context_shape_mismatches.len(), 1);
+        let mismatch = &summary.context_shape_mismatches[0];
+        assert_eq!(mismatch.id, "S01_LINE_BAD_SHAPE");
+        assert_eq!(mismatch.context_source, "request_area");
+        assert_eq!(mismatch.expected_shape, "area");
+        assert_eq!(
+            mismatch.actual_shape,
+            vec!["area".to_string(), "line".to_string()]
+        );
+        assert_eq!(
+            summary.blocker_message().as_deref(),
+            Some("context_shape_mismatches=S01_LINE_BAD_SHAPE")
+        );
+    }
+
+    #[test]
+    fn context_coverage_doctor_accepts_resolver_backed_context_source_shapes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("area.yaml"),
+            context_coverage_scenario_yaml(
+                "S00_AREA",
+                "request_area",
+                r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
+"#,
+                "same_city",
+            ),
+        )
+        .expect("write area scenario");
+        std::fs::write(
+            temp.path().join("line.yaml"),
+            context_coverage_scenario_yaml(
+                "S01_LINE",
+                "request_line",
+                r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
+    line:
+      line_name: Yamanote Line
+"#,
+                "same_line",
+            ),
+        )
+        .expect("write line scenario");
+        std::fs::write(
+            temp.path().join("default.yaml"),
+            context_coverage_scenario_yaml(
+                "S02_DEFAULT",
+                "default_safe_context",
+                "",
+                "safe_global_popular",
+            ),
+        )
+        .expect("write default scenario");
+        std::fs::write(
+            temp.path().join("request_station.yaml"),
+            context_coverage_scenario_yaml(
+                "S03_REQUEST_STATION",
+                "request_station",
+                r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
+    line:
+      line_name: Yamanote Line
+    station:
+      station_id: st_tokyo
+      station_name: Tokyo
+"#,
+                "strict_station",
+            ),
+        )
+        .expect("write request station scenario");
+        std::fs::write(
+            temp.path().join("user_profile.yaml"),
+            context_coverage_scenario_yaml(
+                "S04_USER_PROFILE",
+                "user_profile_area",
+                r#"
+    station:
+      station_id: st_shibuya
+      station_name: Shibuya
+"#,
+                "strict_station",
+            ),
+        )
+        .expect("write user profile scenario");
+        std::fs::write(
+            temp.path().join("recent_search.yaml"),
+            context_coverage_scenario_yaml(
+                "S05_RECENT_SEARCH",
+                "recent_search_context",
+                r#"
+    line:
+      line_name: Yamanote Line
+    station:
+      station_id: st_tamachi
+      station_name: Tamachi
+"#,
+                "strict_station",
+            ),
+        )
+        .expect("write recent search scenario");
+
+        let summary = run_context_coverage_doctor(temp.path()).expect("context coverage doctor");
+
+        assert!(!summary.has_blockers());
+        assert!(summary.context_shape_mismatches.is_empty());
+    }
+
+    #[test]
+    fn context_coverage_doctor_blocks_unhandled_context_sources() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("area.yaml"),
+            context_coverage_scenario_yaml(
+                "S00_AREA",
+                "request_area",
+                r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
+"#,
+                "same_city",
+            ),
+        )
+        .expect("write area scenario");
+        std::fs::write(
+            temp.path().join("line.yaml"),
+            context_coverage_scenario_yaml(
+                "S01_LINE",
+                "request_line",
+                r#"
+    line:
+      line_name: Yamanote Line
+"#,
+                "same_line",
+            ),
+        )
+        .expect("write line scenario");
+        std::fs::write(
+            temp.path().join("default.yaml"),
+            context_coverage_scenario_yaml(
+                "S02_DEFAULT",
+                "default_safe_context",
+                "",
+                "safe_global_popular",
+            ),
+        )
+        .expect("write default scenario");
+        std::fs::write(
+            temp.path().join("recent_behavior.yaml"),
+            context_coverage_scenario_yaml(
+                "S03_RECENT_BEHAVIOR",
+                "recent_behavior_context",
+                r#"
+    area:
+      country: JP
+      prefecture_name: Tokyo
+"#,
+                "same_prefecture",
+            ),
+        )
+        .expect("write recent behavior scenario");
+
+        let summary = run_context_coverage_doctor(temp.path()).expect("context coverage doctor");
+
+        assert!(summary.has_blockers());
+        assert!(summary.missing_required_context_sources.is_empty());
+        assert_eq!(summary.context_shape_mismatches.len(), 1);
+        let mismatch = &summary.context_shape_mismatches[0];
+        assert_eq!(mismatch.id, "S03_RECENT_BEHAVIOR");
+        assert_eq!(mismatch.context_source, "recent_behavior_context");
+        assert_eq!(mismatch.expected_shape, super::UNHANDLED_CONTEXT_SHAPE);
+        assert_eq!(mismatch.actual_shape, vec!["area".to_string()]);
+    }
+
+    #[test]
     fn doctor_summary_ignores_non_explanation_replay_blockers() {
         let summary = explanation_integrity_summary_from_replay(replay_summary_with_checks(vec![
             ReplayScenarioCheck {
@@ -434,5 +1111,47 @@ mod tests {
                 checks,
             }],
         }
+    }
+
+    fn context_coverage_scenario_yaml(
+        id: &str,
+        context_source: &str,
+        context_shape: &str,
+        fallback_stage: &str,
+    ) -> String {
+        format!(
+            r#"
+schema_version: 1
+kind: replay_scenario
+id: {id}
+title: Context coverage
+query:
+  target_station_id: st_tokyo
+  limit: 1
+  placement: search
+  debug: false
+  context:
+    context_source: {context_source}
+    confidence: 0.95
+{context_shape}
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+dataset:
+  schools: []
+  events: []
+  stations: []
+  school_station_links: []
+  popularity_snapshots: []
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: {fallback_stage}
+  ordered:
+    - "school:school_tokyo"
+  candidate_counts:
+    {fallback_stage}: 0
+"#
+        )
     }
 }
