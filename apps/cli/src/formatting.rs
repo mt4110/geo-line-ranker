@@ -250,8 +250,19 @@ pub fn format_explain_trace_report(report: &ExplainTraceReport) -> String {
 }
 
 pub fn format_replay_evaluation_summary(summary: &ReplayEvaluationSummary) -> String {
+    format_replay_evaluation_summary_with_label("replay evaluation", summary)
+}
+
+pub fn format_eval_replay_summary(summary: &ReplayEvaluationSummary) -> String {
+    format_replay_evaluation_summary_with_label("eval replay", summary)
+}
+
+fn format_replay_evaluation_summary_with_label(
+    label: &str,
+    summary: &ReplayEvaluationSummary,
+) -> String {
     let mut lines = vec![format!(
-        "replay evaluation completed: evaluated={}, matched={}, mismatched={}, failed={}",
+        "{label} completed: evaluated={}, matched={}, mismatched={}, failed={}",
         summary.evaluated, summary.matched, summary.mismatched, summary.failed
     )];
 
@@ -278,8 +289,19 @@ pub fn format_replay_evaluation_summary(summary: &ReplayEvaluationSummary) -> St
 }
 
 pub fn format_replay_scenario_summary(summary: &ReplayScenarioSummary) -> String {
+    format_replay_scenario_summary_with_label("replay scenarios", summary)
+}
+
+pub fn format_eval_golden_summary(summary: &ReplayScenarioSummary) -> String {
+    format_replay_scenario_summary_with_label("eval golden", summary)
+}
+
+fn format_replay_scenario_summary_with_label(
+    label: &str,
+    summary: &ReplayScenarioSummary,
+) -> String {
     let mut lines = vec![format!(
-        "replay scenarios completed: scenarios={}, passed={}, blocked={}, blockers={}, warnings={}, pairwise={}/{}, explanation_integrity={}/{}",
+        "{label} completed: scenarios={}, passed={}, blocked={}, blockers={}, warnings={}, pairwise={}/{}, explanation_integrity={}/{}",
         summary.scenarios,
         summary.passed,
         summary.blocked,

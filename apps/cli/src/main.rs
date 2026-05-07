@@ -7,9 +7,10 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use cli::{
     format_context_coverage_doctor_summary, format_context_inspect_summary,
-    format_explain_trace_report, format_explanation_integrity_doctor_summary,
-    format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
-    format_job_list, format_job_mutation_summary, format_profile_pack_doctor_summary,
+    format_eval_golden_summary, format_eval_replay_summary, format_explain_trace_report,
+    format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
+    format_job_enqueue_summary, format_job_inspection, format_job_list,
+    format_job_mutation_summary, format_profile_pack_doctor_summary,
     format_ranking_config_doctor_summary, format_replay_evaluation_summary,
     format_replay_scenario_summary, format_snapshot_refresh_summary, format_summary,
     generate_demo_jp_fixture, ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
@@ -71,6 +72,11 @@ enum Command {
     Replay {
         #[command(subcommand)]
         target: ReplayCommand,
+    },
+    #[command(about = "Run evaluation quality gates with operator-facing names")]
+    Eval {
+        #[command(subcommand)]
+        target: EvalCommand,
     },
     Explain {
         #[command(subcommand)]
@@ -213,6 +219,47 @@ enum ReplayCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum EvalCommand {
+    #[command(
+        about = "Run the committed golden scenario evaluation",
+        long_about = "Run the committed golden scenario evaluation without requiring persisted PostgreSQL traces. This is an operator-facing alias for `replay scenarios`; both commands use the same deterministic scenario runner, checks, and JSON report shape.\n\nExamples:\n  geo-line-ranker-cli eval golden\n  geo-line-ranker-cli eval golden --json\n  geo-line-ranker-cli eval golden --scenario-path configs/evaluation/scenarios"
+    )]
+    Golden {
+        #[arg(
+            long = "scenario-path",
+            visible_alias = "path",
+            default_value = DEFAULT_REPLAY_SCENARIO_PATH,
+            help = "Scenario YAML file or directory to replay"
+        )]
+        scenario_path: PathBuf,
+        #[arg(
+            long,
+            help = "Ranking config directory. Defaults to RANKING_CONFIG_DIR or configs/ranking."
+        )]
+        ranking_config_dir: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Algorithm version label for report parity. Defaults to ALGORITHM_VERSION or the runtime default."
+        )]
+        algorithm_version: Option<String>,
+        #[arg(long, help = "Print the scenario report as JSON")]
+        json: bool,
+        #[arg(long, help = "Exit zero even when blocker checks fail")]
+        allow_blockers: bool,
+    },
+    #[command(
+        about = "Replay recent recommendation traces against the current SQL-only path",
+        long_about = "Replay recent recommendation traces against the current SQL-only path. This is an operator-facing alias for `replay evaluate`; both commands use the same persisted trace replay runner, checks, and JSON report shape.\n\nExamples:\n  geo-line-ranker-cli eval replay --limit 20\n  geo-line-ranker-cli eval replay --limit 20 --fail-on-mismatch"
+    )]
+    Replay {
+        #[arg(long, default_value_t = 20, help = "Maximum recent traces to replay")]
+        limit: i64,
+        #[arg(long, help = "Exit non-zero when any replay mismatches or fails")]
+        fail_on_mismatch: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum ExplainCommand {
     #[command(
         about = "Read one persisted recommendation trace and explain its request, response, reasons, and integrity",
@@ -250,7 +297,7 @@ enum DoctorCommand {
     #[command(
         name = "explanation-integrity",
         about = "Run the DB-free explanation integrity doctor against committed replay scenarios",
-        long_about = "Run the DB-free explanation integrity doctor against committed replay scenarios. This reports only reason-code integrity and explanation-template checks; use `replay scenarios` for the full ranking correctness gate.\n\nExamples:\n  geo-line-ranker-cli doctor explanation-integrity\n  geo-line-ranker-cli doctor explanation-integrity --json"
+        long_about = "Run the DB-free explanation integrity doctor against committed replay scenarios. This reports only reason-code integrity and explanation-template checks; use `eval golden` or `replay scenarios` for the full ranking correctness gate.\n\nExamples:\n  geo-line-ranker-cli doctor explanation-integrity\n  geo-line-ranker-cli doctor explanation-integrity --json"
     )]
     ExplanationIntegrity {
         #[arg(
@@ -294,7 +341,7 @@ enum DoctorCommand {
     #[command(
         name = "context-coverage",
         about = "Run the DB-free context coverage doctor against committed replay scenarios",
-        long_about = "Run the DB-free context coverage doctor against committed replay scenarios. This reads scenario metadata and expectations only, then summarizes context source, context shape, scenario tags, fallback-stage, and candidate-count coverage; use `replay scenarios` for ranking correctness.\n\nExamples:\n  geo-line-ranker-cli doctor context-coverage\n  geo-line-ranker-cli doctor context-coverage --json\n  geo-line-ranker-cli doctor context-coverage --path configs/evaluation/scenarios"
+        long_about = "Run the DB-free context coverage doctor against committed replay scenarios. This reads scenario metadata and expectations only, then summarizes context source, context shape, scenario tags, fallback-stage, and candidate-count coverage; use `eval golden` or `replay scenarios` for ranking correctness.\n\nExamples:\n  geo-line-ranker-cli doctor context-coverage\n  geo-line-ranker-cli doctor context-coverage --json\n  geo-line-ranker-cli doctor context-coverage --path configs/evaluation/scenarios"
     )]
     ContextCoverage {
         #[arg(
@@ -539,16 +586,13 @@ async fn main() -> anyhow::Result<()> {
                 limit,
                 fail_on_mismatch,
             } => {
-                let settings = AppSettings::from_env()?;
-                let summary = run_replay_evaluate(&settings, limit).await?;
-                println!("{}", format_replay_evaluation_summary(&summary));
-                if fail_on_mismatch && (summary.mismatched > 0 || summary.failed > 0) {
-                    anyhow::bail!(
-                        "replay evaluation had mismatches={} failed={}",
-                        summary.mismatched,
-                        summary.failed
-                    );
-                }
+                run_replay_evaluate_command(
+                    limit,
+                    fail_on_mismatch,
+                    format_replay_evaluation_summary,
+                    "replay evaluation",
+                )
+                .await?
             }
             ReplayCommand::Scenarios {
                 path,
@@ -556,27 +600,43 @@ async fn main() -> anyhow::Result<()> {
                 algorithm_version,
                 json,
                 allow_blockers,
+            } => run_replay_scenarios_command(
+                path,
+                ranking_config_dir,
+                algorithm_version,
+                json,
+                allow_blockers,
+                format_replay_scenario_summary,
+                "replay scenarios",
+            )?,
+        },
+        Command::Eval { target } => match target {
+            EvalCommand::Golden {
+                scenario_path,
+                ranking_config_dir,
+                algorithm_version,
+                json,
+                allow_blockers,
+            } => run_replay_scenarios_command(
+                scenario_path,
+                ranking_config_dir,
+                algorithm_version,
+                json,
+                allow_blockers,
+                format_eval_golden_summary,
+                "eval golden",
+            )?,
+            EvalCommand::Replay {
+                limit,
+                fail_on_mismatch,
             } => {
-                let ranking_config_dir = match ranking_config_dir {
-                    Some(path) => resolve_runtime_path(path),
-                    None => env_path_or_default(
-                        "RANKING_CONFIG_DIR",
-                        PathBuf::from(DEFAULT_RANKING_CONFIG_DIR),
-                    )?,
-                };
-                let algorithm_version = algorithm_version
-                    .or(config::env_optional_non_empty("ALGORITHM_VERSION")?)
-                    .unwrap_or_else(|| DEFAULT_ALGORITHM_VERSION.to_string());
-                let path = resolve_runtime_path(path);
-                let summary = run_replay_scenarios(path, ranking_config_dir, &algorithm_version)?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&summary)?);
-                } else {
-                    println!("{}", format_replay_scenario_summary(&summary));
-                }
-                if summary.has_blockers() && !allow_blockers {
-                    anyhow::bail!("replay scenarios had blocker checks={}", summary.blockers);
-                }
+                run_replay_evaluate_command(
+                    limit,
+                    fail_on_mismatch,
+                    format_eval_replay_summary,
+                    "eval replay",
+                )
+                .await?
             }
         },
         Command::Explain { target } => match target {
@@ -828,6 +888,57 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn run_replay_evaluate_command(
+    limit: i64,
+    fail_on_mismatch: bool,
+    format_summary: fn(&cli::ReplayEvaluationSummary) -> String,
+    failure_label: &str,
+) -> anyhow::Result<()> {
+    let settings = AppSettings::from_env()?;
+    let summary = run_replay_evaluate(&settings, limit).await?;
+    println!("{}", format_summary(&summary));
+    if fail_on_mismatch && (summary.mismatched > 0 || summary.failed > 0) {
+        anyhow::bail!(
+            "{failure_label} had mismatches={} failed={}",
+            summary.mismatched,
+            summary.failed
+        );
+    }
+    Ok(())
+}
+
+fn run_replay_scenarios_command(
+    path: PathBuf,
+    ranking_config_dir: Option<PathBuf>,
+    algorithm_version: Option<String>,
+    json: bool,
+    allow_blockers: bool,
+    format_summary: fn(&cli::ReplayScenarioSummary) -> String,
+    failure_label: &str,
+) -> anyhow::Result<()> {
+    let ranking_config_dir = match ranking_config_dir {
+        Some(path) => resolve_runtime_path(path),
+        None => env_path_or_default(
+            "RANKING_CONFIG_DIR",
+            PathBuf::from(DEFAULT_RANKING_CONFIG_DIR),
+        )?,
+    };
+    let algorithm_version = algorithm_version
+        .or(config::env_optional_non_empty("ALGORITHM_VERSION")?)
+        .unwrap_or_else(|| DEFAULT_ALGORITHM_VERSION.to_string());
+    let path = resolve_runtime_path(path);
+    let summary = run_replay_scenarios(path, ranking_config_dir, &algorithm_version)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!("{}", format_summary(&summary));
+    }
+    if summary.has_blockers() && !allow_blockers {
+        anyhow::bail!("{failure_label} had blocker checks={}", summary.blockers);
+    }
     Ok(())
 }
 
@@ -1173,6 +1284,126 @@ mod tests {
     }
 
     #[test]
+    fn top_level_help_lists_eval_command() {
+        let mut command = Cli::command();
+        let mut buffer = Vec::new();
+        command.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("eval"));
+        assert!(help.contains("Run evaluation quality gates with operator-facing names"));
+    }
+
+    #[test]
+    fn eval_help_lists_golden_and_replay_aliases() {
+        let mut command = Cli::command();
+        let eval = command.find_subcommand_mut("eval").expect("eval command");
+        let mut buffer = Vec::new();
+        eval.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("golden"));
+        assert!(help.contains("Run the committed golden scenario evaluation"));
+        assert!(help.contains("replay"));
+        assert!(help.contains("Replay recent recommendation traces"));
+    }
+
+    #[test]
+    fn eval_golden_help_points_to_replay_scenarios_alias() {
+        let mut command = Cli::command();
+        let eval = command.find_subcommand_mut("eval").expect("eval command");
+        let golden = eval
+            .find_subcommand_mut("golden")
+            .expect("eval golden command");
+        let mut buffer = Vec::new();
+        golden.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("operator-facing alias for `replay scenarios`"));
+        assert!(help.contains("eval golden --json"));
+        assert!(help.contains("--scenario-path"));
+        assert!(help.contains("--path"));
+        assert!(help.contains("--ranking-config-dir"));
+        assert!(help.contains("--allow-blockers"));
+    }
+
+    #[test]
+    fn eval_replay_help_points_to_replay_evaluate_alias() {
+        let mut command = Cli::command();
+        let eval = command.find_subcommand_mut("eval").expect("eval command");
+        let replay = eval
+            .find_subcommand_mut("replay")
+            .expect("eval replay command");
+        let mut buffer = Vec::new();
+        replay.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("operator-facing alias for `replay evaluate`"));
+        assert!(help.contains("current SQL-only path"));
+        assert!(help.contains("--limit"));
+        assert!(help.contains("--fail-on-mismatch"));
+    }
+
+    #[test]
+    fn eval_golden_accepts_legacy_path_option_alias() {
+        let cli = Cli::parse_from([
+            "cli",
+            "eval",
+            "golden",
+            "--path",
+            "configs/evaluation/scenarios",
+            "--allow-blockers",
+        ]);
+
+        let Command::Eval {
+            target:
+                EvalCommand::Golden {
+                    scenario_path,
+                    allow_blockers,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected eval golden command");
+        };
+
+        assert_eq!(scenario_path, PathBuf::from("configs/evaluation/scenarios"));
+        assert!(allow_blockers);
+    }
+
+    #[test]
+    fn eval_text_formatters_use_operator_facing_command_names() {
+        let scenario_summary = cli::ReplayScenarioSummary {
+            scenarios: 0,
+            passed: 0,
+            blocked: 0,
+            blockers: 0,
+            warnings: 0,
+            pairwise_passed: 0,
+            pairwise_total: 0,
+            explanation_integrity_passed: 0,
+            explanation_integrity_total: 0,
+            cases: Vec::new(),
+        };
+        let evaluation_summary = cli::ReplayEvaluationSummary {
+            evaluated: 0,
+            matched: 0,
+            mismatched: 0,
+            failed: 0,
+            cases: Vec::new(),
+        };
+
+        assert!(format_eval_golden_summary(&scenario_summary).starts_with("eval golden completed:"));
+        assert!(format_replay_scenario_summary(&scenario_summary)
+            .starts_with("replay scenarios completed:"));
+        assert!(
+            format_eval_replay_summary(&evaluation_summary).starts_with("eval replay completed:")
+        );
+        assert!(format_replay_evaluation_summary(&evaluation_summary)
+            .starts_with("replay evaluation completed:"));
+    }
+
+    #[test]
     fn explanation_integrity_doctor_help_points_to_full_replay_gate() {
         let mut command = Cli::command();
         let doctor = command
@@ -1189,7 +1420,7 @@ mod tests {
 
         assert!(help.contains("reason-code integrity"));
         assert!(help.contains("explanation-template checks"));
-        assert!(help.contains("use `replay scenarios` for the full ranking correctness gate"));
+        assert!(help.contains("use `eval golden` or `replay scenarios`"));
         assert!(help.contains("doctor explanation-integrity --json"));
     }
 
@@ -1270,7 +1501,7 @@ mod tests {
         assert!(help.contains("context shape"));
         assert!(help.contains("scenario tags"));
         assert!(help.contains("candidate-count coverage"));
-        assert!(help.contains("use `replay scenarios` for ranking correctness"));
+        assert!(help.contains("use `eval golden` or `replay scenarios`"));
         assert!(help.contains("doctor context-coverage --json"));
         assert!(help.contains("--path configs/evaluation/scenarios"));
     }

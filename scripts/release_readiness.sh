@@ -49,7 +49,7 @@ Required local validation:
   cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
   cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
   cargo run -p crawler -- manifest lint
-  cargo run -p cli -- replay scenarios
+  cargo run -p cli -- eval golden
   just mvp-acceptance
   git diff --check
 
@@ -63,7 +63,7 @@ If just is unavailable:
   DATA_QUALITY_FAIL_ON_WARNING=true ./scripts/data_quality_doctor.sh
 
 CI evidence to review alongside local validation:
-  rust-quality (includes golden replay scenarios)
+  rust-quality (includes eval golden scenario gate)
   openapi-drift
   node-and-frontend
   rust-unit-tests
