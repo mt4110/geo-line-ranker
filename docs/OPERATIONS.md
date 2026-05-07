@@ -259,6 +259,22 @@ shape does not match the scenario context is a blocker. Use `eval golden` or
 candidate-count, and explanation checks; use `doctor context-coverage` when
 you need a compact operator-facing coverage inventory.
 
+Run the retrieval parity doctor when an operator needs DB-free evidence that
+full-mode candidate retrieval still uses the same pre-ranking ordering
+contract as the SQL-only candidate slice:
+
+```bash
+cargo run -p cli -- doctor retrieval-parity
+cargo run -p cli -- doctor retrieval-parity --json
+```
+
+This doctor checks the ordering contract used before final ranking: direct
+station first, then distance, walking minutes, school id, and station id. It
+does not require PostgreSQL or OpenSearch, and it is optional full-mode
+evidence rather than part of the public-MVP gate. Use the compatibility tests
+when you need to exercise the mock OpenSearch request/response path end to
+end.
+
 Run the profile-pack doctor when an operator needs a compact profile contract
 health summary rather than the authoring-oriented profile CLI:
 
@@ -667,7 +683,7 @@ Operational notes:
 - the command recalculates `popularity_snapshots` and `area_affinity_snapshots` from PostgreSQL using the current tracking config
 - recommendation cache is invalidated when Redis is configured
 - full mode also runs projection sync, so OpenSearch sees the updated popularity ordering without a separate command
-- full-mode candidate retrieval sorts direct-station candidates before same-line neighbors, then by school-station distance, walking minutes, school id, and station id to match the SQL-only candidate slice before ranking
+- full-mode candidate retrieval sorts direct-station candidates before same-line neighbors, then by school-station distance, walking minutes, school id, and station id to match the SQL-only candidate slice before ranking; `cargo run -p cli -- doctor retrieval-parity` captures the DB-free ordering-contract evidence
 - config-only tuning changes `profile_version`; keep `ALGORITHM_VERSION` for code-path changes rather than everyday weight nudges
 
 Useful inspection queries while tuning:

@@ -3,7 +3,7 @@ use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 use crate::{
     doctor::{
         ContextCoverageDoctorSummary, ExplanationIntegrityDoctorSummary, ProfilePackDoctorSummary,
-        RankingConfigDoctorSummary,
+        RankingConfigDoctorSummary, RetrievalParityDoctorSummary,
     },
     explain::{ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport},
     explanation_integrity::QualityCheckStatus,
@@ -528,6 +528,47 @@ pub fn format_context_coverage_doctor_summary(summary: &ContextCoverageDoctorSum
             format_order(&case.candidate_count_stages),
             format_context_shape(case.has_area_context, case.has_line_context, case.has_station_context),
             case.path.display()
+        ));
+    }
+
+    lines.join("\n")
+}
+
+pub fn format_retrieval_parity_doctor_summary(summary: &RetrievalParityDoctorSummary) -> String {
+    let mut lines = vec![format!(
+        "doctor retrieval-parity completed: cases={}, passed={}, failed={}, requires_database={}, requires_opensearch={}, public_mvp_gate={}",
+        summary.case_count,
+        summary.passed,
+        summary.failed,
+        summary.requires_database,
+        summary.requires_opensearch,
+        summary.public_mvp_gate
+    )];
+    lines.push(format!(
+        "ordering_contract: {}",
+        summary.ordering_contract.join(",")
+    ));
+    lines.push(format!(
+        "opensearch_sort_contract: {}",
+        summary
+            .opensearch_sort_contract
+            .iter()
+            .map(|field| format!("{}={}", field.field, field.order))
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
+
+    for case in &summary.cases {
+        lines.push(format!(
+            "  case_id={} status={} target_station_id={} limit={} expected={} actual={} input={} description={}",
+            case.id,
+            if case.passed { "passed" } else { "failed" },
+            case.target_station_id,
+            case.limit,
+            format_order(&case.expected_order),
+            format_order(&case.actual_order),
+            format_order(&case.input_order),
+            case.description
         ));
     }
 

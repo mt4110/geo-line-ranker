@@ -10,6 +10,24 @@ use serde_json::{json, Value};
 use storage::{CandidateProjectionSync, ProjectionSyncStats};
 use storage_postgres::{load_candidate_projection_rows, CandidateProjectionRow};
 
+const CANDIDATE_RETRIEVAL_ORDERING_CONTRACT: [&str; 5] = [
+    "direct_station",
+    "distance_meters",
+    "walking_minutes",
+    "school_id",
+    "station_id",
+];
+const CANDIDATE_RETRIEVAL_OPENSEARCH_SORT_CONTRACT: [(&str, &str); 5] = [
+    ("_score", "desc"),
+    ("distance_meters", "asc"),
+    ("walking_minutes", "asc"),
+    ("school_id", "asc"),
+    ("station_id", "asc"),
+];
+const DIRECT_STATION_CANDIDATE_BOOST: f64 = 3.0;
+const SAME_LINE_CANDIDATE_BOOST: f64 = 1.0;
+const NEARBY_OFF_LINE_CANDIDATE_BOOST: f64 = 0.5;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectionGeoPoint {
     pub lat: f64,
@@ -126,6 +144,136 @@ impl ProjectionDocument {
     }
 }
 
+pub fn candidate_retrieval_ordering_contract() -> &'static [&'static str] {
+    &CANDIDATE_RETRIEVAL_ORDERING_CONTRACT
+}
+
+pub fn candidate_retrieval_opensearch_sort_contract() -> &'static [(&'static str, &'static str)] {
+    &CANDIDATE_RETRIEVAL_OPENSEARCH_SORT_CONTRACT
+}
+
+pub fn sort_candidate_links_for_retrieval(
+    links: &mut [SchoolStationLink],
+    target_station_id: &str,
+) {
+    links.sort_by(|left, right| {
+        let left_is_not_direct = left.station_id != target_station_id;
+        let right_is_not_direct = right.station_id != target_station_id;
+        left_is_not_direct
+            .cmp(&right_is_not_direct)
+            .then_with(|| left.distance_meters.cmp(&right.distance_meters))
+            .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
+            .then_with(|| left.school_id.cmp(&right.school_id))
+            .then_with(|| left.station_id.cmp(&right.station_id))
+    });
+}
+
+fn candidate_retrieval_opensearch_sort() -> Value {
+    Value::Array(
+        CANDIDATE_RETRIEVAL_OPENSEARCH_SORT_CONTRACT
+            .iter()
+            .map(|(field, order)| {
+                let mut sort_entry = serde_json::Map::new();
+                sort_entry.insert((*field).to_string(), json!({ "order": *order }));
+                Value::Object(sort_entry)
+            })
+            .collect(),
+    )
+}
+
+fn candidate_retrieval_search_query(
+    target_station: &Station,
+    neighbor_distance_cap_meters: f64,
+    candidate_limit: usize,
+) -> Value {
+    json!({
+        "size": candidate_limit.clamp(1, 10_000),
+        "sort": candidate_retrieval_opensearch_sort(),
+        "query": {
+            "bool": {
+                "should": [
+                    {
+                        "constant_score": {
+                            "filter": {
+                                "term": {
+                                    "station_id": {
+                                        "value": target_station.id.as_str()
+                                    }
+                                }
+                            },
+                            "boost": DIRECT_STATION_CANDIDATE_BOOST
+                        }
+                    },
+                    {
+                        "constant_score": {
+                            "filter": {
+                                "bool": {
+                                    "must_not": [
+                                        {
+                                            "term": {
+                                                "station_id": {
+                                                    "value": target_station.id.as_str()
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "filter": [
+                                        {
+                                            "term": {
+                                                "line_name": {
+                                                    "value": target_station.line_name.as_str()
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            "boost": SAME_LINE_CANDIDATE_BOOST
+                        }
+                    },
+                    {
+                        "constant_score": {
+                            "filter": {
+                                "bool": {
+                                    "must_not": [
+                                        {
+                                            "term": {
+                                                "station_id": {
+                                                    "value": target_station.id.as_str()
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "term": {
+                                                "line_name": {
+                                                    "value": target_station.line_name.as_str()
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "filter": [
+                                        {
+                                            "geo_distance": {
+                                                "distance": format!("{neighbor_distance_cap_meters}m"),
+                                                "station_location": {
+                                                    "lat": target_station.latitude,
+                                                    "lon": target_station.longitude
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            "boost": NEARBY_OFF_LINE_CANDIDATE_BOOST
+                        }
+                    }
+                ],
+                "minimum_should_match": 1
+            }
+        }
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct OpenSearchStore {
     client: Client,
@@ -221,98 +369,11 @@ impl OpenSearchStore {
     ) -> Result<Vec<SchoolStationLink>> {
         self.ensure_index().await?;
 
-        let query = json!({
-            "size": candidate_limit.clamp(1, 10_000),
-            "sort": [
-                { "_score": { "order": "desc" } },
-                { "distance_meters": { "order": "asc" } },
-                { "walking_minutes": { "order": "asc" } },
-                { "school_id": { "order": "asc" } },
-                { "station_id": { "order": "asc" } }
-            ],
-            "query": {
-                "bool": {
-                    "should": [
-                        {
-                            "constant_score": {
-                                "filter": {
-                                    "term": {
-                                        "station_id": {
-                                            "value": target_station.id.as_str()
-                                        }
-                                    }
-                                },
-                                "boost": 3.0
-                            }
-                        },
-                        {
-                            "constant_score": {
-                                "filter": {
-                                    "bool": {
-                                        "must_not": [
-                                            {
-                                                "term": {
-                                                    "station_id": {
-                                                        "value": target_station.id.as_str()
-                                                    }
-                                                }
-                                            }
-                                        ],
-                                        "filter": [
-                                            {
-                                                "term": {
-                                                    "line_name": {
-                                                        "value": target_station.line_name.as_str()
-                                                    }
-                                                }
-                                            }
-                                        ]
-                                    }
-                                },
-                                "boost": 1.0
-                            }
-                        },
-                        {
-                            "constant_score": {
-                                "filter": {
-                                    "bool": {
-                                        "must_not": [
-                                            {
-                                                "term": {
-                                                    "station_id": {
-                                                        "value": target_station.id.as_str()
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                "term": {
-                                                    "line_name": {
-                                                        "value": target_station.line_name.as_str()
-                                                    }
-                                                }
-                                            }
-                                        ],
-                                        "filter": [
-                                            {
-                                                "geo_distance": {
-                                                    "distance": format!("{neighbor_distance_cap_meters}m"),
-                                                    "station_location": {
-                                                        "lat": target_station.latitude,
-                                                        "lon": target_station.longitude
-                                                    }
-                                                }
-                                            }
-                                        ]
-                                    }
-                                },
-                                "boost": 0.5
-                            }
-                        }
-                    ],
-                    "minimum_should_match": 1
-                }
-            }
-        });
+        let query = candidate_retrieval_search_query(
+            target_station,
+            neighbor_distance_cap_meters,
+            candidate_limit,
+        );
 
         let response = self
             .send_json(
@@ -372,16 +433,7 @@ impl OpenSearchStore {
             });
         }
 
-        links.sort_by(|left, right| {
-            let left_is_not_direct = left.station_id != target_station.id;
-            let right_is_not_direct = right.station_id != target_station.id;
-            left_is_not_direct
-                .cmp(&right_is_not_direct)
-                .then_with(|| left.distance_meters.cmp(&right.distance_meters))
-                .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
-                .then_with(|| left.school_id.cmp(&right.school_id))
-                .then_with(|| left.station_id.cmp(&right.station_id))
-        });
+        sort_candidate_links_for_retrieval(&mut links, &target_station.id);
         links.truncate(candidate_limit.clamp(1, 10_000));
 
         Ok(links)
@@ -699,5 +751,124 @@ impl ProjectionSyncService {
 impl CandidateProjectionSync for ProjectionSyncService {
     async fn sync_projection(&self) -> Result<ProjectionSyncStats> {
         self.sync_projection_once().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retrieval_sort_contract_keeps_direct_station_first_then_tiebreakers() {
+        let mut links = vec![
+            school_station_link("school_b", "st_b", 8, 120),
+            school_station_link("school_a", "st_target", 30, 300),
+            school_station_link("school_a", "st_a", 8, 120),
+            school_station_link("school_a", "st_c", 6, 120),
+            school_station_link("school_c", "st_c", 5, 90),
+        ];
+
+        sort_candidate_links_for_retrieval(&mut links, "st_target");
+
+        assert_eq!(
+            links
+                .iter()
+                .map(|link| format!("{}@{}", link.school_id, link.station_id))
+                .collect::<Vec<_>>(),
+            vec![
+                "school_a@st_target",
+                "school_c@st_c",
+                "school_a@st_c",
+                "school_a@st_a",
+                "school_b@st_b"
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_search_query_keeps_stage_boost_and_sort_contract() {
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "JR Yamanote Line".to_string(),
+            line_id: None,
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+
+        let query = candidate_retrieval_search_query(&target_station, 500.0, 1);
+
+        assert_eq!(u64_at(&query, "/size"), 1);
+        assert_eq!(str_at(&query, "/sort/0/_score/order"), "desc");
+        assert_eq!(str_at(&query, "/sort/1/distance_meters/order"), "asc");
+        assert_eq!(str_at(&query, "/sort/2/walking_minutes/order"), "asc");
+        assert_eq!(str_at(&query, "/sort/3/school_id/order"), "asc");
+        assert_eq!(str_at(&query, "/sort/4/station_id/order"), "asc");
+        assert_eq!(
+            str_at(
+                &query,
+                "/query/bool/should/0/constant_score/filter/term/station_id/value"
+            ),
+            "st_target"
+        );
+        let direct_station_boost = f64_at(&query, "/query/bool/should/0/constant_score/boost");
+        assert_eq!(direct_station_boost, 3.0);
+        assert_eq!(
+            str_at(
+                &query,
+                "/query/bool/should/1/constant_score/filter/bool/filter/0/term/line_name/value"
+            ),
+            "JR Yamanote Line"
+        );
+        let same_line_boost = f64_at(&query, "/query/bool/should/1/constant_score/boost");
+        assert_eq!(same_line_boost, 1.0);
+        assert_eq!(
+            str_at(
+                &query,
+                "/query/bool/should/2/constant_score/filter/bool/filter/0/geo_distance/distance"
+            ),
+            "500m"
+        );
+        let nearby_off_line_boost = f64_at(&query, "/query/bool/should/2/constant_score/boost");
+        assert_eq!(nearby_off_line_boost, 0.5);
+        assert!(direct_station_boost > same_line_boost);
+        assert!(same_line_boost > nearby_off_line_boost);
+    }
+
+    fn school_station_link(
+        school_id: &str,
+        station_id: &str,
+        walking_minutes: u16,
+        distance_meters: u32,
+    ) -> SchoolStationLink {
+        SchoolStationLink {
+            school_id: school_id.to_string(),
+            station_id: station_id.to_string(),
+            walking_minutes,
+            distance_meters,
+            hop_distance: 1,
+            line_name: "JR Yamanote Line".to_string(),
+        }
+    }
+
+    fn str_at<'a>(value: &'a Value, pointer: &str) -> &'a str {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("missing string at {pointer}"))
+    }
+
+    fn f64_at(value: &Value, pointer: &str) -> f64 {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_f64)
+            .unwrap_or_else(|| panic!("missing f64 at {pointer}"))
+    }
+
+    fn u64_at(value: &Value, pointer: &str) -> u64 {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing u64 at {pointer}"))
     }
 }

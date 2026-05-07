@@ -9,7 +9,12 @@ use config::{
     RankingConfigLintSummary,
 };
 use context::ContextSource;
+use domain::SchoolStationLink;
 use serde::Serialize;
+use storage_opensearch::{
+    candidate_retrieval_opensearch_sort_contract, candidate_retrieval_ordering_contract,
+    sort_candidate_links_for_retrieval,
+};
 
 use crate::{
     explanation_integrity::{QualityCheckStatus, QualitySeverity},
@@ -206,6 +211,43 @@ pub struct ContextCoverageDoctorCase {
     pub has_station_context: bool,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RetrievalParityDoctorSummary {
+    pub case_count: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub requires_database: bool,
+    pub requires_opensearch: bool,
+    pub public_mvp_gate: bool,
+    pub ordering_contract: Vec<String>,
+    pub opensearch_sort_contract: Vec<RetrievalParitySortField>,
+    pub cases: Vec<RetrievalParityDoctorCase>,
+}
+
+impl RetrievalParityDoctorSummary {
+    pub fn has_blockers(&self) -> bool {
+        self.failed > 0
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RetrievalParitySortField {
+    pub field: String,
+    pub order: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RetrievalParityDoctorCase {
+    pub id: String,
+    pub description: String,
+    pub target_station_id: String,
+    pub limit: usize,
+    pub input_order: Vec<String>,
+    pub expected_order: Vec<String>,
+    pub actual_order: Vec<String>,
+    pub passed: bool,
+}
+
 pub fn run_explanation_integrity_doctor(
     scenario_path: impl AsRef<Path>,
     ranking_config_dir: impl AsRef<Path>,
@@ -287,6 +329,36 @@ pub fn run_context_coverage_doctor(
 ) -> Result<ContextCoverageDoctorSummary> {
     let scenarios = load_replay_scenarios(scenario_path)?;
     Ok(context_coverage_summary_from_scenarios(scenarios))
+}
+
+pub fn run_retrieval_parity_doctor() -> RetrievalParityDoctorSummary {
+    let cases = retrieval_parity_cases()
+        .into_iter()
+        .map(run_retrieval_parity_case)
+        .collect::<Vec<_>>();
+    let passed = cases.iter().filter(|case| case.passed).count();
+    let failed = cases.len() - passed;
+
+    RetrievalParityDoctorSummary {
+        case_count: cases.len(),
+        passed,
+        failed,
+        requires_database: false,
+        requires_opensearch: false,
+        public_mvp_gate: false,
+        ordering_contract: candidate_retrieval_ordering_contract()
+            .iter()
+            .map(|field| (*field).to_string())
+            .collect(),
+        opensearch_sort_contract: candidate_retrieval_opensearch_sort_contract()
+            .iter()
+            .map(|(field, order)| RetrievalParitySortField {
+                field: (*field).to_string(),
+                order: (*order).to_string(),
+            })
+            .collect(),
+        cases,
+    }
 }
 
 fn context_coverage_summary_from_scenarios(
@@ -518,6 +590,144 @@ fn context_shape_label(shape: &[String]) -> String {
     }
 }
 
+struct RetrievalParityCaseInput {
+    id: &'static str,
+    description: &'static str,
+    target_station_id: &'static str,
+    limit: usize,
+    input_links: Vec<SchoolStationLink>,
+    expected_order: Vec<&'static str>,
+}
+
+fn retrieval_parity_cases() -> Vec<RetrievalParityCaseInput> {
+    vec![
+        RetrievalParityCaseInput {
+            id: "direct_station_first",
+            description: "direct station candidate stays ahead of a closer neighbor",
+            target_station_id: "st_target",
+            limit: 2,
+            input_links: vec![
+                retrieval_link("school_neighbor", "st_neighbor", 2, 20),
+                retrieval_link("school_direct", "st_target", 30, 300),
+            ],
+            expected_order: vec!["school_direct@st_target", "school_neighbor@st_neighbor"],
+        },
+        RetrievalParityCaseInput {
+            id: "distance_meters_tiebreaker",
+            description: "non-direct candidates sort by distance before walking minutes",
+            target_station_id: "st_target",
+            limit: 2,
+            input_links: vec![
+                retrieval_link("school_far", "st_far", 1, 200),
+                retrieval_link("school_near", "st_near", 20, 100),
+            ],
+            expected_order: vec!["school_near@st_near", "school_far@st_far"],
+        },
+        RetrievalParityCaseInput {
+            id: "walking_minutes_tiebreaker",
+            description: "equal-distance candidates sort by walking minutes",
+            target_station_id: "st_target",
+            limit: 2,
+            input_links: vec![
+                retrieval_link("school_slow", "st_slow", 9, 120),
+                retrieval_link("school_fast", "st_fast", 4, 120),
+            ],
+            expected_order: vec!["school_fast@st_fast", "school_slow@st_slow"],
+        },
+        RetrievalParityCaseInput {
+            id: "school_id_tiebreaker",
+            description: "equal-distance and equal-walk candidates sort by school id",
+            target_station_id: "st_target",
+            limit: 2,
+            input_links: vec![
+                retrieval_link("school_b", "st_same", 8, 120),
+                retrieval_link("school_a", "st_same", 8, 120),
+            ],
+            expected_order: vec!["school_a@st_same", "school_b@st_same"],
+        },
+        RetrievalParityCaseInput {
+            id: "station_id_tiebreaker",
+            description: "same-school ties sort by station id",
+            target_station_id: "st_target",
+            limit: 2,
+            input_links: vec![
+                retrieval_link("school_a", "st_b", 8, 120),
+                retrieval_link("school_a", "st_a", 8, 120),
+            ],
+            expected_order: vec!["school_a@st_a", "school_a@st_b"],
+        },
+        RetrievalParityCaseInput {
+            id: "limit_after_ordering",
+            description: "candidate limit is applied after contract ordering",
+            target_station_id: "st_target",
+            limit: 1,
+            input_links: vec![
+                retrieval_link("school_neighbor", "st_neighbor", 1, 10),
+                retrieval_link("school_direct", "st_target", 30, 300),
+            ],
+            expected_order: vec!["school_direct@st_target"],
+        },
+    ]
+}
+
+fn run_retrieval_parity_case(input: RetrievalParityCaseInput) -> RetrievalParityDoctorCase {
+    let RetrievalParityCaseInput {
+        id,
+        description,
+        target_station_id,
+        limit,
+        input_links,
+        expected_order,
+    } = input;
+    let input_order = input_links
+        .iter()
+        .map(candidate_link_key)
+        .collect::<Vec<_>>();
+    let mut actual_links = input_links;
+    sort_candidate_links_for_retrieval(&mut actual_links, target_station_id);
+    let effective_limit = limit.clamp(1, 10_000);
+    let actual_order = actual_links
+        .iter()
+        .take(effective_limit)
+        .map(candidate_link_key)
+        .collect::<Vec<_>>();
+    let expected_order = expected_order
+        .into_iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    RetrievalParityDoctorCase {
+        id: id.to_string(),
+        description: description.to_string(),
+        target_station_id: target_station_id.to_string(),
+        limit,
+        input_order,
+        passed: actual_order == expected_order,
+        expected_order,
+        actual_order,
+    }
+}
+
+fn retrieval_link(
+    school_id: &str,
+    station_id: &str,
+    walking_minutes: u16,
+    distance_meters: u32,
+) -> SchoolStationLink {
+    SchoolStationLink {
+        school_id: school_id.to_string(),
+        station_id: station_id.to_string(),
+        walking_minutes,
+        distance_meters,
+        hop_distance: 1,
+        line_name: "JR Yamanote Line".to_string(),
+    }
+}
+
+fn candidate_link_key(link: &SchoolStationLink) -> String {
+    format!("{}@{}", link.school_id, link.station_id)
+}
+
 fn context_shapes_label(shapes: &[Vec<String>]) -> String {
     shapes
         .iter()
@@ -704,6 +914,7 @@ mod tests {
     use super::{
         explanation_integrity_summary_from_replay, ranking_config_doctor_summary_from_lint,
         run_context_coverage_doctor, run_explanation_integrity_doctor, run_profile_pack_doctor,
+        run_retrieval_parity_doctor,
     };
     use crate::{
         explanation_integrity::{QualityCheckStatus, QualitySeverity},
@@ -876,6 +1087,66 @@ mod tests {
             .is_some_and(|count| *count > 0));
         assert_eq!(summary.scenarios_with_candidate_counts, summary.scenarios);
         assert!(summary.candidate_count_expectations >= summary.scenarios);
+    }
+
+    #[test]
+    fn retrieval_parity_doctor_passes_candidate_ordering_contract() {
+        let summary = run_retrieval_parity_doctor();
+
+        assert_eq!(summary.case_count, 6);
+        assert_eq!(summary.passed, summary.case_count);
+        assert_eq!(summary.failed, 0);
+        assert!(!summary.has_blockers());
+        assert!(!summary.requires_database);
+        assert!(!summary.requires_opensearch);
+        assert!(!summary.public_mvp_gate);
+        assert_eq!(
+            summary.ordering_contract,
+            vec![
+                "direct_station".to_string(),
+                "distance_meters".to_string(),
+                "walking_minutes".to_string(),
+                "school_id".to_string(),
+                "station_id".to_string()
+            ]
+        );
+        assert_eq!(summary.opensearch_sort_contract[0].field, "_score");
+        assert_eq!(summary.opensearch_sort_contract[0].order, "desc");
+
+        let direct_case = summary
+            .cases
+            .iter()
+            .find(|case| case.id == "direct_station_first")
+            .expect("direct station case");
+        assert_eq!(
+            direct_case.actual_order,
+            vec![
+                "school_direct@st_target".to_string(),
+                "school_neighbor@st_neighbor".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn retrieval_parity_case_clamps_candidate_limit_like_runtime() {
+        let case = super::run_retrieval_parity_case(super::RetrievalParityCaseInput {
+            id: "limit_zero_clamp",
+            description: "zero candidate limit uses the runtime minimum",
+            target_station_id: "st_target",
+            limit: 0,
+            input_links: vec![
+                super::retrieval_link("school_neighbor", "st_neighbor", 1, 10),
+                super::retrieval_link("school_direct", "st_target", 30, 300),
+            ],
+            expected_order: vec!["school_direct@st_target"],
+        });
+
+        assert!(case.passed);
+        assert_eq!(case.limit, 0);
+        assert_eq!(
+            case.actual_order,
+            vec!["school_direct@st_target".to_string()]
+        );
     }
 
     #[test]

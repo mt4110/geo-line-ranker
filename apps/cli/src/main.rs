@@ -12,13 +12,14 @@ use cli::{
     format_job_enqueue_summary, format_job_inspection, format_job_list,
     format_job_mutation_summary, format_profile_pack_doctor_summary,
     format_ranking_config_doctor_summary, format_replay_evaluation_summary,
-    format_replay_scenario_summary, format_snapshot_refresh_summary, format_summary,
-    generate_demo_jp_fixture, ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
-    run_context_inspect, run_derive_school_station_links, run_event_csv_import, run_explain_trace,
+    format_replay_scenario_summary, format_retrieval_parity_doctor_summary,
+    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture,
+    ranking_config_doctor_summary_from_lint, run_context_coverage_doctor, run_context_inspect,
+    run_derive_school_station_links, run_event_csv_import, run_explain_trace,
     run_explanation_integrity_doctor, run_fixture_doctor, run_import_command, run_job_due,
     run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_profile_pack_doctor,
-    run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
-    ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
+    run_replay_evaluate, run_replay_scenarios, run_retrieval_parity_doctor, run_snapshot_refresh,
+    ContextInspectInput, ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -350,6 +351,15 @@ enum DoctorCommand {
             help = "Scenario YAML file or directory to use as doctor input"
         )]
         path: PathBuf,
+        #[arg(long, help = "Print the doctor report as JSON")]
+        json: bool,
+    },
+    #[command(
+        name = "retrieval-parity",
+        about = "Run the DB-free retrieval parity doctor for candidate-slice ordering",
+        long_about = "Run the DB-free retrieval parity doctor for candidate-slice ordering. This checks that the full-mode OpenSearch candidate retrieval contract keeps the same pre-ranking ordering as the SQL-only candidate slice: direct station first, then distance, walking minutes, school id, and station id. It does not require PostgreSQL or OpenSearch, and it remains optional full-mode evidence rather than part of the public MVP gate.\n\nExamples:\n  geo-line-ranker-cli doctor retrieval-parity\n  geo-line-ranker-cli doctor retrieval-parity --json"
+    )]
+    RetrievalParity {
         #[arg(long, help = "Print the doctor report as JSON")]
         json: bool,
     },
@@ -730,6 +740,20 @@ async fn main() -> anyhow::Result<()> {
                         summary
                             .blocker_message()
                             .unwrap_or_else(|| "unknown".to_string())
+                    );
+                }
+            }
+            DoctorCommand::RetrievalParity { json } => {
+                let summary = run_retrieval_parity_doctor();
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_retrieval_parity_doctor_summary(&summary));
+                }
+                if summary.has_blockers() {
+                    anyhow::bail!(
+                        "doctor retrieval-parity had blocker checks={}",
+                        summary.failed
                     );
                 }
             }
@@ -1504,6 +1528,62 @@ mod tests {
         assert!(help.contains("use `eval golden` or `replay scenarios`"));
         assert!(help.contains("doctor context-coverage --json"));
         assert!(help.contains("--path configs/evaluation/scenarios"));
+    }
+
+    #[test]
+    fn retrieval_parity_doctor_help_points_to_full_mode_ordering_contract() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let retrieval_parity = doctor
+            .find_subcommand_mut("retrieval-parity")
+            .expect("doctor retrieval-parity command");
+        let mut buffer = Vec::new();
+        retrieval_parity
+            .write_long_help(&mut buffer)
+            .expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("full-mode OpenSearch candidate retrieval contract"));
+        assert!(help.contains("SQL-only candidate slice"));
+        assert!(help.contains("direct station first"));
+        assert!(help.contains("does not require PostgreSQL or OpenSearch"));
+        assert!(help.contains("public MVP gate"));
+        assert!(help.contains("doctor retrieval-parity --json"));
+    }
+
+    #[test]
+    fn doctor_help_lists_retrieval_parity_doctor() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let mut buffer = Vec::new();
+        doctor.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("retrieval-parity"));
+        assert!(help.contains("Run the DB-free retrieval parity doctor"));
+    }
+
+    #[test]
+    fn retrieval_parity_doctor_summary_reports_contract_cases() {
+        let summary = cli::run_retrieval_parity_doctor();
+        let rendered = format_retrieval_parity_doctor_summary(&summary);
+
+        assert!(rendered.contains("doctor retrieval-parity completed: cases=6"));
+        assert!(rendered.contains("passed=6"));
+        assert!(rendered.contains("failed=0"));
+        assert!(rendered.contains("requires_database=false"));
+        assert!(rendered.contains("requires_opensearch=false"));
+        assert!(rendered.contains("public_mvp_gate=false"));
+        assert!(
+            rendered.contains("ordering_contract: direct_station,distance_meters,walking_minutes")
+        );
+        assert!(rendered.contains("opensearch_sort_contract: _score=desc"));
+        assert!(rendered.contains("case_id=direct_station_first status=passed"));
+        assert!(rendered.contains("case_id=limit_after_ordering status=passed"));
     }
 
     #[test]
