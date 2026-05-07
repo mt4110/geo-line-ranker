@@ -32,10 +32,10 @@ pub use fixtures::{
     FixtureFileManifest, FixtureManifestKind, FixtureSetManifest,
 };
 pub use formatting::{
-    format_context_coverage_doctor_summary, format_explain_trace_report,
-    format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
-    format_job_enqueue_summary, format_job_inspection, format_job_list,
-    format_job_mutation_summary, format_profile_pack_doctor_summary,
+    format_context_coverage_doctor_summary, format_eval_golden_summary, format_eval_replay_summary,
+    format_explain_trace_report, format_explanation_integrity_doctor_summary,
+    format_fixture_doctor_summary, format_job_enqueue_summary, format_job_inspection,
+    format_job_list, format_job_mutation_summary, format_profile_pack_doctor_summary,
     format_ranking_config_doctor_summary, format_replay_evaluation_summary,
     format_replay_scenario_summary, format_snapshot_refresh_summary, format_summary,
 };

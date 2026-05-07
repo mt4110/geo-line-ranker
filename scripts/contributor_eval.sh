@@ -11,10 +11,10 @@ run() {
 }
 
 run python3 scripts/local_review_eval.py --self-test
-run cargo run -p cli -- replay scenarios
+run cargo run -p cli -- eval golden
 
 if [[ "${RUN_REPLAY_EVAL:-0}" == "1" ]]; then
-  run cargo run -p cli -- replay evaluate --limit "${REPLAY_EVAL_LIMIT:-20}"
+  run cargo run -p cli -- eval replay --limit "${REPLAY_EVAL_LIMIT:-20}"
 else
   cat <<'EOF'
 [eval] replay evaluation skipped by default

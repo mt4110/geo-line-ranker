@@ -167,14 +167,25 @@ text.
 
 ## Replay evaluation
 
-Replay the committed golden scenarios without requiring PostgreSQL traces:
+Run the operator-facing golden scenario evaluation without requiring
+PostgreSQL traces:
+
+```bash
+cargo run -p cli -- eval golden
+```
+
+`eval golden` and `replay scenarios` use the same deterministic runner, checks,
+and JSON report shape. Prefer `eval golden` for release, incident, and handoff
+evidence because it matches the v0.3.1 tooling vocabulary; keep
+`replay scenarios` for compatibility with existing scripts and contributor
+muscle memory:
 
 ```bash
 cargo run -p cli -- replay scenarios
 ```
 
-The golden scenario report is the first DB-free quality check for ranking correctness.
-It prints:
+The golden scenario report is the first DB-free quality check for ranking
+correctness. It prints:
 
 - `scenarios`, `passed`, and `blocked`: scenario-level health.
 - `blockers`: failed checks that block a release candidate.
@@ -201,11 +212,12 @@ cargo run -p cli -- doctor explanation-integrity
 ```
 
 This doctor reuses the same committed replay scenario pack and ranking config
-resolution as `replay scenarios`, but reports only `explanation_*` checks,
-including reason integrity and explanation template checks. A clean doctor
-result means explanation labels, reason codes, and fallback-stage wording are
-consistent for the scenario pack. It does not replace `replay scenarios`; it
-intentionally does not prove ordering, pairwise, or candidate-count correctness.
+resolution as `eval golden` and `replay scenarios`, but reports only
+`explanation_*` checks, including reason integrity and explanation template
+checks. A clean doctor result means explanation labels, reason codes, and
+fallback-stage wording are consistent for the scenario pack. It does not
+replace the full golden replay gate; it intentionally does not prove ordering,
+pairwise, or candidate-count correctness.
 Use `--json` for evidence capture and `--allow-blockers` only for local
 investigation.
 
@@ -242,10 +254,10 @@ scenario tags such as `area_context` and `line_context`, expected
 fallback-stage coverage, and declared `candidate_counts` coverage. The minimum
 required context sources are `request_area`, `request_line`, and
 `default_safe_context`; missing coverage or a context source whose declared
-shape does not match the scenario context is a blocker. Use `replay scenarios`
-when you need ranking correctness, ordering, pairwise, candidate-count, and
-explanation checks; use `doctor context-coverage` when you need a compact
-operator-facing coverage inventory.
+shape does not match the scenario context is a blocker. Use `eval golden` or
+`replay scenarios` when you need ranking correctness, ordering, pairwise,
+candidate-count, and explanation checks; use `doctor context-coverage` when
+you need a compact operator-facing coverage inventory.
 
 Run the profile-pack doctor when an operator needs a compact profile contract
 health summary rather than the authoring-oriented profile CLI:
@@ -268,12 +280,21 @@ Replay recent persisted recommendation traces against the current SQL-only
 ranking path:
 
 ```bash
-cargo run -p cli -- replay evaluate --limit 20
+cargo run -p cli -- eval replay --limit 20
 ```
 
 Fail the command when any trace differs from the current deterministic output:
 
 ```bash
+cargo run -p cli -- eval replay --limit 20 --fail-on-mismatch
+```
+
+`eval replay` and `replay evaluate` use the same persisted trace replay runner,
+checks, and JSON report shape. Prefer `eval replay` in operator-facing
+runbooks, and keep `replay evaluate` for existing scripts:
+
+```bash
+cargo run -p cli -- replay evaluate --limit 20
 cargo run -p cli -- replay evaluate --limit 20 --fail-on-mismatch
 ```
 

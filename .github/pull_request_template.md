@@ -29,7 +29,7 @@ This PR template is a review aid, not a new acceptance gate.
 - [ ] `cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal`
 - [ ] `cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp`
 - [ ] `cargo run -p crawler -- manifest lint`
-- [ ] `cargo run -p cli -- replay scenarios`
+- [ ] `cargo run -p cli -- eval golden`
 - [ ] `just mvp-acceptance`
 - [ ] `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
 - [ ] `git diff --check`

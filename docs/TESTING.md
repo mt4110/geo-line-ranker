@@ -13,7 +13,7 @@ cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
-cargo run -p cli -- replay scenarios
+cargo run -p cli -- eval golden
 cargo run -p cli -- doctor ranking-config
 cargo run -p cli -- doctor context-coverage
 ```
@@ -91,9 +91,11 @@ source manifest lint, the default fixture doctor, crawler manifest lint, and
 contributor tooling, not as a release gate expansion.
 
 `just eval` runs the offline local review evaluation self-test and the
-committed golden replay scenarios. After the database has recommendation
-traces, `RUN_REPLAY_EVAL=1 just eval` also runs
-`cargo run -p cli -- replay evaluate --limit 20`.
+committed golden replay scenarios. `cargo run -p cli -- eval golden` is the
+operator-facing CLI name for the same DB-free gate, while
+`cargo run -p cli -- replay scenarios` remains supported for compatibility.
+After the database has recommendation traces, `RUN_REPLAY_EVAL=1 just eval`
+also runs `cargo run -p cli -- eval replay --limit 20`.
 
 `just ts-sdk-check` installs the locked `packages/ts-sdk` dependencies with
 `npm ci` and runs the TypeScript SDK build.
@@ -125,7 +127,7 @@ RUST_TEST_THREADS=1 cargo test --workspace
 Pull request CI keeps the static checks and test execution separate:
 
 - `rust-quality`: formatting, clippy, config lint, manifest lint, fixture
-  doctor checks, and golden replay scenarios for the full workspace.
+  doctor checks, and the `eval golden` scenario gate for the full workspace.
 - `rust-unit-tests`: DB-free packages and the mock OpenSearch compatibility
   tests.
 - `rust-postgres-tests`: PostgreSQL/Redis-backed shards for `api`, `cli`,
@@ -180,7 +182,7 @@ cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
-cargo run -p cli -- replay scenarios
+cargo run -p cli -- eval golden
 cargo run -p cli -- doctor ranking-config
 cargo run -p cli -- doctor explanation-integrity
 cargo run -p cli -- doctor context-coverage
@@ -202,15 +204,17 @@ not an additional acceptance-gate case. Run it with
 fail the evidence step. It does not add live crawler, full mode, OpenSearch, or
 managed infrastructure to the release gate.
 
-`cargo run -p cli -- replay scenarios` is the DB-free golden quality check for
-ranking correctness. It replays the committed scenario pack under
-`configs/evaluation/scenarios`, checks fallback stage, expected order,
-pairwise ordering, optional `candidate_counts` stage assertions when declared,
+`cargo run -p cli -- eval golden` is the operator-facing DB-free golden quality
+check for ranking correctness. It replays the committed scenario pack under
+`configs/evaluation/scenarios`, checks fallback stage, expected order, pairwise
+ordering, optional `candidate_counts` stage assertions when declared,
 reason-code integrity, and explanation template consistency, and exits non-zero
 when any blocker fails. Use `--json` when capturing a release candidate
 artifact, and `--allow-blockers` only for report-only investigation. Use
-`--ranking-config-dir` and `--algorithm-version` for explicit local what-if
-checks without changing environment variables.
+`--scenario-path`, `--ranking-config-dir`, and `--algorithm-version` for
+explicit local what-if checks without changing environment variables.
+`cargo run -p cli -- replay scenarios` remains supported and uses the same
+runner; its scenario path flag is `--path`.
 
 `cargo run -p cli -- doctor ranking-config` is the Quality doctor v2 slice for
 ranking config contract health. It is DB-free and reuses `config lint` loading
@@ -227,10 +231,10 @@ scenario pack and ranking config resolution, then reports only
 `explanation_*` checks, including reason integrity and explanation template
 checks. Use it when a change touches reason-code emission, public explanation
 wording, or fallback stage templates. It is useful release evidence, but it is
-not a substitute for `replay scenarios`; ordering, pairwise, and candidate-count
-regressions belong to the full replay gate. The command supports `--json`,
-`--ranking-config-dir`, `--algorithm-version`, and `--allow-blockers` with the
-same intent as `replay scenarios`.
+not a substitute for `eval golden` or `replay scenarios`; ordering, pairwise,
+and candidate-count regressions belong to the full replay gate. The command
+supports `--json`, `--ranking-config-dir`, `--algorithm-version`, and
+`--allow-blockers` with the same intent as the full replay gate.
 
 `cargo run -p cli -- doctor context-coverage` is the Quality doctor v2 slice
 for replay scenario coverage. It is DB-free and reads the committed scenario
@@ -239,9 +243,9 @@ tags, expected fallback stages, declared `candidate_counts` stages, and context
 source-to-shape mismatches. Missing coverage for `request_area`, `request_line`,
 or `default_safe_context` is a blocker, as is a scenario whose declared context
 source does not match its context shape. Use `--json` when capturing evidence
-artifacts. This doctor is not a substitute for `replay scenarios`; ranking
-output, pairwise ordering, candidate-count correctness, and explanation
-integrity still belong to the full replay gate.
+artifacts. This doctor is not a substitute for `eval golden` or
+`replay scenarios`; ranking output, pairwise ordering, candidate-count
+correctness, and explanation integrity still belong to the full replay gate.
 
 `cargo run -p cli -- doctor profile-pack` is the Quality doctor v2 slice for
 profile-pack health. It is DB-free and reuses the profile manifest, reason
@@ -259,14 +263,14 @@ cargo run -p cli -- explain trace --id <trace_id>
 cargo run -p cli -- explain trace --id <trace_id> --json
 ```
 
-This command is not a replacement for `replay scenarios`. It is a DB-backed
-debugging view for one real trace: request, response fallback stage, item order,
-reason codes, trace payload context/candidate retrieval fields, and explanation
-integrity checks. The report shows whether `user_id` was present, but does not
-print the raw value. A missing id fails the command. Old or malformed payloads
-and integrity problems are surfaced as `status=warning`, failed checks, or
-`payload_shape=legacy_or_invalid` so they can be attached to release/debug
-evidence without changing the ranking formula.
+This command is not a replacement for `eval golden` or `replay scenarios`. It
+is a DB-backed debugging view for one real trace: request, response fallback
+stage, item order, reason codes, trace payload context/candidate retrieval
+fields, and explanation integrity checks. The report shows whether `user_id`
+was present, but does not print the raw value. A missing id fails the command.
+Old or malformed payloads and integrity problems are surfaced as
+`status=warning`, failed checks, or `payload_shape=legacy_or_invalid` so they
+can be attached to release/debug evidence without changing the ranking formula.
 
 For data quality review changes, run the read-only doctor against a
 bootstrapped PostgreSQL database:
