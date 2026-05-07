@@ -209,6 +209,23 @@ intentionally does not prove ordering, pairwise, or candidate-count correctness.
 Use `--json` for evidence capture and `--allow-blockers` only for local
 investigation.
 
+Run the profile-pack doctor when an operator needs a compact profile contract
+health summary rather than the authoring-oriented profile CLI:
+
+```bash
+cargo run -p cli -- doctor profile-pack
+cargo run -p cli -- doctor profile-pack --json
+```
+
+This doctor reuses the same profile pack validation path as
+`cargo run -p cli -- profile validate`: profile manifests, reason catalogs,
+ranking config references, fixture references, source manifest references,
+event CSV example references, and optional crawler manifest references. Use
+`profile validate`, `profile list`, and `profile inspect` while authoring or
+reviewing a specific pack; use `doctor profile-pack` for operator evidence that
+summarizes committed profile coverage and fails fast on the same deterministic
+contract errors.
+
 Replay recent persisted recommendation traces against the current SQL-only
 ranking path:
 

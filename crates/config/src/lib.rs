@@ -546,6 +546,7 @@ pub struct ProfilePackLintFile {
     pub reason_count: usize,
     pub fixture_count: usize,
     pub source_manifest_count: usize,
+    pub event_csv_example_count: usize,
     pub optional_crawler_manifest_count: usize,
 }
 
@@ -1278,6 +1279,7 @@ fn lint_loaded_profile_pack_file(
         reason_count: reason_catalog.reasons.len(),
         fixture_count: manifest.fixtures.len(),
         source_manifest_count: manifest.source_manifests.len(),
+        event_csv_example_count: manifest.event_csv_examples.len(),
         optional_crawler_manifest_count: manifest.optional_crawler_manifests.len(),
     })
 }

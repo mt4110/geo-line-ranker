@@ -1,7 +1,7 @@
 use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 
 use crate::{
-    doctor::ExplanationIntegrityDoctorSummary,
+    doctor::{ExplanationIntegrityDoctorSummary, ProfilePackDoctorSummary},
     explain::{ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport},
     explanation_integrity::QualityCheckStatus,
     fixtures::FixtureDoctorSummary,
@@ -358,6 +358,37 @@ pub fn format_explanation_integrity_doctor_summary(
                 check.message
             ));
         }
+    }
+
+    lines.join("\n")
+}
+
+pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) -> String {
+    let mut lines = vec![format!(
+        "doctor profile-pack completed: profile_packs={}, ranking_config_dirs={}, reasons={}, fixture_references={}, source_manifest_references={}, event_csv_example_references={}, optional_crawler_manifest_references={}",
+        summary.profile_packs,
+        summary.ranking_config_dirs,
+        summary.reason_count,
+        summary.fixture_references,
+        summary.source_manifest_references,
+        summary.event_csv_example_references,
+        summary.optional_crawler_manifest_references
+    )];
+
+    for file in &summary.files {
+        lines.push(format!(
+            "  profile_id={} content_kinds={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
+            file.profile_id,
+            file.supported_content_kinds.join(","),
+            file.reason_count,
+            file.fixture_references,
+            file.source_manifest_references,
+            file.event_csv_example_references,
+            file.optional_crawler_manifest_references,
+            file.path.display(),
+            file.ranking_config_dir.display(),
+            file.reason_catalog_path.display()
+        ));
     }
 
     lines.join("\n")
