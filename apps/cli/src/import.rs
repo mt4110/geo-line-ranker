@@ -349,6 +349,7 @@ fn validate_starts_at(raw: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use storage_postgres::EventCsvRecord;
 
     use super::validate_event_csv_records;
@@ -366,6 +367,7 @@ mod tests {
                 priority_weight: 0.0,
                 starts_at: Some("2026-05-10".to_string()),
                 placement_tags: "home".to_string(),
+                details: json!({}),
             },
             EventCsvRecord {
                 event_id: "event-rfc3339".to_string(),
@@ -377,6 +379,7 @@ mod tests {
                 priority_weight: 0.0,
                 starts_at: Some("2026-05-10T10:00:00+09:00".to_string()),
                 placement_tags: "detail".to_string(),
+                details: json!({}),
             },
         ];
 
@@ -395,6 +398,7 @@ mod tests {
             priority_weight: 0.0,
             starts_at: Some("05/10/2026 10:00".to_string()),
             placement_tags: "home".to_string(),
+            details: json!({}),
         }];
 
         let error = validate_event_csv_records(&records).expect_err("invalid starts_at");

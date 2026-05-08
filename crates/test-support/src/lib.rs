@@ -74,6 +74,7 @@ pub fn load_fixture_dataset(path: impl AsRef<Path>) -> Result<RankingDataset> {
                     priority_weight: row.priority_weight,
                     starts_at: row.starts_at,
                     placement_tags,
+                    details: serde_json::Value::Object(Default::default()),
                     is_active: true,
                 })
             })
