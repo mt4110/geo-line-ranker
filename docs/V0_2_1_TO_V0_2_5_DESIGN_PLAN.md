@@ -137,7 +137,9 @@ Candidate PRs:
   that core is not school-specific.
 - Move profile-specific reasons and placement policy toward profile-owned files.
 - Document connector manifest expectations and profile-side mapping.
-- Keep article support reserved unless a profile explicitly implements it.
+- Keep article support reserved until the runtime has an article read model,
+  dataset input, deterministic scoring, diversity tests, fixtures, and any
+  public API/OpenAPI docs required by the response shape.
 
 Exit signals:
 

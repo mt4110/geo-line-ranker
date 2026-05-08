@@ -63,6 +63,14 @@ Each `profile.yaml` declares:
 - `article_support`: `reserved` until article candidates are explicitly
   implemented by a profile.
 
+For the current runtime, `article_support` must remain `reserved`. A profile
+cannot advertise `article` in `supported_content_kinds`, and the referenced
+placement configs cannot mention `article` in enabled content kinds, score
+boosts, or content-kind diversity ratios. The first article implementation
+should update this contract together with the article read model, fixture
+coverage, ranking tests, and any public API/OpenAPI docs required by the shape
+change.
+
 The linter checks schema version, kind, duplicate IDs, path syntax, referenced
 files, fixture manifest identity, the active ranking config, and the profile
 reason catalog.
