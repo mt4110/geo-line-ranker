@@ -68,6 +68,15 @@ flowchart LR
 - `article`
   Reserved in config and schema, but runtime validation still rejects it until article candidates are implemented.
 
+Article support is deliberately a foundation contract today, not a partial
+runtime path. `ContentKind::Article` may exist as a schema/config reservation,
+but active profile packs must keep `article_support: reserved`, must not list
+`article` in `supported_content_kinds`, and placement configs must not reference
+`article` in `enabled_content_kinds`, `score_boosts`, or
+`content_kind_max_ratio`. Turning it on requires a small reviewed slice that
+adds an article read model, dataset loading, deterministic scoring, diversity
+tests, fixtures, and public API/OpenAPI docs if the response shape changes.
+
 Per-placement config currently controls:
 
 - neighbor expansion tolerance

@@ -143,7 +143,23 @@
 
 そのため、学校とイベントは別々にスコアリングしたうえで、placement profile に従って混ぜます。
 
-## 9. 変更時の注意
+## 9. 記事候補はまだ有効化しない
+
+`article` は将来拡張枠です。型や設定名として予約されていますが、現在の実行時候補には含めません。
+
+現時点では、profile pack の `article_support` は `reserved` のままにし、`supported_content_kinds`、`enabled_content_kinds`、`score_boosts`、`content_kind_max_ratio` のいずれにも `article` を入れません。
+
+記事候補を有効化する場合は、少なくとも次を同じ設計単位で用意します。
+
+- 記事の read model
+- RankingDataset への記事候補入力
+- 学校・イベントと同じ決定論的 scoring / diversity contract
+- fixtures と ranking tests
+- API の形が変わる場合の OpenAPI / API docs 更新
+
+ここを曖昧にしたまま `article` だけ設定に足すのは間違いです。候補が存在しない種類を ranking config で有効化すると、説明可能性と再現性が崩れます。
+
+## 10. 変更時の注意
 
 ランキングルールを変えるときは、必ず次を確認します。
 

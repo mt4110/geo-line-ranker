@@ -38,6 +38,7 @@ PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is o
 - `search_execute` persists through `POST /v1/track`, refreshes popularity / area snapshot weights through station-linked schools, and now uses config-driven calibration.
 - `cargo run -p cli -- snapshot refresh` reapplies the current tracking config, invalidates recommendation cache, and syncs the full-mode projection when enabled.
 - Public MVP acceptance remains SQL-only and deterministic; live crawling and full-mode retrieval stay optional side paths.
+- `article` is a reserved candidate kind, and the current runtime rejects it in both profile packs and ranking config. Adding `article` to `supported_content_kinds`, `enabled_content_kinds`, `score_boosts`, or `content_kind_max_ratio` requires the article read model, dataset input, scoring / diversity tests, fixtures, and OpenAPI / API docs if the response shape changes in the same change.
 - Release candidate decisions use `just release-readiness` to review the flow, `just mvp-acceptance` as the fixed gate, and `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` as required evidence capture.
 
 ## Quickstart

@@ -861,7 +861,20 @@ impl RankingProfiles {
                 }
             }
 
+            for kind in profile.mixed_ranking.score_boosts.keys() {
+                ensure!(
+                    !matches!(kind, ContentKind::Article),
+                    "placement.{}.mixed_ranking.score_boosts.article is reserved until article candidates are implemented",
+                    placement.as_str()
+                );
+            }
+
             for (kind, max_ratio) in &profile.diversity.content_kind_max_ratio {
+                ensure!(
+                    !matches!(kind, ContentKind::Article),
+                    "placement.{}.diversity.content_kind_max_ratio.article is reserved until article candidates are implemented",
+                    placement.as_str()
+                );
                 ensure!(
                     profile.mixed_ranking.enabled_content_kinds.contains(kind),
                     "placement.{}.diversity.content_kind_max_ratio.{} requires the content kind to be enabled",
@@ -1417,10 +1430,14 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
         );
     }
     ensure!(
-        manifest.article_support == ArticleSupport::Implemented
-            || !manifest
-                .supported_content_kinds
-                .contains(&ContentKind::Article),
+        manifest.article_support == ArticleSupport::Reserved,
+        "profile pack {} article_support=implemented is reserved until article candidates are implemented",
+        path.display()
+    );
+    ensure!(
+        !manifest
+            .supported_content_kinds
+            .contains(&ContentKind::Article),
         "profile pack {} cannot enable article while article_support is {}",
         path.display(),
         manifest.article_support.as_str()
@@ -2890,6 +2907,45 @@ fixtures:
     }
 
     #[test]
+    fn rejects_implemented_article_support_until_runtime_support_exists() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: implemented
+"#,
+        )
+        .expect("profile");
+
+        let raw = fs::read_to_string(&manifest_path).expect("read profile");
+        let manifest: ProfilePackManifest =
+            serde_yaml::from_str(&raw).expect("parse implemented article support");
+        assert_eq!(manifest.article_support, ArticleSupport::Implemented);
+
+        let error =
+            validate_profile_pack_contract(&manifest_path, &manifest).expect_err("article support");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains(
+                "article_support=implemented is reserved until article candidates are implemented"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn rejects_fixture_set_id_mismatch_in_profile_pack() {
         let temp = tempdir().expect("tempdir");
         let profile_dir = temp.path().join("profiles").join("example-profile");
@@ -3000,6 +3056,80 @@ diversity:
         assert!(error
             .to_string()
             .contains("article is reserved until article candidates are implemented"));
+    }
+
+    #[test]
+    fn rejects_article_score_boost_until_runtime_support_exists() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("placement.home.yaml"),
+            r#"schema_version: 1
+kind: ranking_placement
+neighbor_max_hops: 3
+neighbor_same_line_bonus: 0.9
+mixed_ranking:
+  enabled_content_kinds:
+    - school
+    - event
+  score_boosts:
+    school: 0.0
+    event: 0.2
+    article: 0.5
+  featured_event_bonus: 0.4
+  event_priority_weight: 0.8
+diversity:
+  same_school_cap: 1
+  same_group_cap: 2
+  content_kind_max_ratio:
+    school: 0.7
+    event: 0.7
+"#,
+        )
+        .expect("write config");
+
+        let error = RankingProfiles::load_from_dir(temp.path()).expect_err("article should fail");
+
+        assert!(error.to_string().contains(
+            "mixed_ranking.score_boosts.article is reserved until article candidates are implemented"
+        ));
+    }
+
+    #[test]
+    fn rejects_article_diversity_ratio_until_runtime_support_exists() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("placement.home.yaml"),
+            r#"schema_version: 1
+kind: ranking_placement
+neighbor_max_hops: 3
+neighbor_same_line_bonus: 0.9
+mixed_ranking:
+  enabled_content_kinds:
+    - school
+    - event
+  score_boosts:
+    school: 0.0
+    event: 0.2
+  featured_event_bonus: 0.4
+  event_priority_weight: 0.8
+diversity:
+  same_school_cap: 1
+  same_group_cap: 2
+  content_kind_max_ratio:
+    school: 0.7
+    event: 0.7
+    article: 0.4
+"#,
+        )
+        .expect("write config");
+
+        let error = RankingProfiles::load_from_dir(temp.path()).expect_err("article should fail");
+
+        assert!(error.to_string().contains(
+            "diversity.content_kind_max_ratio.article is reserved until article candidates are implemented"
+        ));
     }
 
     #[test]
