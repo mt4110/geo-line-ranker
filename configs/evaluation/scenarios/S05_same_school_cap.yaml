@@ -1,0 +1,106 @@
+schema_version: 1
+kind: replay_scenario
+id: S05_SAME_SCHOOL_CAP
+title: Same school cap
+description: A school with multiple strong event items must not consume every visible slot.
+tags:
+  - v0.3.1
+  - diversity
+  - same_school_cap
+query:
+  target_station_id: st_cap_seed
+  limit: 2
+  placement: home
+  debug: false
+  context:
+    context_source: request_station
+    confidence: 0.98
+    station:
+      station_id: st_cap_seed
+      station_name: Cap Seed
+    line:
+      line_name: Cap Line
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+    warnings: []
+dataset:
+  schools:
+    - id: school_event_flood
+      name: Event Flood High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_event_flood
+    - id: school_balanced
+      name: Balanced High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_balanced
+  events:
+    - id: event_flood_open_a
+      school_id: school_event_flood
+      title: Flood Open Day A
+      event_category: open_campus
+      is_open_day: true
+      is_featured: true
+      priority_weight: 4.0
+      starts_at: "2026-06-01T10:00:00+09:00"
+      placement_tags:
+        - home
+      is_active: true
+    - id: event_flood_open_b
+      school_id: school_event_flood
+      title: Flood Open Day B
+      event_category: open_campus
+      is_open_day: true
+      is_featured: true
+      priority_weight: 3.5
+      starts_at: "2026-06-02T10:00:00+09:00"
+      placement_tags:
+        - home
+      is_active: true
+  stations:
+    - id: st_cap_seed
+      name: Cap Seed
+      line_name: Cap Line
+      latitude: 35.6500
+      longitude: 139.7500
+  school_station_links:
+    - school_id: school_event_flood
+      station_id: st_cap_seed
+      walking_minutes: 4
+      distance_meters: 300
+      hop_distance: 0
+      line_name: Cap Line
+    - school_id: school_balanced
+      station_id: st_cap_seed
+      walking_minutes: 6
+      distance_meters: 500
+      hop_distance: 0
+      line_name: Cap Line
+  popularity_snapshots: []
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: strict_station
+  ordered:
+    - "event:event_flood_open_a"
+    - "school:school_balanced"
+  absent_from_result:
+    - "event:event_flood_open_b"
+    - "school:school_event_flood"
+  max_items_per_school: 1
+  candidate_counts:
+    strict_station: 2
+    same_line: 2
+    same_city: 0
+    same_prefecture: 0
+    safe_global_popular: 2
+  required_reason_codes:
+    "event:event_flood_open_a":
+      - geo.direct_station
+      - event.open_day
+      - event.featured
+      - event.priority

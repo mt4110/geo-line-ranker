@@ -1,0 +1,135 @@
+schema_version: 1
+kind: replay_scenario
+id: S10_SQL_ONLY_FULL_MODE_PARITY
+title: Shared retrieval-slice ordering contract
+description: A DB-free proxy fixes the shared candidate-slice ordering that SQL-only and optional full-mode retrieval must preserve before ranking.
+tags:
+  - v0.3.1
+  - retrieval_parity
+  - sql_only
+  - full_mode_optional
+query:
+  target_station_id: st_parity_seed
+  limit: 3
+  placement: search
+  debug: false
+  context:
+    context_source: request_line
+    confidence: 0.95
+    line:
+      line_name: Parity Line
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+    warnings: []
+dataset:
+  schools:
+    - id: school_parity_direct
+      name: Parity Direct High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_parity_direct
+    - id: school_parity_near
+      name: Parity Near High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_parity_near
+    - id: school_parity_far
+      name: Parity Far High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_parity_far
+    - id: school_parity_remote_popular
+      name: Parity Remote Popular High
+      area: Naha
+      prefecture_name: Okinawa
+      school_type: high_school
+      group_id: group_parity_remote
+  events: []
+  stations:
+    - id: st_parity_seed
+      name: Parity Seed
+      line_name: Parity Line
+      latitude: 35.6500
+      longitude: 139.7500
+    - id: st_parity_near
+      name: Parity Near
+      line_name: Parity Line
+      latitude: 35.6540
+      longitude: 139.7540
+    - id: st_parity_far
+      name: Parity Far
+      line_name: Parity Line
+      latitude: 35.6660
+      longitude: 139.7660
+    - id: st_parity_remote
+      name: Parity Remote
+      line_name: Remote Line
+      latitude: 26.2124
+      longitude: 127.6792
+  school_station_links:
+    - school_id: school_parity_direct
+      station_id: st_parity_seed
+      walking_minutes: 5
+      distance_meters: 400
+      hop_distance: 0
+      line_name: Parity Line
+    - school_id: school_parity_near
+      station_id: st_parity_near
+      walking_minutes: 6
+      distance_meters: 520
+      hop_distance: 1
+      line_name: Parity Line
+    - school_id: school_parity_far
+      station_id: st_parity_far
+      walking_minutes: 12
+      distance_meters: 1200
+      hop_distance: 3
+      line_name: Parity Line
+    - school_id: school_parity_remote_popular
+      station_id: st_parity_remote
+      walking_minutes: 3
+      distance_meters: 250
+      hop_distance: 0
+      line_name: Remote Line
+  popularity_snapshots:
+    - school_id: school_parity_remote_popular
+      popularity_score: 80.0
+      total_events: 80
+      school_view_count: 80
+      school_save_count: 0
+      event_view_count: 0
+      apply_click_count: 0
+      share_count: 0
+      search_execute_count: 0
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: same_line
+  ordered:
+    - "school:school_parity_direct"
+    - "school:school_parity_near"
+    - "school:school_parity_far"
+  pairwise:
+    - higher: "school:school_parity_direct"
+      lower: "school:school_parity_near"
+      note: direct same-line candidate should stay ahead of nearby same-line candidates
+    - higher: "school:school_parity_near"
+      lower: "school:school_parity_far"
+      note: same-line candidates should remain distance ordered within the deterministic slice
+  absent_from_result:
+    - "school:school_parity_remote_popular"
+  candidate_counts:
+    strict_station: 0
+    same_line: 3
+    same_city: 0
+    same_prefecture: 0
+    safe_global_popular: 4
+  required_reason_codes:
+    "school:school_parity_direct":
+      - geo.direct_station
+      - geo.line_match
+      - geo.station_distance

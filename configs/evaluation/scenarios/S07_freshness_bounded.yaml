@@ -1,0 +1,120 @@
+schema_version: 1
+kind: replay_scenario
+id: S07_FRESHNESS_BOUNDED
+title: Freshness proxy bounded by geo guardrail
+description: A local near-future event remains selected while a stale remote event is excluded by the geo guardrail despite extreme popularity.
+tags:
+  - v0.3.1
+  - freshness_bounded
+  - area_context
+  - guardrail
+query:
+  target_station_id: st_fresh_seed
+  limit: 2
+  placement: home
+  debug: false
+  context:
+    context_source: request_area
+    confidence: 0.95
+    area:
+      country: JP
+      prefecture_name: Hokkaido
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+    warnings: []
+dataset:
+  schools:
+    - id: school_local_future
+      name: Local Future High
+      area: Sapporo
+      prefecture_name: Hokkaido
+      school_type: high_school
+      group_id: group_local_future
+    - id: school_remote_stale
+      name: Remote Stale High
+      area: Naha
+      prefecture_name: Okinawa
+      school_type: high_school
+      group_id: group_remote_stale
+  events:
+    - id: event_local_near_future
+      school_id: school_local_future
+      title: Near Future Open Day
+      event_category: open_campus
+      is_open_day: true
+      is_featured: false
+      priority_weight: 0.5
+      starts_at: "2026-06-08T10:00:00+09:00"
+      placement_tags:
+        - home
+      is_active: true
+    - id: event_remote_stale_popular
+      school_id: school_remote_stale
+      title: Stale Remote Campaign
+      event_category: open_campus
+      is_open_day: true
+      is_featured: true
+      priority_weight: 5.0
+      starts_at: "2025-06-08T10:00:00+09:00"
+      placement_tags:
+        - home
+      is_active: true
+  stations:
+    - id: st_fresh_seed
+      name: Fresh Seed
+      line_name: Seed Line
+      latitude: 43.0618
+      longitude: 141.3545
+    - id: st_local_future
+      name: Local Future
+      line_name: Local Line
+      latitude: 43.0640
+      longitude: 141.3600
+    - id: st_remote_stale
+      name: Remote Stale
+      line_name: Remote Line
+      latitude: 26.2124
+      longitude: 127.6792
+  school_station_links:
+    - school_id: school_local_future
+      station_id: st_local_future
+      walking_minutes: 9
+      distance_meters: 760
+      hop_distance: 0
+      line_name: Local Line
+    - school_id: school_remote_stale
+      station_id: st_remote_stale
+      walking_minutes: 2
+      distance_meters: 120
+      hop_distance: 0
+      line_name: Remote Line
+  popularity_snapshots:
+    - school_id: school_remote_stale
+      popularity_score: 100.0
+      total_events: 100
+      school_view_count: 50
+      school_save_count: 10
+      event_view_count: 30
+      apply_click_count: 5
+      share_count: 5
+      search_execute_count: 0
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: same_prefecture
+  ordered:
+    - "event:event_local_near_future"
+  absent_from_result:
+    - "event:event_remote_stale_popular"
+    - "school:school_remote_stale"
+  candidate_counts:
+    strict_station: 0
+    same_line: 0
+    same_city: 0
+    same_prefecture: 1
+    safe_global_popular: 2
+  required_reason_codes:
+    "event:event_local_near_future":
+      - event.open_day
+      - event.priority

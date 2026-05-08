@@ -1,0 +1,119 @@
+schema_version: 1
+kind: replay_scenario
+id: S06_SAME_GROUP_CAP
+title: Same group cap
+description: Multiple same-operator schools must leave room for an independent candidate.
+tags:
+  - v0.3.1
+  - diversity
+  - same_group_cap
+query:
+  target_station_id: st_group_seed
+  limit: 3
+  placement: search
+  debug: false
+  context:
+    context_source: request_station
+    confidence: 0.98
+    station:
+      station_id: st_group_seed
+      station_name: Group Seed
+    line:
+      line_name: Group Line
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+    warnings: []
+dataset:
+  schools:
+    - id: school_group_a
+      name: Group A High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_monopoly
+    - id: school_group_b
+      name: Group B High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_monopoly
+    - id: school_group_c
+      name: Group C High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_monopoly
+    - id: school_independent
+      name: Independent High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_independent
+  events: []
+  stations:
+    - id: st_group_seed
+      name: Group Seed
+      line_name: Group Line
+      latitude: 35.6500
+      longitude: 139.7500
+  school_station_links:
+    - school_id: school_group_a
+      station_id: st_group_seed
+      walking_minutes: 4
+      distance_meters: 300
+      hop_distance: 0
+      line_name: Group Line
+    - school_id: school_group_b
+      station_id: st_group_seed
+      walking_minutes: 5
+      distance_meters: 380
+      hop_distance: 0
+      line_name: Group Line
+    - school_id: school_group_c
+      station_id: st_group_seed
+      walking_minutes: 6
+      distance_meters: 460
+      hop_distance: 0
+      line_name: Group Line
+    - school_id: school_independent
+      station_id: st_group_seed
+      walking_minutes: 8
+      distance_meters: 700
+      hop_distance: 0
+      line_name: Group Line
+  popularity_snapshots:
+    - school_id: school_group_c
+      popularity_score: 20.0
+      total_events: 20
+      school_view_count: 20
+      school_save_count: 0
+      event_view_count: 0
+      apply_click_count: 0
+      share_count: 0
+      search_execute_count: 0
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: strict_station
+  ordered:
+    - "school:school_group_c"
+    - "school:school_group_a"
+    - "school:school_independent"
+  pairwise:
+    - higher: "school:school_group_c"
+      lower: "school:school_independent"
+      note: group-c popularity can win a slot, but not every remaining slot
+  absent_from_result:
+    - "school:school_group_b"
+  max_items_per_group: 2
+  candidate_counts:
+    strict_station: 4
+    same_line: 4
+    same_city: 0
+    same_prefecture: 0
+    safe_global_popular: 4
+  required_reason_codes:
+    "school:school_group_c":
+      - geo.direct_station
+      - behavior.popularity

@@ -8,7 +8,8 @@ use anyhow::{ensure, Context, Result};
 use api_contracts::{FallbackStageDto, RecommendationRequest, RecommendationResponse};
 use config::{AppSettings, RankingProfiles};
 use domain::{
-    FallbackStage, RankingDataset, RankingQuery, RecommendationItem, RecommendationResult,
+    ContentKind, FallbackStage, RankingDataset, RankingQuery, RecommendationItem,
+    RecommendationResult,
 };
 use ranking::RankingEngine;
 use serde::{Deserialize, Serialize};
@@ -98,6 +99,12 @@ pub struct ReplayScenarioExpectations {
     pub candidate_counts: BTreeMap<String, usize>,
     #[serde(default)]
     pub required_reason_codes: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub absent_content_kinds: Vec<ContentKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_items_per_school: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_items_per_group: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -374,6 +381,25 @@ fn validate_replay_scenario(path: &Path, scenario: &ReplayScenario) -> Result<()
             );
         }
     }
+    validate_unique_content_kinds(
+        &scenario.id,
+        "expectations.absent_content_kinds",
+        &scenario.expectations.absent_content_kinds,
+    )?;
+    if let Some(max_items_per_school) = scenario.expectations.max_items_per_school {
+        ensure!(
+            max_items_per_school > 0,
+            "scenario {} max_items_per_school must be greater than zero",
+            scenario.id
+        );
+    }
+    if let Some(max_items_per_group) = scenario.expectations.max_items_per_group {
+        ensure!(
+            max_items_per_group > 0,
+            "scenario {} max_items_per_group must be greater than zero",
+            scenario.id
+        );
+    }
 
     Ok(())
 }
@@ -388,6 +414,24 @@ fn validate_unique_item_keys(scenario_id: &str, field: &str, item_keys: &[String
             scenario_id,
             field,
             item_key
+        );
+    }
+    Ok(())
+}
+
+fn validate_unique_content_kinds(
+    scenario_id: &str,
+    field: &str,
+    content_kinds: &[ContentKind],
+) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for content_kind in content_kinds {
+        ensure!(
+            seen.insert(*content_kind),
+            "scenario {} {} contains duplicate content kind {}",
+            scenario_id,
+            field,
+            content_kind.as_str()
         );
     }
     Ok(())
@@ -462,7 +506,10 @@ fn evaluate_replay_scenario(
     check_expected_order(&mut case, scenario);
     check_pairwise_expectations(&mut case, scenario);
     check_absent_items(&mut case, scenario);
+    check_absent_content_kinds(&mut case, scenario, &result);
     check_candidate_counts(&mut case, scenario, &result);
+    check_max_items_per_school(&mut case, scenario, &result);
+    check_max_items_per_group(&mut case, scenario, &result);
     check_required_reason_codes(&mut case, scenario, &result);
     check_explanation_integrity(&mut case, &result);
 
@@ -555,6 +602,32 @@ fn check_absent_items(case: &mut ReplayScenarioCase, scenario: &ReplayScenario) 
     }
 }
 
+fn check_absent_content_kinds(
+    case: &mut ReplayScenarioCase,
+    scenario: &ReplayScenario,
+    result: &RecommendationResult,
+) {
+    for content_kind in &scenario.expectations.absent_content_kinds {
+        let actual_items = result
+            .items
+            .iter()
+            .filter(|item| item.content_kind == *content_kind)
+            .map(item_key)
+            .collect::<Vec<_>>();
+        push_check(
+            case,
+            &format!("absent_content_kind.{}", content_kind.as_str()),
+            QualitySeverity::Blocker,
+            actual_items.is_empty(),
+            format!(
+                "expected no {} items, actual {}",
+                content_kind.as_str(),
+                format_order(&actual_items)
+            ),
+        );
+    }
+}
+
 fn check_candidate_counts(
     case: &mut ReplayScenarioCase,
     scenario: &ReplayScenario,
@@ -575,6 +648,80 @@ fn check_candidate_counts(
             ),
         );
     }
+}
+
+fn check_max_items_per_school(
+    case: &mut ReplayScenarioCase,
+    scenario: &ReplayScenario,
+    result: &RecommendationResult,
+) {
+    let Some(max_items_per_school) = scenario.expectations.max_items_per_school else {
+        return;
+    };
+    let mut counts = BTreeMap::<String, usize>::new();
+    for item in &result.items {
+        *counts.entry(item.school_id.clone()).or_default() += 1;
+    }
+    let violations = counts
+        .iter()
+        .filter(|(_, count)| **count > max_items_per_school)
+        .map(|(school_id, count)| format!("{school_id}={count}"))
+        .collect::<Vec<_>>();
+    push_check(
+        case,
+        "max_items_per_school",
+        QualitySeverity::Blocker,
+        violations.is_empty(),
+        format!(
+            "expected at most {max_items_per_school} items per school, violations {}",
+            format_order(&violations)
+        ),
+    );
+}
+
+fn check_max_items_per_group(
+    case: &mut ReplayScenarioCase,
+    scenario: &ReplayScenario,
+    result: &RecommendationResult,
+) {
+    let Some(max_items_per_group) = scenario.expectations.max_items_per_group else {
+        return;
+    };
+    let group_by_school = scenario
+        .dataset
+        .schools
+        .iter()
+        .map(|school| (school.id.as_str(), school.group_id.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut missing_schools = BTreeSet::<String>::new();
+    for item in &result.items {
+        if let Some(group_id) = group_by_school.get(item.school_id.as_str()) {
+            *counts.entry((*group_id).to_string()).or_default() += 1;
+        } else {
+            missing_schools.insert(item.school_id.clone());
+        }
+    }
+    let mut violations = counts
+        .iter()
+        .filter(|(_, count)| **count > max_items_per_group)
+        .map(|(group_id, count)| format!("{group_id}={count}"))
+        .collect::<Vec<_>>();
+    violations.extend(
+        missing_schools
+            .into_iter()
+            .map(|school_id| format!("{school_id}=missing_school")),
+    );
+    push_check(
+        case,
+        "max_items_per_group",
+        QualitySeverity::Blocker,
+        violations.is_empty(),
+        format!(
+            "expected at most {max_items_per_group} items per group, violations {}",
+            format_order(&violations)
+        ),
+    );
 }
 
 fn check_required_reason_codes(
@@ -961,14 +1108,16 @@ fn fallback_stage_label(fallback_stage: &FallbackStageDto) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::BTreeSet,
+        collections::{BTreeMap, BTreeSet},
         path::{Path, PathBuf},
     };
 
     use super::{
-        normalize_fallback_stage, run_replay_scenarios, stored_response_order,
-        validate_replay_scenario, ReplayScenario, DEFAULT_REPLAY_SCENARIO_PATH,
+        check_max_items_per_school, normalize_fallback_stage, run_replay_scenarios,
+        stored_response_order, validate_replay_scenario, ReplayScenario, ReplayScenarioCase,
+        ReplayScenarioStatus, DEFAULT_REPLAY_SCENARIO_PATH,
     };
+    use domain::{ContentKind, FallbackStage, RecommendationItem, RecommendationResult};
 
     #[test]
     fn replay_reader_accepts_legacy_school_only_trace_shape() {
@@ -1021,12 +1170,18 @@ mod tests {
             "S02_LINE_INTENT",
             "S03_CITY_FALLBACK",
             "S04_COLD_START",
+            "S05_SAME_SCHOOL_CAP",
+            "S06_SAME_GROUP_CAP",
+            "S07_FRESHNESS_BOUNDED",
+            "S08_EXPLANATION_INTEGRITY",
+            "S09_ARTICLE_RESERVED_SLOT",
+            "S10_SQL_ONLY_FULL_MODE_PARITY",
         ] {
             assert!(scenario_ids.contains(expected_id));
         }
-        assert!(summary.scenarios >= 4);
+        assert!(summary.scenarios >= 10);
         assert_eq!(summary.blockers, 0);
-        assert!(summary.pairwise_total >= 3);
+        assert!(summary.pairwise_total >= 7);
         assert!(summary.explanation_integrity_total >= summary.scenarios * 6);
     }
 
@@ -1062,6 +1217,214 @@ mod tests {
             .contains("must use <content_kind>:<content_id>"));
     }
 
+    #[test]
+    fn replay_scenario_validation_rejects_duplicate_absent_content_kinds() {
+        let yaml = minimal_scenario_yaml("{}");
+        let mut scenario: ReplayScenario = serde_yaml::from_str(&yaml).expect("scenario yaml");
+        scenario.expectations.absent_content_kinds =
+            vec![ContentKind::Article, ContentKind::Article];
+
+        let error = validate_replay_scenario(Path::new("scenario.yaml"), &scenario)
+            .expect_err("duplicate absent content kind");
+
+        assert!(error
+            .to_string()
+            .contains("absent_content_kinds contains duplicate content kind article"));
+    }
+
+    #[test]
+    fn replay_scenario_validation_rejects_zero_diversity_caps() {
+        let yaml = minimal_scenario_yaml("{}");
+        let mut scenario: ReplayScenario = serde_yaml::from_str(&yaml).expect("scenario yaml");
+        scenario.expectations.max_items_per_school = Some(0);
+
+        let error = validate_replay_scenario(Path::new("scenario.yaml"), &scenario)
+            .expect_err("zero school cap");
+
+        assert!(error
+            .to_string()
+            .contains("max_items_per_school must be greater than zero"));
+
+        scenario.expectations.max_items_per_school = None;
+        scenario.expectations.max_items_per_group = Some(0);
+
+        let error = validate_replay_scenario(Path::new("scenario.yaml"), &scenario)
+            .expect_err("zero group cap");
+
+        assert!(error
+            .to_string()
+            .contains("max_items_per_group must be greater than zero"));
+    }
+
+    #[test]
+    fn replay_scenario_blocks_absent_content_kind_violations() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scenario_path = temp.path().join("absent_school.yaml");
+        std::fs::write(
+            &scenario_path,
+            replay_scenario_yaml(
+                "S00_ABSENT_SCHOOL_KIND",
+                r#"
+  schools:
+    - id: school_a
+      name: School A
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_a
+  events: []
+  stations:
+    - id: st_target
+      name: Target
+      line_name: Test Line
+      latitude: 35.6500
+      longitude: 139.7500
+  school_station_links:
+    - school_id: school_a
+      station_id: st_target
+      walking_minutes: 5
+      distance_meters: 400
+      hop_distance: 0
+      line_name: Test Line
+  popularity_snapshots: []
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+"#,
+                r#"
+  fallback_stage: strict_station
+  ordered:
+    - "school:school_a"
+  absent_content_kinds:
+    - school
+"#,
+            ),
+        )
+        .expect("write scenario");
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+
+        let summary = run_replay_scenarios(
+            &scenario_path,
+            repo_root.join("configs/ranking"),
+            "replay-scenario-test",
+        )
+        .expect("scenario summary");
+
+        assert_eq!(summary.blockers, 1);
+        assert_eq!(summary.cases[0].status.as_str(), "blocked");
+        assert!(summary.cases[0].checks.iter().any(|check| {
+            check.name == "absent_content_kind.school" && check.status.as_str() == "failed"
+        }));
+    }
+
+    #[test]
+    fn replay_scenario_blocks_group_cap_violations() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scenario_path = temp.path().join("group_cap.yaml");
+        std::fs::write(
+            &scenario_path,
+            replay_scenario_yaml(
+                "S00_GROUP_CAP",
+                r#"
+  schools:
+    - id: school_a
+      name: School A
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: shared_group
+    - id: school_b
+      name: School B
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: shared_group
+  events: []
+  stations:
+    - id: st_target
+      name: Target
+      line_name: Test Line
+      latitude: 35.6500
+      longitude: 139.7500
+  school_station_links:
+    - school_id: school_a
+      station_id: st_target
+      walking_minutes: 5
+      distance_meters: 400
+      hop_distance: 0
+      line_name: Test Line
+    - school_id: school_b
+      station_id: st_target
+      walking_minutes: 6
+      distance_meters: 500
+      hop_distance: 0
+      line_name: Test Line
+  popularity_snapshots: []
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+"#,
+                r#"
+  fallback_stage: strict_station
+  ordered:
+    - "school:school_a"
+    - "school:school_b"
+  max_items_per_group: 1
+"#,
+            ),
+        )
+        .expect("write scenario");
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+
+        let summary = run_replay_scenarios(
+            &scenario_path,
+            repo_root.join("configs/ranking"),
+            "replay-scenario-test",
+        )
+        .expect("scenario summary");
+
+        assert_eq!(summary.blockers, 1);
+        assert_eq!(summary.cases[0].status.as_str(), "blocked");
+        assert!(summary.cases[0].checks.iter().any(|check| {
+            check.name == "max_items_per_group" && check.status.as_str() == "failed"
+        }));
+    }
+
+    #[test]
+    fn replay_scenario_school_cap_check_blocks_duplicate_school_items() {
+        let yaml = minimal_scenario_yaml("{}");
+        let mut scenario: ReplayScenario = serde_yaml::from_str(&yaml).expect("scenario yaml");
+        scenario.expectations.max_items_per_school = Some(1);
+        let result = RecommendationResult {
+            items: vec![
+                recommendation_item(ContentKind::School, "school_a", "school_a"),
+                recommendation_item(ContentKind::Event, "event_a", "school_a"),
+            ],
+            explanation: "test".to_string(),
+            score_breakdown: Vec::new(),
+            fallback_stage: FallbackStage::StrictStation,
+            candidate_counts: BTreeMap::new(),
+            context: None,
+            profile_version: "test".to_string(),
+            algorithm_version: "test".to_string(),
+        };
+        let mut case = ReplayScenarioCase {
+            id: scenario.id.clone(),
+            title: scenario.title.clone(),
+            path: PathBuf::from("scenario.yaml"),
+            status: ReplayScenarioStatus::Passed,
+            expected_fallback_stage: "strict_station".to_string(),
+            actual_fallback_stage: Some("strict_station".to_string()),
+            expected_order: Vec::new(),
+            actual_order: Vec::new(),
+            checks: Vec::new(),
+        };
+
+        check_max_items_per_school(&mut case, &scenario, &result);
+
+        assert!(case.checks.iter().any(|check| {
+            check.name == "max_items_per_school" && check.status.as_str() == "failed"
+        }));
+    }
+
     fn minimal_scenario_yaml(candidate_counts: &str) -> String {
         format!(
             r#"
@@ -1087,6 +1450,60 @@ expectations:
   ordered:
     - "school:school_test"
   candidate_counts: {candidate_counts}
+"#
+        )
+    }
+
+    fn recommendation_item(
+        content_kind: ContentKind,
+        content_id: &str,
+        school_id: &str,
+    ) -> RecommendationItem {
+        RecommendationItem {
+            content_kind,
+            content_id: content_id.to_string(),
+            school_id: school_id.to_string(),
+            school_name: "Test School".to_string(),
+            event_id: (content_kind == ContentKind::Event).then(|| content_id.to_string()),
+            event_title: (content_kind == ContentKind::Event).then(|| "Test Event".to_string()),
+            primary_station_id: "st_target".to_string(),
+            primary_station_name: "Target".to_string(),
+            line_name: "Test Line".to_string(),
+            score: 1.0,
+            explanation: "test".to_string(),
+            score_breakdown: Vec::new(),
+            fallback_stage: Some(FallbackStage::StrictStation),
+        }
+    }
+
+    fn replay_scenario_yaml(id: &str, dataset: &str, expectations: &str) -> String {
+        format!(
+            r#"
+schema_version: 1
+kind: replay_scenario
+id: {id}
+title: Test scenario
+query:
+  target_station_id: st_target
+  limit: 2
+  placement: search
+  debug: false
+  context:
+    context_source: request_station
+    confidence: 0.98
+    station:
+      station_id: st_target
+      station_name: Target
+    line:
+      line_name: Test Line
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+    warnings: []
+dataset:
+{dataset}
+expectations:
+{expectations}
 "#
         )
     }
