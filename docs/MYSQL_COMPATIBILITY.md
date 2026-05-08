@@ -13,6 +13,24 @@ verification flow.
 - Redis remains cache only.
 - OpenSearch remains optional candidate retrieval only in `full` mode.
 
+## Status Doctor
+
+Use the storage compatibility doctor when you need operator-facing status without
+starting any service:
+
+```bash
+cargo run -p cli -- doctor storage-compatibility
+cargo run -p cli -- doctor storage-compatibility --json
+```
+
+This command reports the static compatibility registry for PostgreSQL/PostGIS,
+Redis, OpenSearch, MySQL, and SQLite. MySQL must report
+`compatibility_level=experimental` and
+`write_database_status=not_implemented` until a write adapter, migrations,
+contract tests, and CI or CI-equivalent commands exist in-tree. A clean storage
+compatibility doctor result is a truthful status report, not a MySQL
+production-readiness claim.
+
 ## Before Adding MySQL Write Support
 
 Any PR that introduces or changes MySQL write behavior must include all of the

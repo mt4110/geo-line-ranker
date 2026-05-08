@@ -6,6 +6,7 @@
 - Worker: `cargo run -p worker -- serve`
 - CLI: `cargo run -p cli -- --help`
 - Context resolver inspection: `cargo run -p cli -- context inspect --city-name Minato --prefecture-name Tokyo`
+- Storage compatibility status: `cargo run -p cli -- doctor storage-compatibility`
 - Crawler: `cargo run -p crawler -- --help`
 - PostgreSQL/PostGIS: source of truth for recommendations, tracking, imports, and jobs
 - Redis: optional cache for recommendation responses
@@ -87,7 +88,7 @@ For release candidate evidence, capture the local validation results
 (`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
 `cargo test --workspace`, config/source/crawler manifest lint, fixture doctor,
-and `git diff --check`), CI status, release notes,
+`eval golden`, the doctor evidence suite, and `git diff --check`), CI status, release notes,
 and the required `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
 evidence. The data quality doctor is required evidence capture for release
 readiness; strict mode makes doctor warnings fail the evidence step, but it
@@ -279,6 +280,25 @@ does not require PostgreSQL or OpenSearch, and it is optional full-mode
 evidence rather than part of the public-MVP gate. Use the compatibility tests
 when you need to exercise the mock OpenSearch request/response path end to
 end.
+
+Run the storage compatibility doctor when an operator needs a DB-free status
+inventory for the storage/cache/index boundary:
+
+```bash
+cargo run -p cli -- doctor storage-compatibility
+cargo run -p cli -- doctor storage-compatibility --json
+```
+
+This doctor prints the static v0.4.0 compatibility registry for
+PostgreSQL/PostGIS, Redis, OpenSearch, MySQL, and SQLite. It distinguishes these
+storage levels from profile-pack `compatibility_level`: PostgreSQL/PostGIS is the
+reference write store, Redis is cache only, OpenSearch is optional candidate
+retrieval only, MySQL is experimental with no committed write adapter, and SQLite
+is artifact/export only. The command does not perform service health checks and
+does not add MySQL, OpenSearch, or SQLite to the public-MVP gate. Redis appears
+as both optional runtime support and part of the fixed public-MVP gate because
+the gate starts it as a cache-only service while correctness remains backed by
+PostgreSQL/PostGIS.
 
 Run the profile-pack doctor when an operator needs a compact profile contract
 health summary rather than the authoring-oriented profile CLI:

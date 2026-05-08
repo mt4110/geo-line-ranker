@@ -90,6 +90,16 @@ reference implementation, OpenSearch and Redis are optional, MySQL remains
 experimental until contract tests prove parity, and SQLite is an artifact/export
 target only.
 
+Storage compatibility has its own operator-facing status report:
+
+```bash
+cargo run -p cli -- doctor storage-compatibility
+```
+
+Use that command when reviewing storage/cache/index support levels. Use
+`profile validate`, `doctor profile-pack`, or `doctor ranking-config` when
+reviewing profile compatibility levels.
+
 ```bash
 cargo run -p cli -- config lint
 ```

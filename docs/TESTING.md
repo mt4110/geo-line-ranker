@@ -16,6 +16,7 @@ cargo run -p crawler -- manifest lint
 cargo run -p cli -- eval golden
 cargo run -p cli -- doctor ranking-config
 cargo run -p cli -- doctor context-coverage
+cargo run -p cli -- doctor storage-compatibility
 ```
 
 `config lint` covers both active ranking config and committed profile pack
@@ -189,6 +190,7 @@ cargo run -p cli -- doctor explanation-integrity
 cargo run -p cli -- doctor context-coverage
 cargo run -p cli -- doctor retrieval-parity
 cargo run -p cli -- doctor profile-pack
+cargo run -p cli -- doctor storage-compatibility
 just mvp-acceptance
 git diff --check
 ```
@@ -266,6 +268,15 @@ optional crawler manifest validation from `profile validate`, then emits
 compact coverage metrics for release evidence. It is not a replacement for
 `config lint`; ranking config contract drift still belongs to the combined
 config lint gate. Use `--json` when capturing evidence artifacts.
+
+`cargo run -p cli -- doctor storage-compatibility` is the DB-free status report
+for the static storage/cache/index compatibility registry. It reports
+PostgreSQL/PostGIS as the reference write store, Redis as cache only, OpenSearch
+as optional candidate retrieval only, MySQL as experimental with no committed
+write adapter, and SQLite as artifact/export only. Use `--json` when capturing
+operator evidence. This doctor is a status contract, not a service health check
+and not a MySQL readiness claim. Redis is listed in the fixed public-MVP gate as
+a cache-only service, while `sql_only_required` stays PostgreSQL/PostGIS only.
 
 When investigating a concrete persisted trace, use the explanation reader after
 PostgreSQL contains `recommendation_traces` rows:

@@ -94,6 +94,31 @@ Run profile pack contract lint together with ranking config lint:
 cargo run -p cli -- config lint
 ```
 
+## Storage Compatibility Registry
+
+The v0.4.0 storage compatibility registry is a static operator-facing contract,
+not a database schema or service health check. It reports support levels for the
+storage/cache/index boundary:
+
+| Component | Compatibility level | Runtime role | Public-MVP gate |
+|---|---|---|---|
+| PostgreSQL/PostGIS | `reference` | Reference write store and SQL-only candidate source. | Yes |
+| Redis | `stable_optional` | Cache only. | Yes, as cache-only service |
+| OpenSearch | `stable_optional` | Optional full-mode candidate retrieval only. | No |
+| MySQL | `experimental` | Compatibility subset; no committed write adapter yet. | No |
+| SQLite | `artifact_only` | Read-only artifact/export target only. | No |
+
+Run the status report locally:
+
+```bash
+cargo run -p cli -- doctor storage-compatibility
+cargo run -p cli -- doctor storage-compatibility --json
+```
+
+Storage compatibility levels are separate from profile-pack
+`compatibility_level`. Profile levels stay in `profile.yaml` and are reported by
+`profile validate`, `doctor profile-pack`, and `doctor ranking-config`.
+
 ## Source Manifests
 
 Import source manifests in `storage/sources` use:
