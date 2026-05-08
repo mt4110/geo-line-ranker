@@ -3,6 +3,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: local-discovery-generic
 display_name: Local Discovery Generic
+compatibility_level: stable
 description: Small deterministic local-discovery profile backed only by committed minimal fixtures.
 supported_content_kinds:
   - school

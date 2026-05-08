@@ -12,10 +12,10 @@ For the first local run, use [First 15 Minutes](FIRST_15_MINUTES.md) and
 
 ## Current Profiles
 
-| Profile | Manifest | Purpose |
-|---|---|---|
-| `local-discovery-generic` | `configs/profiles/local-discovery-generic/profile.yaml` | Small SQL-only demo path backed by `storage/fixtures/minimal`. |
-| `school-event-jp` | `configs/profiles/school-event-jp/profile.yaml` | Maintained JP school/event reference profile backed by JP adapter fixtures and event CSV examples. |
+| Profile | Compatibility | Manifest | Purpose |
+|---|---|---|---|
+| `local-discovery-generic` | `stable` | `configs/profiles/local-discovery-generic/profile.yaml` | Small SQL-only demo path backed by `storage/fixtures/minimal`. |
+| `school-event-jp` | `reference` | `configs/profiles/school-event-jp/profile.yaml` | Maintained JP school/event reference profile backed by JP adapter fixtures and event CSV examples. |
 
 ## Authoring Flow
 
@@ -51,6 +51,8 @@ or marketplace assumptions to the profile-author starting path.
 Each `profile.yaml` declares:
 
 - `profile_id`: stable profile identifier.
+- `compatibility_level`: profile support level, one of `reference`,
+  `stable`, `experimental`, or `deprecated`.
 - `supported_content_kinds`: content kinds the profile intentionally exposes.
 - `context_inputs`: accepted context entry points such as station, line, area,
   or user profile.
@@ -72,8 +74,21 @@ coverage, ranking tests, and any public API/OpenAPI docs required by the shape
 change.
 
 The linter checks schema version, kind, duplicate IDs, path syntax, referenced
-files, fixture manifest identity, the active ranking config, and the profile
-reason catalog.
+files, fixture manifest identity, compatibility level, the active ranking
+config, and the profile reason catalog.
+
+Compatibility levels are profile-pack contract labels, not storage parity
+claims:
+
+- `reference`: the canonical maintained profile for a domain or source family.
+- `stable`: supported local contract for committed fixtures and authoring flows.
+- `experimental`: allowed to change while evidence and docs settle.
+- `deprecated`: kept readable while users migrate to another profile.
+
+The current storage truth remains unchanged: PostgreSQL/PostGIS is the
+reference implementation, OpenSearch and Redis are optional, MySQL remains
+experimental until contract tests prove parity, and SQLite is an artifact/export
+target only.
 
 ```bash
 cargo run -p cli -- config lint

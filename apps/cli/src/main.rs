@@ -279,7 +279,7 @@ enum DoctorCommand {
     #[command(
         name = "ranking-config",
         about = "Run the ranking config contract doctor for operator-facing quality evidence",
-        long_about = "Run the ranking config contract doctor for operator-facing quality evidence. This reuses the same active ranking config and profile-pack lint path as `config lint`, then summarizes ranking file kinds, active profile selection, profile pack coverage, referenced ranking config directories, reason catalog references, fixture references, source manifest references, event CSV example references, and optional crawler manifest references.\n\nExamples:\n  geo-line-ranker-cli doctor ranking-config\n  geo-line-ranker-cli doctor ranking-config --json\n  geo-line-ranker-cli doctor ranking-config --path configs/ranking --profiles-path configs/profiles"
+        long_about = "Run the ranking config contract doctor for operator-facing quality evidence. This reuses the same active ranking config and profile-pack lint path as `config lint`, then summarizes ranking file kinds, active profile selection, profile pack coverage, profile compatibility levels, referenced ranking config directories, reason catalog references, fixture references, source manifest references, event CSV example references, and optional crawler manifest references.\n\nExamples:\n  geo-line-ranker-cli doctor ranking-config\n  geo-line-ranker-cli doctor ranking-config --json\n  geo-line-ranker-cli doctor ranking-config --path configs/ranking --profiles-path configs/profiles"
     )]
     RankingConfig {
         #[arg(
@@ -328,7 +328,7 @@ enum DoctorCommand {
     #[command(
         name = "profile-pack",
         about = "Run the profile pack validation doctor against committed profile manifests",
-        long_about = "Run the profile pack validation doctor against committed profile manifests. This reuses the same manifest, reason catalog, ranking config, fixture, and local reference validation as `profile validate`, then prints operator-facing profile-pack coverage metrics.\n\nExamples:\n  geo-line-ranker-cli doctor profile-pack\n  geo-line-ranker-cli doctor profile-pack --json\n  geo-line-ranker-cli doctor profile-pack --profiles-path configs/profiles"
+        long_about = "Run the profile pack validation doctor against committed profile manifests. This reuses the same manifest, reason catalog, ranking config, fixture, compatibility level, and local reference validation as `profile validate`, then prints operator-facing profile-pack coverage metrics.\n\nExamples:\n  geo-line-ranker-cli doctor profile-pack\n  geo-line-ranker-cli doctor profile-pack --json\n  geo-line-ranker-cli doctor profile-pack --profiles-path configs/profiles"
     )]
     ProfilePack {
         #[arg(
@@ -1119,12 +1119,13 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "- {} profile_id={} schema_version={} kind={} manifest_version={} content_kinds={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
+        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kinds={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
         file.path.display(),
         file.profile_id,
         file.schema_version,
         file.kind.as_str(),
         file.manifest_version,
+        file.compatibility_level.as_str(),
         content_kinds,
         file.reason_count,
         file.fixture_count,
@@ -1160,10 +1161,11 @@ fn format_profile_inspect_summary(
         ),
         format!("manifest={}", manifest_path.display()),
         format!(
-            "schema_version={} kind={} manifest_version={}",
+            "schema_version={} kind={} manifest_version={} compatibility_level={}",
             manifest.schema_version,
             manifest.kind.as_str(),
-            manifest.manifest_version
+            manifest.manifest_version,
+            manifest.compatibility_level.as_str()
         ),
         format!("content_kinds={content_kinds}"),
         format!("context_inputs={context_inputs}"),
@@ -1264,8 +1266,8 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use config::{
-        ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary, RankingConfigKind,
-        RankingConfigLintFile, RankingConfigLintSummary,
+        ProfileCompatibilityLevel, ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary,
+        RankingConfigKind, RankingConfigLintFile, RankingConfigLintSummary,
     };
     use std::{collections::BTreeMap, fs};
 
@@ -1677,6 +1679,7 @@ mod tests {
                 schema_version: 1,
                 kind: "profile_pack".to_string(),
                 manifest_version: 1,
+                compatibility_level: "reference".to_string(),
                 supported_content_kinds: vec!["school".to_string(), "event".to_string()],
                 reason_count: 14,
                 fixture_references: 1,
@@ -1696,6 +1699,10 @@ mod tests {
         assert!(rendered.contains("optional_crawler_manifest_references=1"));
         assert!(rendered.contains("event_csv_examples=1"));
         assert!(rendered.contains("profile_id=school-event-jp"));
+        assert!(rendered.contains("compatibility_level=reference"));
+
+        let json = serde_json::to_string(&summary).expect("json");
+        assert!(json.contains("\"compatibility_level\":\"reference\""));
     }
 
     #[test]
@@ -1730,6 +1737,7 @@ mod tests {
                 reason_catalog_path: PathBuf::from(
                     "configs/profiles/local-discovery-generic/reasons.yaml",
                 ),
+                compatibility_level: "stable".to_string(),
                 reason_count: 14,
                 fixture_references: 1,
                 source_manifest_references: 2,
@@ -1750,6 +1758,7 @@ mod tests {
         assert!(rendered.contains("ranking_config_dir=configs/ranking"));
         assert!(rendered.contains("kind=ranking_schools"));
         assert!(rendered.contains("profile_id=local-discovery-generic"));
+        assert!(rendered.contains("compatibility_level=stable"));
     }
 
     #[test]
@@ -1796,6 +1805,7 @@ mod tests {
                     schema_version: 1,
                     kind: ProfilePackKind::ProfilePack,
                     manifest_version: 1,
+                    compatibility_level: ProfileCompatibilityLevel::Stable,
                     supported_content_kinds: Vec::new(),
                     reason_count: 14,
                     fixture_count: 1,
@@ -1813,6 +1823,7 @@ mod tests {
                     schema_version: 1,
                     kind: ProfilePackKind::ProfilePack,
                     manifest_version: 1,
+                    compatibility_level: ProfileCompatibilityLevel::Reference,
                     supported_content_kinds: Vec::new(),
                     reason_count: 7,
                     fixture_count: 0,
@@ -1837,6 +1848,7 @@ mod tests {
         let json = serde_json::to_string(&summary).expect("json");
 
         assert!(json.contains("\"active_profile_id\":\"local-discovery-generic\""));
+        assert!(json.contains("\"compatibility_level\":\"stable\""));
         assert!(json.contains("\"ranking_placement\":1"));
         assert_eq!(summary.profile_packs, 2);
         assert_eq!(summary.referenced_ranking_config_dirs, 1);
@@ -1858,6 +1870,7 @@ mod tests {
                 schema_version: 1,
                 kind: ProfilePackKind::ProfilePack,
                 manifest_version: 1,
+                compatibility_level: ProfileCompatibilityLevel::Stable,
                 supported_content_kinds: Vec::new(),
                 reason_count: 14,
                 fixture_count: 1,
@@ -1872,6 +1885,7 @@ mod tests {
 
         assert!(rendered.contains("profile validate ok: profile_packs=1"));
         assert!(rendered.contains("profile_id=local-discovery-generic"));
+        assert!(rendered.contains("compatibility_level=stable"));
     }
 
     #[test]
@@ -1883,6 +1897,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: local-discovery-generic
 display_name: Local Discovery Generic
+compatibility_level: stable
 supported_content_kinds:
   - school
 context_inputs:
@@ -1904,6 +1919,7 @@ article_support: reserved
             schema_version: 1,
             kind: ProfilePackKind::ProfilePack,
             manifest_version: 1,
+            compatibility_level: ProfileCompatibilityLevel::Stable,
             supported_content_kinds: manifest.supported_content_kinds.clone(),
             reason_count: 14,
             fixture_count: 0,
@@ -1952,6 +1968,7 @@ article_support: reserved
         )));
         assert!(rendered.contains("runtime_fixture_set_id=minimal"));
         assert!(rendered.contains(&format!("runtime_fixture_dir={}", fixture_dir.display())));
+        assert!(rendered.contains("compatibility_level=stable"));
     }
 
     #[test]
@@ -1968,6 +1985,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: root-profile
 display_name: Root Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
 context_inputs:
@@ -1987,6 +2005,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: other-profile
 display_name: Other Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
 context_inputs:

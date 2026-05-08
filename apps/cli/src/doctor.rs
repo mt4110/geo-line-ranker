@@ -84,6 +84,7 @@ pub struct ProfilePackDoctorFile {
     pub schema_version: u32,
     pub kind: String,
     pub manifest_version: u32,
+    pub compatibility_level: String,
     pub supported_content_kinds: Vec<String>,
     pub reason_count: usize,
     pub fixture_references: usize,
@@ -125,6 +126,7 @@ pub struct RankingConfigDoctorProfile {
     pub profile_id: String,
     pub ranking_config_dir: PathBuf,
     pub reason_catalog_path: PathBuf,
+    pub compatibility_level: String,
     pub reason_count: usize,
     pub fixture_references: usize,
     pub source_manifest_references: usize,
@@ -872,6 +874,7 @@ fn profile_pack_doctor_file(file: ProfilePackLintFile) -> ProfilePackDoctorFile 
         schema_version: file.schema_version,
         kind: file.kind.as_str().to_string(),
         manifest_version: file.manifest_version,
+        compatibility_level: file.compatibility_level.as_str().to_string(),
         supported_content_kinds: file
             .supported_content_kinds
             .into_iter()
@@ -899,6 +902,7 @@ fn ranking_config_doctor_profile(file: ProfilePackLintFile) -> RankingConfigDoct
         profile_id: file.profile_id,
         ranking_config_dir: file.ranking_config_dir,
         reason_catalog_path: file.reason_catalog_path,
+        compatibility_level: file.compatibility_level.as_str().to_string(),
         reason_count: file.reason_count,
         fixture_references: file.fixture_count,
         source_manifest_references: file.source_manifest_count,
