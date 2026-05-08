@@ -235,12 +235,13 @@ cargo run -p cli -- doctor ranking-config --json
 Use `config lint` while authoring ranking config or profile-pack changes and
 you want the direct lint view. Use `doctor ranking-config` for release,
 incident, or handoff evidence: it reuses the same lint readers, then summarizes
-active profile selection, ranking file kind counts, profile pack count, reason
-catalog references, referenced ranking config directory count, fixture
-references, source manifest references, event CSV example references, and
-optional crawler manifest references. Contract errors remain blocking and exit
-non-zero. The command supports `--path` and `--profiles-path` for local what-if
-checks without changing environment variables.
+active profile selection, ranking file kind counts, profile pack count,
+profile compatibility levels, reason catalog references, referenced ranking
+config directory count, fixture references, source manifest references, event
+CSV example references, and optional crawler manifest references. Contract
+errors remain blocking and exit non-zero. The command supports `--path` and
+`--profiles-path` for local what-if checks without changing environment
+variables.
 
 Run the context coverage doctor when you need DB-free evidence that the
 committed replay scenario pack still covers the intended context inputs and
@@ -290,11 +291,11 @@ cargo run -p cli -- doctor profile-pack --json
 This doctor reuses the same profile pack validation path as
 `cargo run -p cli -- profile validate`: profile manifests, reason catalogs,
 ranking config references, fixture references, source manifest references,
-event CSV example references, and optional crawler manifest references. Use
-`profile validate`, `profile list`, and `profile inspect` while authoring or
-reviewing a specific pack; use `doctor profile-pack` for operator evidence that
-summarizes committed profile coverage and fails fast on the same deterministic
-contract errors.
+event CSV example references, optional crawler manifest references, and
+declared compatibility levels. Use `profile validate`, `profile list`, and
+`profile inspect` while authoring or reviewing a specific pack; use
+`doctor profile-pack` for operator evidence that summarizes committed profile
+coverage and fails fast on the same deterministic contract errors.
 
 Replay recent persisted recommendation traces against the current SQL-only
 ranking path:

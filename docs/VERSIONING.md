@@ -67,6 +67,7 @@ Profile pack manifests in `configs/profiles/*/profile.yaml` use:
 schema_version: 1
 kind: profile_pack
 manifest_version: 1
+compatibility_level: stable
 ```
 
 Profile reason catalogs in `configs/profiles/*/reasons.yaml` use:
@@ -80,6 +81,8 @@ Profile pack loading is strict:
 
 - `schema_version` must be supported by the current binary.
 - `kind` must match the document role.
+- `compatibility_level` must be one of `reference`, `stable`,
+  `experimental`, or `deprecated`.
 - Unknown keys fail profile manifest and reason catalog loading.
 - Profile-owned references to ranking configs, fixture manifests, source
   manifests, crawler manifests, examples, and event CSV files must use portable

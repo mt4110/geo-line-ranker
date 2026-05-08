@@ -399,6 +399,26 @@ impl ProfilePackKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileCompatibilityLevel {
+    Reference,
+    Stable,
+    Experimental,
+    Deprecated,
+}
+
+impl ProfileCompatibilityLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reference => "reference",
+            Self::Stable => "stable",
+            Self::Experimental => "experimental",
+            Self::Deprecated => "deprecated",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileContextInput {
@@ -443,6 +463,7 @@ pub struct ProfilePackManifest {
     pub manifest_version: u32,
     pub profile_id: String,
     pub display_name: String,
+    pub compatibility_level: ProfileCompatibilityLevel,
     #[serde(default)]
     pub description: Option<String>,
     pub supported_content_kinds: Vec<ContentKind>,
@@ -542,6 +563,7 @@ pub struct ProfilePackLintFile {
     pub schema_version: u32,
     pub kind: ProfilePackKind,
     pub manifest_version: u32,
+    pub compatibility_level: ProfileCompatibilityLevel,
     pub supported_content_kinds: Vec<ContentKind>,
     pub reason_count: usize,
     pub fixture_count: usize,
@@ -1288,6 +1310,7 @@ fn lint_loaded_profile_pack_file(
         schema_version: manifest.schema_version,
         kind: manifest.kind,
         manifest_version: manifest.manifest_version,
+        compatibility_level: manifest.compatibility_level,
         supported_content_kinds: manifest.supported_content_kinds.clone(),
         reason_count: reason_catalog.reasons.len(),
         fixture_count: manifest.fixtures.len(),
@@ -1839,9 +1862,9 @@ mod tests {
         parse_postgres_pool_max_size, resolve_profile_pack_runtime_selection,
         validate_portable_relative_path, validate_profile_pack_contract,
         validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
-        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfilePackRegistry,
-        ProfileReasonCatalog, ProfileReasonCatalogKind, RankingConfigKind, RankingProfiles,
-        DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        ProfileCompatibilityLevel, ProfileContextInput, ProfilePackKind, ProfilePackManifest,
+        ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind, RankingConfigKind,
+        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     use domain::ContentKind;
@@ -1921,6 +1944,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: {profile_id}
 display_name: Example Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
 context_inputs:
@@ -1991,6 +2015,12 @@ files: []
             profile_ids,
             vec!["local-discovery-generic", "school-event-jp"]
         );
+        let compatibility_levels = summary
+            .files
+            .iter()
+            .map(|file| file.compatibility_level.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(compatibility_levels, vec!["stable", "reference"]);
         assert!(summary.files.iter().all(|file| file.reason_count > 0));
         assert_eq!(summary.ranking_configs.len(), 1);
     }
@@ -2227,6 +2257,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
 context_inputs:
@@ -2255,6 +2286,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
 context_inputs:
@@ -2273,6 +2305,64 @@ fixtures:
 
         let error = load_profile_pack_manifest(&manifest_path).expect_err("unknown key");
         assert!(format!("{error:#}").contains("unknown field `unknown_fixture_key`"));
+    }
+
+    #[test]
+    fn rejects_unknown_profile_compatibility_level() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: compatibility_subset
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("compatibility level");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("unknown variant `compatibility_subset`"));
+        assert!(rendered.contains("reference"));
+        assert!(rendered.contains("experimental"));
+    }
+
+    #[test]
+    fn rejects_missing_profile_compatibility_level() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 1
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("compatibility level");
+        assert!(format!("{error:#}").contains("missing field `compatibility_level`"));
     }
 
     #[test]
@@ -2652,6 +2742,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
 context_inputs:
@@ -2780,6 +2871,7 @@ article_support: reserved
             manifest_version: 1,
             profile_id: "school-event-jp ".to_string(),
             display_name: "Example".to_string(),
+            compatibility_level: ProfileCompatibilityLevel::Experimental,
             description: None,
             supported_content_kinds: vec![ContentKind::School],
             context_inputs: vec![ProfileContextInput::Station],
@@ -2886,6 +2978,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
   - article
@@ -2917,6 +3010,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
 context_inputs:

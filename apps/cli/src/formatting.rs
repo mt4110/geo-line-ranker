@@ -402,8 +402,9 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
 
     for file in &summary.files {
         lines.push(format!(
-            "  profile_id={} content_kinds={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} content_kinds={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
             file.profile_id,
+            file.compatibility_level,
             file.supported_content_kinds.join(","),
             file.reason_count,
             file.fixture_references,
@@ -453,8 +454,9 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
     lines.push("profile packs:".to_string());
     lines.extend(summary.profiles.iter().map(|profile| {
         format!(
-            "  profile_id={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
             profile.profile_id,
+            profile.compatibility_level,
             profile.reason_count,
             profile.fixture_references,
             profile.source_manifest_references,

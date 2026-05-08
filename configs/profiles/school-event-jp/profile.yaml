@@ -3,6 +3,7 @@ kind: profile_pack
 manifest_version: 1
 profile_id: school-event-jp
 display_name: School Event JP Reference
+compatibility_level: reference
 description: Reference profile for deterministic JP school and event discovery.
 supported_content_kinds:
   - school

@@ -26,9 +26,10 @@ it gives the direct lint view over strict parsers, schema versions, kinds, and
 local references. Use `doctor ranking-config` when you need Quality doctor v2
 evidence for operators or release handoff. It reuses the same lint path, then
 summarizes active profile selection, ranking file kind counts, profile pack
-coverage, referenced ranking config directories, reason catalog references,
-fixture references, source manifests, event CSV examples, and optional crawler
-manifests. Both commands exit non-zero on contract failures.
+coverage, profile compatibility levels, referenced ranking config directories,
+reason catalog references, fixture references, source manifests, event CSV
+examples, and optional crawler manifests. Both commands exit non-zero on
+contract failures.
 
 The `profile` commands are narrower profile-pack entry points for authors and
 reviewers. They do not change the fixed public-MVP gate.
@@ -48,8 +49,8 @@ reviewing a profile pack because those commands are authoring-focused and show
 manifest-level details. Use `doctor profile-pack` when capturing
 operator-facing quality evidence: it reuses the same profile-pack validation
 logic, then summarizes profile count, reason count, fixture references, source
-manifest references, event CSV example references, and optional crawler
-manifest references.
+manifest references, event CSV example references, optional crawler manifest
+references, and each profile's compatibility level.
 
 Config, profile, source, crawler, or fixture manifest contract changes should
 run the relevant lint, profile, or doctor command. Those commands verify
