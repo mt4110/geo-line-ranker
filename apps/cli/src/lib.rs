@@ -16,11 +16,12 @@ pub use context_inspect::{
 pub use doctor::{
     ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
     run_explanation_integrity_doctor, run_profile_pack_doctor, run_retrieval_parity_doctor,
-    ContextCoverageDoctorCase, ContextCoverageDoctorSummary, ContextCoverageRequirement,
-    ContextCoverageShapeMismatch, ExplanationIntegrityDoctorCase,
+    run_storage_compatibility_doctor, ContextCoverageDoctorCase, ContextCoverageDoctorSummary,
+    ContextCoverageRequirement, ContextCoverageShapeMismatch, ExplanationIntegrityDoctorCase,
     ExplanationIntegrityDoctorSummary, ProfilePackDoctorFile, ProfilePackDoctorSummary,
     RankingConfigDoctorFile, RankingConfigDoctorProfile, RankingConfigDoctorSummary,
     RetrievalParityDoctorCase, RetrievalParityDoctorSummary, RetrievalParitySortField,
+    StorageCompatibilityDoctorSummary, StorageCompatibilityEntry,
 };
 pub use explain::{
     run_explain_trace, ExplainTraceCheck, ExplainTraceIntegritySummary, ExplainTraceItemSummary,
@@ -39,7 +40,7 @@ pub use formatting::{
     format_job_list, format_job_mutation_summary, format_profile_pack_doctor_summary,
     format_ranking_config_doctor_summary, format_replay_evaluation_summary,
     format_replay_scenario_summary, format_retrieval_parity_doctor_summary,
-    format_snapshot_refresh_summary, format_summary,
+    format_snapshot_refresh_summary, format_storage_compatibility_doctor_summary, format_summary,
 };
 pub use import::{
     run_derive_school_station_links, run_event_csv_import, run_import_command, CommandSummary,

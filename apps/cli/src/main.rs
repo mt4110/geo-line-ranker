@@ -13,13 +13,14 @@ use cli::{
     format_job_mutation_summary, format_profile_pack_doctor_summary,
     format_ranking_config_doctor_summary, format_replay_evaluation_summary,
     format_replay_scenario_summary, format_retrieval_parity_doctor_summary,
-    format_snapshot_refresh_summary, format_summary, generate_demo_jp_fixture,
-    ranking_config_doctor_summary_from_lint, run_context_coverage_doctor, run_context_inspect,
-    run_derive_school_station_links, run_event_csv_import, run_explain_trace,
+    format_snapshot_refresh_summary, format_storage_compatibility_doctor_summary, format_summary,
+    generate_demo_jp_fixture, ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
+    run_context_inspect, run_derive_school_station_links, run_event_csv_import, run_explain_trace,
     run_explanation_integrity_doctor, run_fixture_doctor, run_import_command, run_job_due,
     run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_profile_pack_doctor,
     run_replay_evaluate, run_replay_scenarios, run_retrieval_parity_doctor, run_snapshot_refresh,
-    ContextInspectInput, ImportTarget, DEFAULT_REPLAY_SCENARIO_PATH,
+    run_storage_compatibility_doctor, ContextInspectInput, ImportTarget,
+    DEFAULT_REPLAY_SCENARIO_PATH,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -360,6 +361,15 @@ enum DoctorCommand {
         long_about = "Run the DB-free retrieval parity doctor for candidate-slice ordering. This checks that the full-mode OpenSearch candidate retrieval contract keeps the same pre-ranking ordering as the SQL-only candidate slice: direct station first, then distance, walking minutes, school id, and station id. It does not require PostgreSQL or OpenSearch, and it remains optional full-mode evidence rather than part of the public MVP gate.\n\nExamples:\n  geo-line-ranker-cli doctor retrieval-parity\n  geo-line-ranker-cli doctor retrieval-parity --json"
     )]
     RetrievalParity {
+        #[arg(long, help = "Print the doctor report as JSON")]
+        json: bool,
+    },
+    #[command(
+        name = "storage-compatibility",
+        about = "Print the static storage/cache/index compatibility registry",
+        long_about = "Print the static storage/cache/index compatibility registry. This is a DB-free operator-facing status report for PostgreSQL/PostGIS, Redis, OpenSearch, MySQL, and SQLite support levels. It separates storage compatibility from profile-pack compatibility levels and does not claim MySQL write support.\n\nExamples:\n  geo-line-ranker-cli doctor storage-compatibility\n  geo-line-ranker-cli doctor storage-compatibility --json"
+    )]
+    StorageCompatibility {
         #[arg(long, help = "Print the doctor report as JSON")]
         json: bool,
     },
@@ -755,6 +765,14 @@ async fn main() -> anyhow::Result<()> {
                         "doctor retrieval-parity had blocker checks={}",
                         summary.failed
                     );
+                }
+            }
+            DoctorCommand::StorageCompatibility { json } => {
+                let summary = run_storage_compatibility_doctor();
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_storage_compatibility_doctor_summary(&summary));
                 }
             }
         },
@@ -1556,6 +1574,28 @@ mod tests {
     }
 
     #[test]
+    fn storage_compatibility_doctor_help_points_to_static_registry() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let storage_compatibility = doctor
+            .find_subcommand_mut("storage-compatibility")
+            .expect("doctor storage-compatibility command");
+        let mut buffer = Vec::new();
+        storage_compatibility
+            .write_long_help(&mut buffer)
+            .expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("static storage/cache/index compatibility registry"));
+        assert!(help.contains("PostgreSQL/PostGIS, Redis, OpenSearch, MySQL, and SQLite"));
+        assert!(help.contains("separates storage compatibility from profile-pack compatibility"));
+        assert!(help.contains("does not claim MySQL write support"));
+        assert!(help.contains("doctor storage-compatibility --json"));
+    }
+
+    #[test]
     fn doctor_help_lists_retrieval_parity_doctor() {
         let mut command = Cli::command();
         let doctor = command
@@ -1567,6 +1607,20 @@ mod tests {
 
         assert!(help.contains("retrieval-parity"));
         assert!(help.contains("Run the DB-free retrieval parity doctor"));
+    }
+
+    #[test]
+    fn doctor_help_lists_storage_compatibility_doctor() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let mut buffer = Vec::new();
+        doctor.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("storage-compatibility"));
+        assert!(help.contains("Print the static storage/cache/index compatibility registry"));
     }
 
     #[test]
@@ -1586,6 +1640,40 @@ mod tests {
         assert!(rendered.contains("opensearch_sort_contract: _score=desc"));
         assert!(rendered.contains("case_id=direct_station_first status=passed"));
         assert!(rendered.contains("case_id=limit_after_ordering status=passed"));
+    }
+
+    #[test]
+    fn storage_compatibility_doctor_summary_reports_registry() {
+        let summary = cli::run_storage_compatibility_doctor();
+        let rendered = format_storage_compatibility_doctor_summary(&summary);
+
+        assert!(rendered.contains("doctor storage-compatibility completed:"));
+        assert!(rendered.contains("registry_version=v0.4.0-static-storage-compatibility"));
+        assert!(rendered.contains("components=5"));
+        assert!(rendered
+            .contains("levels=artifact_only=1,experimental=1,reference=1,stable_optional=2"));
+        assert!(rendered.contains("sql_only_required=postgres_postgis"));
+        assert!(rendered.contains("optional_runtime=redis,opensearch"));
+        assert!(rendered.contains("public_mvp_gate=postgres_postgis,redis"));
+        assert!(rendered.contains("final_ranking_owner=rust"));
+        assert!(rendered.contains("profile_compatibility_source: profile manifests"));
+        assert!(rendered.contains(
+            "component=postgres_postgis display_name=PostgreSQL/PostGIS compatibility_level=reference"
+        ));
+        assert!(rendered
+            .contains("component=redis display_name=Redis compatibility_level=stable_optional"));
+        assert!(rendered.contains("component=redis display_name=Redis compatibility_level=stable_optional runtime_status=optional data_role=cache_only public_mvp_gate=true"));
+        assert!(rendered.contains(
+            "component=opensearch display_name=OpenSearch compatibility_level=stable_optional"
+        ));
+        assert!(rendered.contains("component=opensearch display_name=OpenSearch compatibility_level=stable_optional runtime_status=optional data_role=candidate_retrieval_only public_mvp_gate=false"));
+        assert!(rendered
+            .contains("component=mysql display_name=MySQL compatibility_level=experimental"));
+        assert!(rendered.contains("component=mysql display_name=MySQL compatibility_level=experimental runtime_status=not_runtime_dependency data_role=compatibility_subset public_mvp_gate=false"));
+        assert!(rendered.contains("write_database_status=not_implemented"));
+        assert!(rendered
+            .contains("component=sqlite display_name=SQLite compatibility_level=artifact_only"));
+        assert!(rendered.contains("write_database_status=read_only_artifact"));
     }
 
     #[test]

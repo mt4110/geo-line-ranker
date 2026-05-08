@@ -233,6 +233,32 @@ impl RetrievalParityDoctorSummary {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StorageCompatibilityDoctorSummary {
+    pub registry_version: String,
+    pub component_count: usize,
+    pub compatibility_level_counts: BTreeMap<String, usize>,
+    pub sql_only_required_components: Vec<String>,
+    pub optional_runtime_components: Vec<String>,
+    pub public_mvp_gate_components: Vec<String>,
+    pub final_ranking_owner: String,
+    pub profile_compatibility_source: String,
+    pub entries: Vec<StorageCompatibilityEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StorageCompatibilityEntry {
+    pub component: String,
+    pub display_name: String,
+    pub compatibility_level: String,
+    pub runtime_status: String,
+    pub data_role: String,
+    pub public_mvp_gate: bool,
+    pub write_database_status: String,
+    pub contract_evidence: String,
+    pub operator_note: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RetrievalParitySortField {
     pub field: String,
     pub order: String,
@@ -360,6 +386,39 @@ pub fn run_retrieval_parity_doctor() -> RetrievalParityDoctorSummary {
             })
             .collect(),
         cases,
+    }
+}
+
+pub fn run_storage_compatibility_doctor() -> StorageCompatibilityDoctorSummary {
+    let entries = storage_compatibility_entries();
+    let mut compatibility_level_counts = BTreeMap::new();
+    for entry in &entries {
+        increment(&mut compatibility_level_counts, &entry.compatibility_level);
+    }
+
+    StorageCompatibilityDoctorSummary {
+        registry_version: "v0.4.0-static-storage-compatibility".to_string(),
+        component_count: entries.len(),
+        compatibility_level_counts,
+        sql_only_required_components: entries
+            .iter()
+            .filter(|entry| entry.runtime_status == "required_for_sql_only")
+            .map(|entry| entry.component.clone())
+            .collect(),
+        optional_runtime_components: entries
+            .iter()
+            .filter(|entry| entry.runtime_status == "optional")
+            .map(|entry| entry.component.clone())
+            .collect(),
+        public_mvp_gate_components: entries
+            .iter()
+            .filter(|entry| entry.public_mvp_gate)
+            .map(|entry| entry.component.clone())
+            .collect(),
+        final_ranking_owner: "rust".to_string(),
+        profile_compatibility_source:
+            "profile manifests; see doctor profile-pack and doctor ranking-config".to_string(),
+        entries,
     }
 }
 
@@ -730,6 +789,92 @@ fn candidate_link_key(link: &SchoolStationLink) -> String {
     format!("{}@{}", link.school_id, link.station_id)
 }
 
+fn storage_compatibility_entries() -> Vec<StorageCompatibilityEntry> {
+    vec![
+        storage_compatibility_entry(StorageCompatibilityEntrySpec {
+            component: "postgres_postgis",
+            display_name: "PostgreSQL/PostGIS",
+            compatibility_level: "reference",
+            runtime_status: "required_for_sql_only",
+            data_role: "reference_write_store",
+            public_mvp_gate: true,
+            write_database_status: "reference",
+            contract_evidence: "migrations_and_tests",
+            operator_note: "Reference implementation for API, worker, migrations, imports, traces, jobs, and SQL-only candidate retrieval.",
+        }),
+        storage_compatibility_entry(StorageCompatibilityEntrySpec {
+            component: "redis",
+            display_name: "Redis",
+            compatibility_level: "stable_optional",
+            runtime_status: "optional",
+            data_role: "cache_only",
+            public_mvp_gate: true,
+            write_database_status: "not_applicable",
+            contract_evidence: "readyz_cache_status",
+            operator_note: "Optional recommendation response cache; the fixed public-MVP gate starts it as cache-only service, but correctness must not depend on it.",
+        }),
+        storage_compatibility_entry(StorageCompatibilityEntrySpec {
+            component: "opensearch",
+            display_name: "OpenSearch",
+            compatibility_level: "stable_optional",
+            runtime_status: "optional",
+            data_role: "candidate_retrieval_only",
+            public_mvp_gate: false,
+            write_database_status: "not_applicable",
+            contract_evidence: "retrieval_parity_doctor",
+            operator_note: "Optional full-mode candidate retrieval index; Rust recomputes final ranking and SQL-only remains the reference path.",
+        }),
+        storage_compatibility_entry(StorageCompatibilityEntrySpec {
+            component: "mysql",
+            display_name: "MySQL",
+            compatibility_level: "experimental",
+            runtime_status: "not_runtime_dependency",
+            data_role: "compatibility_subset",
+            public_mvp_gate: false,
+            write_database_status: "not_implemented",
+            contract_evidence: "docs_only_until_contract_tests",
+            operator_note: "No committed write adapter, migrations, CI shard, or contract-report tables exist yet; do not claim production parity.",
+        }),
+        storage_compatibility_entry(StorageCompatibilityEntrySpec {
+            component: "sqlite",
+            display_name: "SQLite",
+            compatibility_level: "artifact_only",
+            runtime_status: "not_runtime_dependency",
+            data_role: "artifact_export_only",
+            public_mvp_gate: false,
+            write_database_status: "read_only_artifact",
+            contract_evidence: "no_write_contract",
+            operator_note: "Reserved for read-only artifacts or exports only; never a primary write store.",
+        }),
+    ]
+}
+
+struct StorageCompatibilityEntrySpec {
+    component: &'static str,
+    display_name: &'static str,
+    compatibility_level: &'static str,
+    runtime_status: &'static str,
+    data_role: &'static str,
+    public_mvp_gate: bool,
+    write_database_status: &'static str,
+    contract_evidence: &'static str,
+    operator_note: &'static str,
+}
+
+fn storage_compatibility_entry(spec: StorageCompatibilityEntrySpec) -> StorageCompatibilityEntry {
+    StorageCompatibilityEntry {
+        component: spec.component.to_string(),
+        display_name: spec.display_name.to_string(),
+        compatibility_level: spec.compatibility_level.to_string(),
+        runtime_status: spec.runtime_status.to_string(),
+        data_role: spec.data_role.to_string(),
+        public_mvp_gate: spec.public_mvp_gate,
+        write_database_status: spec.write_database_status.to_string(),
+        contract_evidence: spec.contract_evidence.to_string(),
+        operator_note: spec.operator_note.to_string(),
+    }
+}
+
 fn context_shapes_label(shapes: &[Vec<String>]) -> String {
     shapes
         .iter()
@@ -918,7 +1063,7 @@ mod tests {
     use super::{
         explanation_integrity_summary_from_replay, ranking_config_doctor_summary_from_lint,
         run_context_coverage_doctor, run_explanation_integrity_doctor, run_profile_pack_doctor,
-        run_retrieval_parity_doctor,
+        run_retrieval_parity_doctor, run_storage_compatibility_doctor,
     };
     use crate::{
         explanation_integrity::{QualityCheckStatus, QualitySeverity},
@@ -1151,6 +1296,107 @@ mod tests {
             case.actual_order,
             vec!["school_direct@st_target".to_string()]
         );
+    }
+
+    #[test]
+    fn storage_compatibility_doctor_reports_static_registry() {
+        let summary = run_storage_compatibility_doctor();
+
+        assert_eq!(
+            summary.registry_version,
+            "v0.4.0-static-storage-compatibility"
+        );
+        assert_eq!(summary.component_count, 5);
+        assert_eq!(summary.final_ranking_owner, "rust");
+        assert!(summary
+            .profile_compatibility_source
+            .contains("profile manifests"));
+        assert_eq!(
+            summary.sql_only_required_components,
+            vec!["postgres_postgis".to_string()]
+        );
+        assert_eq!(
+            summary.optional_runtime_components,
+            vec!["redis".to_string(), "opensearch".to_string()]
+        );
+        assert_eq!(
+            summary.public_mvp_gate_components,
+            vec!["postgres_postgis".to_string(), "redis".to_string()]
+        );
+        assert_eq!(
+            summary.compatibility_level_counts.get("reference"),
+            Some(&1)
+        );
+        assert_eq!(
+            summary.compatibility_level_counts.get("stable_optional"),
+            Some(&2)
+        );
+        assert_eq!(
+            summary.compatibility_level_counts.get("experimental"),
+            Some(&1)
+        );
+        assert_eq!(
+            summary.compatibility_level_counts.get("artifact_only"),
+            Some(&1)
+        );
+
+        let postgres = summary
+            .entries
+            .iter()
+            .find(|entry| entry.component == "postgres_postgis")
+            .expect("postgres entry");
+        assert_eq!(postgres.compatibility_level, "reference");
+        assert_eq!(postgres.runtime_status, "required_for_sql_only");
+        assert!(postgres.public_mvp_gate);
+        assert_eq!(postgres.write_database_status, "reference");
+
+        let opensearch = summary
+            .entries
+            .iter()
+            .find(|entry| entry.component == "opensearch")
+            .expect("opensearch entry");
+        assert_eq!(opensearch.data_role, "candidate_retrieval_only");
+        assert!(!opensearch.public_mvp_gate);
+        assert_eq!(opensearch.write_database_status, "not_applicable");
+
+        let mysql = summary
+            .entries
+            .iter()
+            .find(|entry| entry.component == "mysql")
+            .expect("mysql entry");
+        assert_eq!(mysql.compatibility_level, "experimental");
+        assert!(!mysql.public_mvp_gate);
+        assert_eq!(mysql.write_database_status, "not_implemented");
+
+        let sqlite = summary
+            .entries
+            .iter()
+            .find(|entry| entry.component == "sqlite")
+            .expect("sqlite entry");
+        assert_eq!(sqlite.compatibility_level, "artifact_only");
+        assert!(!sqlite.public_mvp_gate);
+        assert_eq!(sqlite.write_database_status, "read_only_artifact");
+    }
+
+    #[test]
+    fn storage_compatibility_doctor_json_uses_contract_field_names() {
+        let summary = run_storage_compatibility_doctor();
+        let payload = serde_json::to_value(&summary).expect("json payload");
+
+        assert_eq!(
+            payload["public_mvp_gate_components"],
+            serde_json::json!(["postgres_postgis", "redis"])
+        );
+
+        let entries = payload["entries"].as_array().expect("entries array");
+        let mysql = entries
+            .iter()
+            .find(|entry| entry["component"] == "mysql")
+            .expect("mysql entry");
+
+        assert_eq!(mysql["compatibility_level"], "experimental");
+        assert_eq!(mysql["write_database_status"], "not_implemented");
+        assert!(mysql.get("write_path_status").is_none());
     }
 
     #[test]

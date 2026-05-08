@@ -4,6 +4,7 @@ use crate::{
     doctor::{
         ContextCoverageDoctorSummary, ExplanationIntegrityDoctorSummary, ProfilePackDoctorSummary,
         RankingConfigDoctorSummary, RetrievalParityDoctorSummary,
+        StorageCompatibilityDoctorSummary,
     },
     explain::{ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport},
     explanation_integrity::QualityCheckStatus,
@@ -571,6 +572,42 @@ pub fn format_retrieval_parity_doctor_summary(summary: &RetrievalParityDoctorSum
             format_order(&case.actual_order),
             format_order(&case.input_order),
             case.description
+        ));
+    }
+
+    lines.join("\n")
+}
+
+pub fn format_storage_compatibility_doctor_summary(
+    summary: &StorageCompatibilityDoctorSummary,
+) -> String {
+    let mut lines = vec![format!(
+        "doctor storage-compatibility completed: registry_version={}, components={}, levels={}, sql_only_required={}, optional_runtime={}, public_mvp_gate={}, final_ranking_owner={}",
+        summary.registry_version,
+        summary.component_count,
+        format_counts(&summary.compatibility_level_counts),
+        format_order(&summary.sql_only_required_components),
+        format_order(&summary.optional_runtime_components),
+        format_order(&summary.public_mvp_gate_components),
+        summary.final_ranking_owner
+    )];
+    lines.push(format!(
+        "profile_compatibility_source: {}",
+        summary.profile_compatibility_source
+    ));
+
+    for entry in &summary.entries {
+        lines.push(format!(
+            "  component={} display_name={} compatibility_level={} runtime_status={} data_role={} public_mvp_gate={} write_database_status={} evidence={} note={}",
+            entry.component,
+            entry.display_name,
+            entry.compatibility_level,
+            entry.runtime_status,
+            entry.data_role,
+            entry.public_mvp_gate,
+            entry.write_database_status,
+            entry.contract_evidence,
+            entry.operator_note
         ));
     }
 

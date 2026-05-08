@@ -50,6 +50,12 @@ Required local validation:
   cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
   cargo run -p crawler -- manifest lint
   cargo run -p cli -- eval golden
+  cargo run -p cli -- doctor ranking-config
+  cargo run -p cli -- doctor explanation-integrity
+  cargo run -p cli -- doctor context-coverage
+  cargo run -p cli -- doctor retrieval-parity
+  cargo run -p cli -- doctor profile-pack
+  cargo run -p cli -- doctor storage-compatibility
   just mvp-acceptance
   git diff --check
 
