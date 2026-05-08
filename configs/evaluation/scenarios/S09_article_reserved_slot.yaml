@@ -1,0 +1,94 @@
+schema_version: 1
+kind: replay_scenario
+id: S09_ARTICLE_RESERVED_SLOT
+title: Article reserved slot stays out of ranking
+description: Article support is reserved in the profile pack, so article-like content must be absent rather than partially ranked.
+tags:
+  - v0.3.1
+  - article_reserved
+  - content_kind
+query:
+  target_station_id: st_article_seed
+  limit: 3
+  placement: search
+  debug: false
+  context:
+    context_source: request_station
+    confidence: 0.98
+    station:
+      station_id: st_article_seed
+      station_name: Article Seed
+    line:
+      line_name: Article Line
+    privacy_level: coarse_area
+    fallback_policy: school_event_jp_default
+    gate_policy: geo_line_default
+    warnings: []
+dataset:
+  schools:
+    - id: school_article_anchor
+      name: Article Anchor High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_article_anchor
+    - id: school_article_peer
+      name: Article Peer High
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_article_peer
+  events:
+    - id: event_article_peer_open
+      school_id: school_article_peer
+      title: Peer Open Day
+      event_category: open_campus
+      is_open_day: true
+      is_featured: false
+      priority_weight: 0.2
+      starts_at: "2026-06-15T10:00:00+09:00"
+      placement_tags:
+        - search
+      is_active: true
+  stations:
+    - id: st_article_seed
+      name: Article Seed
+      line_name: Article Line
+      latitude: 35.6500
+      longitude: 139.7500
+  school_station_links:
+    - school_id: school_article_anchor
+      station_id: st_article_seed
+      walking_minutes: 5
+      distance_meters: 420
+      hop_distance: 0
+      line_name: Article Line
+    - school_id: school_article_peer
+      station_id: st_article_seed
+      walking_minutes: 7
+      distance_meters: 620
+      hop_distance: 0
+      line_name: Article Line
+  popularity_snapshots: []
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+expectations:
+  fallback_stage: strict_station
+  ordered:
+    - "event:event_article_peer_open"
+    - "school:school_article_anchor"
+  absent_from_result:
+    - "article:article_reserved_slot"
+  absent_content_kinds:
+    - article
+  candidate_counts:
+    strict_station: 2
+    same_line: 2
+    same_city: 0
+    same_prefecture: 0
+    safe_global_popular: 2
+  required_reason_codes:
+    "event:event_article_peer_open":
+      - geo.direct_station
+      - event.open_day
+      - placement.content_kind_boost

@@ -934,7 +934,7 @@ mod tests {
         )
         .expect("explanation integrity doctor");
 
-        assert!(summary.scenarios >= 4);
+        assert!(summary.scenarios >= 10);
         assert_eq!(summary.blockers, 0);
         assert_eq!(summary.blocked, 0);
         assert!(summary.explanation_integrity_total >= summary.scenarios * 6);
@@ -1063,7 +1063,7 @@ mod tests {
         let summary = run_context_coverage_doctor(repo_root.join(DEFAULT_REPLAY_SCENARIO_PATH))
             .expect("context coverage doctor");
 
-        assert!(summary.scenarios >= 4);
+        assert!(summary.scenarios >= 10);
         assert_eq!(summary.scenarios_without_context, 0);
         assert!(!summary.has_blockers());
         assert!(summary.context_shape_mismatches.is_empty());

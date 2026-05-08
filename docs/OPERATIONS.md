@@ -193,12 +193,14 @@ correctness. It prints:
 - `explanation_integrity`: reason-code and explanation-template checks that
   passed out of total integrity checks.
 
-Each scenario line shows expected and actual fallback stage and item order. On
-failure, the report includes failed checks with `severity=blocker`; treat those
-as release blockers until the ranking change or scenario expectation is
-intentionally updated. Use `--json` for release evidence capture, and reserve
-`--allow-blockers` for local investigation when you need a report without a
-non-zero exit.
+Each scenario line shows expected and actual fallback stage and item order. The
+runner also checks declared absent items, absent content kinds, candidate counts,
+same-school and same-group diversity caps, required reason codes, and explanation
+integrity. On failure, the report includes failed checks with
+`severity=blocker`; treat those as release blockers until the ranking change or
+scenario expectation is intentionally updated. Use `--json` for release evidence
+capture, and reserve `--allow-blockers` for local investigation when you need a
+report without a non-zero exit.
 
 The command is DB-free. It reads `RANKING_CONFIG_DIR` and `ALGORITHM_VERSION`
 for parity with runtime ranking config, or accepts `--ranking-config-dir` and
@@ -217,7 +219,8 @@ resolution as `eval golden` and `replay scenarios`, but reports only
 checks. A clean doctor result means explanation labels, reason codes, and
 fallback-stage wording are consistent for the scenario pack. It does not
 replace the full golden replay gate; it intentionally does not prove ordering,
-pairwise, or candidate-count correctness.
+pairwise, absent-item, content-kind, diversity-cap, or candidate-count
+correctness.
 Use `--json` for evidence capture and `--allow-blockers` only for local
 investigation.
 
@@ -256,8 +259,9 @@ required context sources are `request_area`, `request_line`, and
 `default_safe_context`; missing coverage or a context source whose declared
 shape does not match the scenario context is a blocker. Use `eval golden` or
 `replay scenarios` when you need ranking correctness, ordering, pairwise,
-candidate-count, and explanation checks; use `doctor context-coverage` when
-you need a compact operator-facing coverage inventory.
+absent-item, content-kind, diversity-cap, candidate-count, and explanation
+checks; use `doctor context-coverage` when you need a compact operator-facing
+coverage inventory.
 
 Run the retrieval parity doctor when an operator needs DB-free evidence that
 full-mode candidate retrieval still uses the same pre-ranking ordering

@@ -208,11 +208,12 @@ managed infrastructure to the release gate.
 `cargo run -p cli -- eval golden` is the operator-facing DB-free golden quality
 check for ranking correctness. It replays the committed scenario pack under
 `configs/evaluation/scenarios`, checks fallback stage, expected order, pairwise
-ordering, optional `candidate_counts` stage assertions when declared,
-reason-code integrity, and explanation template consistency, and exits non-zero
-when any blocker fails. Use `--json` when capturing a release candidate
-artifact, and `--allow-blockers` only for report-only investigation. Use
-`--scenario-path`, `--ranking-config-dir`, and `--algorithm-version` for
+ordering, absent item and absent content-kind assertions, optional
+`candidate_counts` stage assertions, optional same-school and same-group
+diversity caps, reason-code integrity, and explanation template consistency,
+and exits non-zero when any blocker fails. Use `--json` when capturing a release
+candidate artifact, and `--allow-blockers` only for report-only investigation.
+Use `--scenario-path`, `--ranking-config-dir`, and `--algorithm-version` for
 explicit local what-if checks without changing environment variables.
 `cargo run -p cli -- replay scenarios` remains supported and uses the same
 runner; its scenario path flag is `--path`.
@@ -233,9 +234,10 @@ scenario pack and ranking config resolution, then reports only
 checks. Use it when a change touches reason-code emission, public explanation
 wording, or fallback stage templates. It is useful release evidence, but it is
 not a substitute for `eval golden` or `replay scenarios`; ordering, pairwise,
-and candidate-count regressions belong to the full replay gate. The command
-supports `--json`, `--ranking-config-dir`, `--algorithm-version`, and
-`--allow-blockers` with the same intent as the full replay gate.
+absent-item, content-kind, diversity-cap, and candidate-count regressions belong
+to the full replay gate. The command supports `--json`, `--ranking-config-dir`,
+`--algorithm-version`, and `--allow-blockers` with the same intent as the full
+replay gate.
 
 `cargo run -p cli -- doctor context-coverage` is the Quality doctor v2 slice
 for replay scenario coverage. It is DB-free and reads the committed scenario
@@ -245,8 +247,9 @@ source-to-shape mismatches. Missing coverage for `request_area`, `request_line`,
 or `default_safe_context` is a blocker, as is a scenario whose declared context
 source does not match its context shape. Use `--json` when capturing evidence
 artifacts. This doctor is not a substitute for `eval golden` or
-`replay scenarios`; ranking output, pairwise ordering, candidate-count
-correctness, and explanation integrity still belong to the full replay gate.
+`replay scenarios`; ranking output, pairwise ordering, absent-item,
+content-kind, diversity-cap, candidate-count correctness, and explanation
+integrity still belong to the full replay gate.
 
 `cargo run -p cli -- doctor retrieval-parity` is the DB-free full-mode
 retrieval ordering contract check. It verifies the candidate-slice ordering
