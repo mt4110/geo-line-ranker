@@ -119,7 +119,7 @@ The ranker may return fewer than the requested limit when the hard caps would ot
 - Import success and failure are recorded in `import_runs`, `import_run_files`, and `import_reports`.
 - Allowlist crawl uses `cargo run -p crawler -- fetch|parse --manifest ...`.
 - Fetch writes raw HTML into `.storage/raw/<source_id>/<checksum>/...`.
-- Parse uses the registry-selected parser, records parse failures explicitly, dedupes deterministic event IDs, and imports rows into `events` as `source_type = 'crawl'` with manifest `source_id` as the stable source key.
+- Parse uses the registry-selected parser, records parse failures explicitly, dedupes deterministic event IDs, and imports rows into `events` as `source_type = 'crawl'` with manifest `source_id` as the stable source key. Parser details such as detail, official, or apply URLs are preserved in `events.details`.
 - Crawl success and failure are recorded in `crawl_runs`, `crawl_fetch_logs`, `crawl_parse_reports`, and `crawl_dedupe_reports`.
 
 ## Workspace Crate Map

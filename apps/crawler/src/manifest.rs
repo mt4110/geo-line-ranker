@@ -783,6 +783,7 @@ pub(crate) fn to_event_csv_record(record: &ParsedEventRecord) -> EventCsvRecord 
             .map(|placement| placement.as_str().to_string())
             .collect::<Vec<_>>()
             .join("|"),
+        details: record.details.clone(),
     }
 }
 
@@ -790,12 +791,46 @@ pub(crate) fn to_event_csv_record(record: &ParsedEventRecord) -> EventCsvRecord 
 mod tests {
     use std::path::Path;
 
-    use crawler_core::{ParserExpectedShape, SourceMaturity};
+    use crawler_core::{ParsedEventRecord, ParserExpectedShape, SourceMaturity};
+    use serde_json::json;
 
     use super::{
-        lexical_relative_path, manifest_path_value, scaffold_domain, ScaffoldDomainRequest,
+        lexical_relative_path, manifest_path_value, scaffold_domain, to_event_csv_record,
+        ScaffoldDomainRequest,
     };
     use crate::report::format_scaffold_summary;
+
+    #[test]
+    fn event_csv_record_preserves_parser_details() {
+        let record = ParsedEventRecord {
+            event_id: "event-details".to_string(),
+            school_id: "school-details".to_string(),
+            title: "Details Event".to_string(),
+            event_category: "open_campus".to_string(),
+            is_open_day: true,
+            is_featured: false,
+            priority_weight: 0.5,
+            starts_at: Some("2026-05-10T10:00:00+09:00".to_string()),
+            placement_tags: Vec::new(),
+            logical_name: "events".to_string(),
+            target_url: "https://example.com/events".to_string(),
+            details: json!({
+                "detail_url": "https://example.com/events/1",
+                "apply_url": "https://example.com/apply/1"
+            }),
+        };
+
+        let csv_record = to_event_csv_record(&record);
+
+        assert_eq!(
+            csv_record.details["detail_url"],
+            "https://example.com/events/1"
+        );
+        assert_eq!(
+            csv_record.details["apply_url"],
+            "https://example.com/apply/1"
+        );
+    }
 
     #[test]
     fn scaffold_domain_writes_manifest_fixture_and_guide() -> anyhow::Result<()> {

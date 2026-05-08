@@ -2,6 +2,7 @@ use std::fs;
 
 use cli::run_event_csv_import;
 use config::{AppSettings, CandidateRetrievalMode, OpenSearchSettings};
+use serde_json::Value;
 use storage_postgres::{run_migrations, seed_fixture};
 use tokio_postgres::NoTls;
 
@@ -74,9 +75,9 @@ async fn event_csv_import_is_idempotent_and_deactivates_stale_rows() -> anyhow::
 
         fs::write(
             &csv_path,
-            "event_id,school_id,title,event_category,is_open_day,is_featured,priority_weight,starts_at,placement_tags\n\
-event_csv_idempotent_a,school_seaside,Seaside May Open,open_campus,true,true,1.0,2026-05-01T10:00:00+09:00,home|detail\n\
-event_csv_idempotent_b,school_garden,Garden Lab,trial_class,false,false,0.5,2026-05-03T13:00:00+09:00,search\n",
+            "event_id,school_id,title,event_category,is_open_day,is_featured,priority_weight,starts_at,placement_tags,details\n\
+event_csv_idempotent_a,school_seaside,Seaside May Open,open_campus,true,true,1.0,2026-05-01T10:00:00+09:00,home|detail,\"{\"\"detail_url\"\":\"\"https://example.com/ignored\"\"}\"\n\
+event_csv_idempotent_b,school_garden,Garden Lab,trial_class,false,false,0.5,2026-05-03T13:00:00+09:00,search,\"{\"\"detail_url\"\":\"\"https://example.com/ignored-b\"\"}\"\n",
         )?;
 
         run_event_csv_import(&settings, &csv_path).await?;
@@ -101,6 +102,17 @@ event_csv_idempotent_b,school_garden,Garden Lab,trial_class,false,false,0.5,2026
             .await?
             .get::<_, i64>("count");
         assert_eq!(active_count, 2);
+
+        let details = client
+            .query_one(
+                "SELECT details
+                 FROM events
+                 WHERE id = 'event_csv_idempotent_a'",
+                &[],
+            )
+            .await?
+            .get::<_, Value>("details");
+        assert_eq!(details, Value::Object(Default::default()));
 
         fs::write(
             &csv_path,

@@ -69,6 +69,8 @@ pub struct Event {
     pub starts_at: Option<String>,
     #[serde(default)]
     pub placement_tags: Vec<PlacementKind>,
+    #[serde(default = "default_payload", skip_serializing_if = "is_empty_object")]
+    pub details: Value,
     #[serde(default = "default_true")]
     pub is_active: bool,
 }
@@ -278,10 +280,58 @@ fn default_payload() -> Value {
     Value::Object(Default::default())
 }
 
+fn is_empty_object(value: &Value) -> bool {
+    matches!(value, Value::Object(map) if map.is_empty())
+}
+
 fn default_true() -> bool {
     true
 }
 
 fn default_reason_code() -> String {
     "uncataloged".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::Event;
+
+    fn event_with_details(details: serde_json::Value) -> Event {
+        Event {
+            id: "event-a".to_string(),
+            school_id: "school-a".to_string(),
+            title: "Event A".to_string(),
+            event_category: "open_campus".to_string(),
+            is_open_day: true,
+            is_featured: false,
+            priority_weight: 0.0,
+            starts_at: None,
+            placement_tags: Vec::new(),
+            details,
+            is_active: true,
+        }
+    }
+
+    #[test]
+    fn event_serialization_omits_empty_details() {
+        let payload =
+            serde_json::to_value(event_with_details(json!({}))).expect("event serializes");
+
+        assert!(payload.get("details").is_none());
+    }
+
+    #[test]
+    fn event_serialization_keeps_non_empty_details() {
+        let payload = serde_json::to_value(event_with_details(json!({
+            "detail_url": "https://example.com/events/1"
+        })))
+        .expect("event serializes");
+
+        assert_eq!(
+            payload["details"]["detail_url"],
+            "https://example.com/events/1"
+        );
+    }
 }

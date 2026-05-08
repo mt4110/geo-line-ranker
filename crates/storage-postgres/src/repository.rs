@@ -22,7 +22,7 @@ use generic_csv::SourceManifest;
 use jp_postal::PostalCodeRecord;
 use jp_rail::RailStationRecord;
 use jp_school::{SchoolCodeRecord, SchoolGeodataRecord};
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use storage::{
@@ -1659,6 +1659,7 @@ impl PgRepository {
                     priority_weight,
                     to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS starts_at,
                     placement_tags,
+                    details,
                     is_active
                  FROM events
                  WHERE school_id = ANY($1)
@@ -1684,6 +1685,7 @@ impl PgRepository {
                     priority_weight: row.get("priority_weight"),
                     starts_at: row.get("starts_at"),
                     placement_tags,
+                    details: row.get("details"),
                     is_active: row.get("is_active"),
                 })
             })
@@ -2104,6 +2106,9 @@ pub struct EventCsvRecord {
     pub starts_at: Option<String>,
     #[serde(default)]
     pub placement_tags: String,
+    // Keep event CSV as the stable public import shape; crawler fills details programmatically.
+    #[serde(default = "default_event_details", skip_deserializing)]
+    pub details: Value,
 }
 
 impl EventCsvRecord {
@@ -2323,6 +2328,7 @@ impl RecommendationRepository for PgRepository {
                     priority_weight,
                     to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS starts_at,
                     placement_tags,
+                    details,
                     is_active
                  FROM events
                  WHERE is_active = TRUE
@@ -2347,6 +2353,7 @@ impl RecommendationRepository for PgRepository {
                     priority_weight: row.get("priority_weight"),
                     starts_at: row.get("starts_at"),
                     placement_tags,
+                    details: row.get("details"),
                     is_active: row.get("is_active"),
                 })
             })
@@ -4222,12 +4229,13 @@ async fn import_event_records(
                     priority_weight,
                     starts_at,
                     placement_tags,
+                    details,
                     is_active,
                     source_type,
                     source_key,
                     updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10, $11, NOW())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, $11, $12, NOW())
                 ON CONFLICT (id) DO UPDATE
                 SET school_id = EXCLUDED.school_id,
                     title = EXCLUDED.title,
@@ -4237,6 +4245,7 @@ async fn import_event_records(
                     priority_weight = EXCLUDED.priority_weight,
                     starts_at = EXCLUDED.starts_at,
                     placement_tags = EXCLUDED.placement_tags,
+                    details = EXCLUDED.details,
                     is_active = TRUE,
                     source_type = EXCLUDED.source_type,
                     source_key = EXCLUDED.source_key,
@@ -4251,6 +4260,7 @@ async fn import_event_records(
                     &record.priority_weight,
                     &starts_at,
                     &placement_tags,
+                    &record.details,
                     &source_type,
                     &source_key,
                 ],
@@ -4586,11 +4596,12 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
                     priority_weight,
                     starts_at,
                     placement_tags,
+                    details,
                     is_active,
                     source_type,
                     updated_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, 'seed', NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, 'seed', NOW())
                  ON CONFLICT (id) DO UPDATE
                  SET school_id = EXCLUDED.school_id,
                      title = EXCLUDED.title,
@@ -4600,6 +4611,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
                      priority_weight = EXCLUDED.priority_weight,
                      starts_at = EXCLUDED.starts_at,
                      placement_tags = EXCLUDED.placement_tags,
+                     details = EXCLUDED.details,
                      is_active = TRUE,
                      source_type = EXCLUDED.source_type,
                      updated_at = NOW()",
@@ -4613,6 +4625,7 @@ pub async fn seed_fixture(database_url: &str, fixture_dir: impl AsRef<Path>) -> 
                     &event.priority_weight,
                     &starts_at,
                     &event.normalized_placement_tags()?,
+                    &event.details,
                 ],
             )
             .await?;
@@ -4730,6 +4743,25 @@ fn default_event_category() -> String {
     "general".to_string()
 }
 
+fn default_event_details() -> Value {
+    Value::Object(Default::default())
+}
+
+fn deserialize_event_details<'de, D>(deserializer: D) -> Result<Value, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    let Some(raw) = raw else {
+        return Ok(default_event_details());
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(default_event_details());
+    }
+    serde_json::from_str(value).map_err(de::Error::custom)
+}
+
 #[derive(Debug, Deserialize)]
 struct SchoolRow {
     school_id: String,
@@ -4753,6 +4785,11 @@ struct EventRow {
     starts_at: Option<String>,
     #[serde(default)]
     placement_tags: String,
+    #[serde(
+        default = "default_event_details",
+        deserialize_with = "deserialize_event_details"
+    )]
+    details: Value,
 }
 
 impl EventRow {

@@ -471,7 +471,9 @@ Operational notes:
 - target `fixture_path` entries let `crawler doctor` verify parser shape for
   parser-only or policy-blocked sources without turning live crawl into a
   release requirement
-- crawl output lands in `events` with `source_type = 'crawl'`
+- crawl output lands in `events` with `source_type = 'crawl'`, and parser
+  `details` are preserved in `events.details` for fields such as detail,
+  official, or apply URLs
 - `crawler health` summarizes recent run state without needing ad hoc SQL first
 - `crawler doctor` checks robots/terms redirects, content types, parser registration, school presence, and target `expected_shape` before you chase a live failure
 - `crawler dry-run` reuses the latest fetched raw content to show predicted `parsed / deduped / imported / inactive` counts without mutating core events
