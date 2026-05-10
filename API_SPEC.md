@@ -15,6 +15,7 @@ The request accepts:
 - `context.station_id`
 - `context.line_id`
 - `context.line_name`
+- `context.area.country`
 - `context.area.prefecture_code`
 - `context.area.prefecture_name`
 - `context.area.city_code`
