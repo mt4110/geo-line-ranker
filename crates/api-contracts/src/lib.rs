@@ -1,6 +1,6 @@
 use context::{
-    build_request_context, ContextEvidenceSummary, ContextInput, ContextSource, ContextWarning,
-    PrivacyLevel, RankingContext,
+    build_request_context, AreaContext, ContextEvidenceSummary, ContextInput, ContextSource,
+    ContextWarning, LineContext, PrivacyLevel, RankingContext, StationContext,
 };
 use domain::{
     ContentKind, EventKind, PlacementKind, RecommendationResult, ScoreComponent, UserEvent,
@@ -46,6 +46,57 @@ impl RecommendationRequest {
             context: Some(context),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContextResolveRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_station_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+}
+
+impl ContextResolveRequest {
+    pub fn context_input(&self) -> ContextInput {
+        build_request_context(self.target_station_id.as_deref(), self.context.as_ref())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContextResolveResponse {
+    pub request_id: String,
+    pub context: ContextResolveContextDto,
+    pub evidence_summary: ContextEvidenceSummary,
+}
+
+impl ContextResolveResponse {
+    pub fn from_context(request_id: String, context: RankingContext) -> Self {
+        let evidence_summary = context.evidence_summary();
+        Self {
+            request_id,
+            context: context.into(),
+            evidence_summary,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContextResolveContextDto {
+    pub context_source: ContextSource,
+    pub confidence: f64,
+    pub privacy_level: PrivacyLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area: Option<AreaContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<LineContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub station: Option<StationContext>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ContextWarning>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -385,11 +436,28 @@ impl From<RankingContext> for RecommendationContextDto {
     }
 }
 
+impl From<RankingContext> for ContextResolveContextDto {
+    fn from(value: RankingContext) -> Self {
+        Self {
+            context_source: value.context_source,
+            confidence: value.confidence,
+            privacy_level: value.privacy_level,
+            area: value.area,
+            line: value.line,
+            station: value.station,
+            warnings: value.warnings,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use domain::{FallbackStage, RecommendationItem};
 
-    use super::{RecommendationRequest, RecommendationResponse, TrackRequest};
+    use super::{
+        ContextResolveRequest, ContextResolveResponse, RecommendationRequest,
+        RecommendationResponse, TrackRequest,
+    };
 
     #[test]
     fn recommendation_response_omits_empty_event_fields() {
@@ -451,6 +519,40 @@ mod tests {
         assert_eq!(context.evidence_summary.evidence_count, 1);
         assert_eq!(context.evidence_summary.strongest_strength, 0.91);
         assert!(!context.evidence_summary.has_search_execute);
+    }
+
+    #[test]
+    fn context_resolve_request_normalizes_target_station_into_context() {
+        let request = ContextResolveRequest {
+            request_id: Some("req-context".to_string()),
+            target_station_id: Some("  st_tamachi  ".to_string()),
+            context: None,
+            user_id: Some("demo-user".to_string()),
+        };
+
+        let context = request.context_input();
+
+        assert_eq!(context.station_id.as_deref(), Some("st_tamachi"));
+    }
+
+    #[test]
+    fn context_resolve_response_carries_evidence_summary() {
+        let mut context = context::RankingContext::default_safe();
+        context.context_source = context::ContextSource::RecentSearchContext;
+        context.confidence = 0.88;
+
+        let response = ContextResolveResponse::from_context("req-context".to_string(), context);
+
+        assert_eq!(response.request_id, "req-context");
+        assert_eq!(
+            response.context.context_source,
+            context::ContextSource::RecentSearchContext
+        );
+        assert_eq!(
+            response.evidence_summary.primary_kind,
+            context::ContextEvidenceKind::SearchExecute
+        );
+        assert!(response.evidence_summary.has_search_execute);
     }
 
     #[test]
