@@ -53,7 +53,7 @@ impl CandidateGraph {
             candidate_station.latitude,
             candidate_station.longitude,
         );
-        let line_match = self.line_match(candidate_station, link);
+        let line_match = self.line_evidence(candidate_station, link);
         let interchange_like = station_distance_meters <= INTERCHANGE_DISTANCE_THRESHOLD_METERS
             && link.station_id != self.target_station_id
             && self
@@ -72,7 +72,7 @@ impl CandidateGraph {
         }
     }
 
-    fn line_match(
+    pub(crate) fn line_evidence(
         &self,
         candidate_station: &Station,
         link: &SchoolStationLink,

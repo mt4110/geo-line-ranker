@@ -156,8 +156,8 @@ impl RankingEngine {
                 let Some(school) = lookups.schools_by_id.get(link.school_id.as_str()) else {
                     return false;
                 };
-                let graph_evidence = graph.evidence(target_station, candidate_station, link);
-                let is_same_line = graph_evidence.line_match.is_same_line;
+                let line_evidence = graph.line_evidence(candidate_station, link);
+                let is_same_line = line_evidence.is_same_line;
                 let school_prefecture_matches = |prefecture: &str| {
                     school
                         .prefecture_name
@@ -186,7 +186,9 @@ impl RankingEngine {
                             && !is_same_line
                             && !is_same_city
                             && !is_same_prefecture
-                            && graph_evidence.within_neighbor_distance_cap
+                            && graph
+                                .evidence(target_station, candidate_station, link)
+                                .within_neighbor_distance_cap
                     }
                     FallbackStage::SafeGlobalPopular => true,
                 }

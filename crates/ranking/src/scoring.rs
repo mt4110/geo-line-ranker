@@ -273,7 +273,7 @@ impl RankingEngine {
                 "line_match_bonus",
                 same_line_bonus,
                 line_match_reason(&graph_evidence),
-                debug_details(query, graph_evidence.line_details()),
+                query.debug.then(|| graph_evidence.line_details()),
             ));
         }
 
@@ -308,7 +308,7 @@ impl RankingEngine {
             "neighbor_station_proximity",
             neighbor_value,
             route_proximity_reason(target_station, candidate_station, &graph_evidence),
-            debug_details(query, graph_evidence.route_details()),
+            query.debug.then(|| graph_evidence.route_details()),
         ));
 
         if let Some(popularity) = popularity_by_school.get(school.id.as_str()) {
