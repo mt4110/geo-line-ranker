@@ -48,8 +48,8 @@ mod tests {
         StationContext,
     };
     use domain::{
-        FallbackStage, PlacementKind, PopularitySnapshot, RankingDataset, RankingQuery, School,
-        SchoolStationLink, Station, UserAffinitySnapshot,
+        CandidatePlanStageStatus, FallbackStage, PlacementKind, PopularitySnapshot, RankingDataset,
+        RankingQuery, School, SchoolStationLink, Station, UserAffinitySnapshot,
     };
     use test_support::load_fixture_dataset;
 
@@ -236,6 +236,30 @@ mod tests {
         assert_eq!(result.candidate_counts.get("same_line"), Some(&3));
         assert_eq!(result.candidate_counts.get("safe_global_popular"), Some(&4));
         assert_eq!(result.fallback_stage, FallbackStage::SafeGlobalPopular);
+        let plan_trace = result
+            .candidate_plan_trace
+            .as_ref()
+            .expect("candidate plan trace");
+        assert_eq!(plan_trace.selected_stage, FallbackStage::SafeGlobalPopular);
+        assert_eq!(plan_trace.stop_reason, "sufficient_safe_global_candidates");
+        assert_eq!(
+            plan_trace
+                .stages
+                .iter()
+                .find(|stage| stage.stage == FallbackStage::SameLine)
+                .expect("same_line stage")
+                .reason_code,
+            "candidate_count_below_minimum"
+        );
+        assert_eq!(
+            plan_trace
+                .stages
+                .iter()
+                .find(|stage| stage.stage == FallbackStage::SafeGlobalPopular)
+                .expect("safe_global stage")
+                .status,
+            CandidatePlanStageStatus::Selected
+        );
         assert_eq!(result.items.len(), 3);
     }
 

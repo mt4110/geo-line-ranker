@@ -121,8 +121,8 @@ Success means:
 - HTTP `200`
 - non-empty `items`
 - item-level `content_kind`, `school_id`, `score`, and explanation fields
-- top-level `fallback_stage`, `candidate_counts`, `context`,
-  `profile_version`, and `algorithm_version`
+- top-level `fallback_stage`, `candidate_counts`, `candidate_plan_trace`,
+  `context`, `profile_version`, and `algorithm_version`
 - event items include `event_id` and `event_title`
 
 After that, use [Quickstart](QUICKSTART.md) sections 8-10 to compare

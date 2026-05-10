@@ -271,6 +271,74 @@
           }
         }
       },
+      "CandidatePlanStageStatusDto": {
+        "type": "string",
+        "enum": [
+          "selected",
+          "insufficient",
+          "skipped"
+        ]
+      },
+      "CandidatePlanStageTraceDto": {
+        "type": "object",
+        "required": [
+          "stage",
+          "candidate_count",
+          "required_min_candidates",
+          "status",
+          "reason_code"
+        ],
+        "properties": {
+          "candidate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "required_min_candidates": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stage": {
+            "$ref": "#/components/schemas/FallbackStageDto"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CandidatePlanStageStatusDto"
+          }
+        }
+      },
+      "CandidatePlanTraceDto": {
+        "type": "object",
+        "required": [
+          "minimum_candidate_count",
+          "selected_stage",
+          "stop_reason",
+          "area_context_usable",
+          "stages"
+        ],
+        "properties": {
+          "area_context_usable": {
+            "type": "boolean"
+          },
+          "minimum_candidate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "selected_stage": {
+            "$ref": "#/components/schemas/FallbackStageDto"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandidatePlanStageTraceDto"
+            }
+          },
+          "stop_reason": {
+            "type": "string"
+          }
+        }
+      },
       "ContextEvidenceKind": {
         "type": "string",
         "enum": [
@@ -752,6 +820,14 @@
               "type": "integer",
               "minimum": 0
             }
+          },
+          "candidate_plan_trace": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CandidatePlanTraceDto"
+              }
+            ],
+            "nullable": true
           },
           "context": {
             "allOf": [

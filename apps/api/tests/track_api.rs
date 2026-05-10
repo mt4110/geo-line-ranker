@@ -1408,6 +1408,19 @@ async fn recommend_endpoint_accepts_area_only_context() -> anyhow::Result<()> {
             "request_area"
         );
         assert_eq!(payload["fallback_stage"], "same_city");
+        assert_eq!(
+            payload["candidate_plan_trace"]["selected_stage"],
+            payload["fallback_stage"]
+        );
+        assert_eq!(
+            payload["candidate_plan_trace"]["stop_reason"],
+            "sufficient_scoped_candidates"
+        );
+        assert!(payload["candidate_plan_trace"]["stages"]
+            .as_array()
+            .is_some_and(|stages| stages
+                .iter()
+                .any(|stage| stage["status"] == "selected" && stage["stage"] == "same_city")));
         assert!(payload["items"]
             .as_array()
             .is_some_and(|items| !items.is_empty()));

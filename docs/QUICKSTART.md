@@ -128,7 +128,8 @@ Success looks like:
 - each item has a `content_kind`, `school_id`, `score`, and explanation fields
 - event items also include `event_id` and `event_title`
 - the top-level response includes `fallback_stage`, `candidate_counts`,
-  `context`, `profile_version`, and `algorithm_version`
+  `candidate_plan_trace`, `context`, `profile_version`, and
+  `algorithm_version`
 
 This confirms that the default sample is loaded, the SQL-only ranking path is
 working, and the API can explain why a result was selected.

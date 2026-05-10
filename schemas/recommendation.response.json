@@ -54,6 +54,56 @@
     "neighbor_area": 3,
     "safe_global_popular": 7
   },
+  "candidate_plan_trace": {
+    "minimum_candidate_count": 3,
+    "selected_stage": "same_line",
+    "stop_reason": "sufficient_scoped_candidates",
+    "area_context_usable": false,
+    "stages": [
+      {
+        "stage": "strict_station",
+        "candidate_count": 0,
+        "required_min_candidates": 3,
+        "status": "insufficient",
+        "reason_code": "station_context_not_explicit"
+      },
+      {
+        "stage": "same_line",
+        "candidate_count": 5,
+        "required_min_candidates": 3,
+        "status": "selected",
+        "reason_code": "selected_sufficient_scoped_candidates"
+      },
+      {
+        "stage": "same_city",
+        "candidate_count": 2,
+        "required_min_candidates": 3,
+        "status": "skipped",
+        "reason_code": "not_needed_after_selected_stage"
+      },
+      {
+        "stage": "same_prefecture",
+        "candidate_count": 0,
+        "required_min_candidates": 3,
+        "status": "skipped",
+        "reason_code": "not_needed_after_selected_stage"
+      },
+      {
+        "stage": "neighbor_area",
+        "candidate_count": 3,
+        "required_min_candidates": 3,
+        "status": "skipped",
+        "reason_code": "not_needed_after_selected_stage"
+      },
+      {
+        "stage": "safe_global_popular",
+        "candidate_count": 7,
+        "required_min_candidates": 3,
+        "status": "skipped",
+        "reason_code": "not_needed_after_selected_stage"
+      }
+    ]
+  },
   "context": {
     "context_source": "request_line",
     "confidence": 0.95,
