@@ -87,6 +87,11 @@ whether area context was usable, and one row per stage with candidate count,
 status, and reason code. It does not include user identifiers, school IDs, or
 raw context payloads.
 
+For line and neighbor-area stages, insufficient-stage reason codes may use the
+`line_graph_*` or `area_graph_*` prefixes. These indicate that the candidate
+plan evaluated line identity, hop evidence, or the neighbor distance cap before
+falling through to a later stage; they do not imply ML/vector retrieval.
+
 Candidate plan stage statuses are:
 
 - `selected`: the stage used for scoring

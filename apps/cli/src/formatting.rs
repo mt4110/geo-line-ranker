@@ -6,7 +6,10 @@ use crate::{
         RankingConfigDoctorSummary, RetrievalParityDoctorSummary,
         StorageCompatibilityDoctorSummary,
     },
-    explain::{ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport},
+    explain::{
+        ExplainTraceCandidatePlanSummary, ExplainTracePayloadSummary, ExplainTraceReasonSummary,
+        ExplainTraceReport,
+    },
     explanation_integrity::QualityCheckStatus,
     fixtures::FixtureDoctorSummary,
     import::CommandSummary,
@@ -687,12 +690,7 @@ fn format_trace_payload_summary(summary: &ExplainTracePayloadSummary) -> String 
         summary
             .candidate_plan_trace
             .as_ref()
-            .map(|trace| format!(
-                "{}/{} stages={}",
-                trace.selected_stage,
-                trace.stop_reason,
-                trace.stages.len()
-            ))
+            .map(format_candidate_plan)
             .unwrap_or_else(|| "not_recorded".to_string()),
         if summary.suppressed_item_reasons_recorded {
             match summary.suppressed_item_count {
@@ -702,6 +700,23 @@ fn format_trace_payload_summary(summary: &ExplainTracePayloadSummary) -> String 
         } else {
             "not_recorded".to_string()
         }
+    )
+}
+
+fn format_candidate_plan(trace: &ExplainTraceCandidatePlanSummary) -> String {
+    let stage_reasons = trace
+        .stages
+        .iter()
+        .map(|stage| format!("{}:{}:{}", stage.stage, stage.status, stage.reason_code))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    format!(
+        "{}/{} stages={} [{}]",
+        trace.selected_stage,
+        trace.stop_reason,
+        trace.stages.len(),
+        stage_reasons
     )
 }
 

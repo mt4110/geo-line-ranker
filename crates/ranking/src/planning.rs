@@ -264,10 +264,6 @@ fn insufficient_stage_reason(
     query: &RankingQuery,
     area_hint_was_ignored: bool,
 ) -> &'static str {
-    if candidate_count > 0 && candidate_count < minimum_candidate_count {
-        return "candidate_count_below_minimum";
-    }
-
     let context = query.context.as_ref();
     // Legacy callers pass an explicit station through target_station_id while
     // leaving context unset, so None is still station-explicit for stage traces.
@@ -286,11 +282,20 @@ fn insufficient_stage_reason(
         .and_then(|context| context.prefecture_name())
         .is_some();
 
+    if candidate_count > 0 && candidate_count < minimum_candidate_count {
+        return match stage {
+            FallbackStage::SameLine => "line_graph_same_line_candidates_below_minimum",
+            FallbackStage::NeighborArea => "area_graph_neighbor_candidates_below_minimum",
+            _ => "candidate_count_below_minimum",
+        };
+    }
+
     match stage {
         FallbackStage::StrictStation if !station_context_is_explicit => {
             "station_context_not_explicit"
         }
         FallbackStage::SameLine if !line_context_is_explicit => "line_context_not_explicit",
+        FallbackStage::SameLine => "line_graph_no_same_line_candidates",
         FallbackStage::SameCity | FallbackStage::SamePrefecture if area_hint_was_ignored => {
             "area_hint_ignored_by_station_conflict"
         }
@@ -299,6 +304,7 @@ fn insufficient_stage_reason(
         FallbackStage::NeighborArea if !station_context_is_explicit => {
             "station_context_not_explicit"
         }
+        FallbackStage::NeighborArea => "area_graph_no_neighbor_candidates_within_distance_cap",
         _ => "candidate_count_below_minimum",
     }
 }

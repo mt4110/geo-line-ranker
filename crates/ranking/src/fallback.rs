@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use config::{PlacementProfile, RankingProfiles};
 use domain::{FallbackStage, RankingDataset, RankingQuery, School, SchoolStationLink, Station};
-use geo::haversine_meters;
 
+use crate::graph::CandidateGraph;
 use crate::RankingEngine;
 
 struct RankingLookups<'a> {
@@ -118,15 +118,12 @@ impl RankingEngine {
         lookups: &RankingLookups<'_>,
     ) -> Vec<SchoolStationLink> {
         let context = query.context.as_ref();
-        let line_name = context
-            .and_then(|context| context.line_name())
-            .unwrap_or(target_station.line_name.as_str());
-        let line_id = context.and_then(|context| {
-            context
-                .line
-                .as_ref()
-                .and_then(|line| line.line_id.as_deref())
-        });
+        let graph = CandidateGraph::new(
+            query,
+            target_station,
+            self.profiles.fallback.neighbor_distance_cap_meters,
+            self.neighbor_max_hops(query.placement),
+        );
         let area_hint_was_ignored = context
             .map(|context| {
                 context
@@ -159,16 +156,8 @@ impl RankingEngine {
                 let Some(school) = lookups.schools_by_id.get(link.school_id.as_str()) else {
                     return false;
                 };
-                let is_same_line = match line_id {
-                    Some(line_id) => {
-                        candidate_station
-                            .line_id
-                            .as_deref()
-                            .is_some_and(|value| value == line_id)
-                            || (candidate_station.line_id.is_none() && link.line_name == line_name)
-                    }
-                    None => link.line_name == line_name,
-                };
+                let graph_evidence = graph.evidence(target_station, candidate_station, link);
+                let is_same_line = graph_evidence.line_match.is_same_line;
                 let school_prefecture_matches = |prefecture: &str| {
                     school
                         .prefecture_name
@@ -192,19 +181,12 @@ impl RankingEngine {
                     FallbackStage::SameCity => is_same_city,
                     FallbackStage::SamePrefecture => is_same_prefecture,
                     FallbackStage::NeighborArea => {
-                        let station_distance = haversine_meters(
-                            target_station.latitude,
-                            target_station.longitude,
-                            candidate_station.latitude,
-                            candidate_station.longitude,
-                        );
                         station_context_is_explicit
                             && link.station_id != target_station.id
                             && !is_same_line
                             && !is_same_city
                             && !is_same_prefecture
-                            && station_distance
-                                <= self.profiles.fallback.neighbor_distance_cap_meters
+                            && graph_evidence.within_neighbor_distance_cap
                     }
                     FallbackStage::SafeGlobalPopular => true,
                 }

@@ -6,12 +6,12 @@ use domain::{
     RankingDataset, RankingQuery, RecommendationItem, School, SchoolStationLink, ScoreComponent,
     Station, UserAffinitySnapshot,
 };
-use geo::haversine_meters;
 use serde_json::json;
 
 use crate::explanation::{build_item_explanation, placement_label};
 use crate::fallback::{fallback_penalty_feature, fallback_penalty_reason, fallback_stage_penalty};
 use crate::feature::{component, debug_details};
+use crate::graph::{CandidateGraph, CandidateGraphEvidence};
 use crate::RankingEngine;
 
 #[derive(Debug, Clone)]
@@ -65,6 +65,12 @@ impl RankingEngine {
             .iter()
             .map(|snapshot| (snapshot.school_id.as_str(), snapshot))
             .collect();
+        let graph = CandidateGraph::new(
+            query,
+            target_station,
+            self.profiles.fallback.neighbor_distance_cap_meters,
+            placement_profile.neighbor_max_hops,
+        );
 
         let school_enabled = placement_profile
             .mixed_ranking
@@ -90,6 +96,7 @@ impl RankingEngine {
                 target_station,
                 candidate_station,
                 &link,
+                &graph,
                 query,
                 placement_profile,
                 fallback_stage,
@@ -236,6 +243,7 @@ impl RankingEngine {
         target_station: &Station,
         candidate_station: &Station,
         link: &SchoolStationLink,
+        graph: &CandidateGraph,
         query: &RankingQuery,
         placement_profile: &PlacementProfile,
         fallback_stage: &FallbackStage,
@@ -243,12 +251,7 @@ impl RankingEngine {
         area_affinity_by_area: &HashMap<&str, &AreaAffinitySnapshot>,
         user_affinity_by_school: &HashMap<&str, &UserAffinitySnapshot>,
     ) -> Vec<ScoreComponent> {
-        let station_distance = haversine_meters(
-            target_station.latitude,
-            target_station.longitude,
-            candidate_station.latitude,
-            candidate_station.longitude,
-        );
+        let graph_evidence = graph.evidence(target_station, candidate_station, link);
 
         let mut breakdown = Vec::new();
         if link.station_id == target_station.id {
@@ -260,7 +263,7 @@ impl RankingEngine {
             ));
         }
 
-        if link.line_name == target_station.line_name {
+        if graph_evidence.line_match.is_same_line {
             let same_line_bonus = if matches!(fallback_stage, FallbackStage::NeighborArea) {
                 placement_profile.neighbor_same_line_bonus
             } else {
@@ -269,8 +272,8 @@ impl RankingEngine {
             breakdown.push(component(
                 "line_match_bonus",
                 same_line_bonus,
-                format!("{} 沿線の候補です。", target_station.line_name),
-                None,
+                line_match_reason(&graph_evidence),
+                debug_details(query, graph_evidence.line_details()),
             ));
         }
 
@@ -297,17 +300,15 @@ impl RankingEngine {
             None,
         ));
 
-        let neighbor_value =
-            (self.profiles.fallback.neighbor_distance_cap_meters - station_distance).max(0.0)
-                / self.profiles.fallback.neighbor_distance_cap_meters;
+        let neighbor_value = (self.profiles.fallback.neighbor_distance_cap_meters
+            - graph_evidence.station_distance_meters)
+            .max(0.0)
+            / self.profiles.fallback.neighbor_distance_cap_meters;
         breakdown.push(component(
             "neighbor_station_proximity",
             neighbor_value,
-            format!(
-                "{} から {} までの地理的な近さを反映しています。",
-                target_station.name, candidate_station.name
-            ),
-            None,
+            route_proximity_reason(target_station, candidate_station, &graph_evidence),
+            debug_details(query, graph_evidence.route_details()),
         ));
 
         if let Some(popularity) = popularity_by_school.get(school.id.as_str()) {
@@ -419,6 +420,38 @@ fn build_item(
         score_breakdown,
         fallback_stage: Some(fallback_stage.clone()),
     }
+}
+
+fn line_match_reason(graph_evidence: &CandidateGraphEvidence) -> String {
+    let hop_phrase = match graph_evidence.hop_distance {
+        0 => "0駅目安".to_string(),
+        1 => "1駅目安".to_string(),
+        hop_distance => format!("{hop_distance}駅目安"),
+    };
+
+    format!(
+        "{} 沿線として確認できる候補です（{}）。",
+        graph_evidence.line_match.target_line_name, hop_phrase
+    )
+}
+
+fn route_proximity_reason(
+    target_station: &Station,
+    candidate_station: &Station,
+    graph_evidence: &CandidateGraphEvidence,
+) -> String {
+    let rounded_distance = graph_evidence.station_distance_meters.round() as u64;
+    if graph_evidence.interchange_like {
+        return format!(
+            "{} と同名駅の乗換相当として、{} まで約 {}m の近さを反映しています。",
+            target_station.name, candidate_station.name, rounded_distance
+        );
+    }
+
+    format!(
+        "{} から {} まで約 {}m の近さを反映しています。",
+        target_station.name, candidate_station.name, rounded_distance
+    )
 }
 
 fn upsert_best_candidate(
