@@ -1,8 +1,8 @@
 use std::time::Instant;
 
 use api_contracts::{
-    HealthResponse, ReadyResponse, RecommendationRequest, RecommendationResponse, TrackRequest,
-    TrackResponse,
+    ContextResolveRequest, ContextResolveResponse, HealthResponse, ReadyResponse,
+    RecommendationRequest, RecommendationResponse, TrackRequest, TrackResponse,
 };
 use axum::{
     extract::{rejection::JsonRejection, State},
@@ -32,6 +32,7 @@ pub fn build_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/v1/context/resolve", post(context_resolve))
         .route("/v1/recommendations", post(recommend))
         .route("/v1/track", post(track))
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::api_doc()))
@@ -81,6 +82,46 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
             opensearch,
         }),
     )
+}
+
+async fn context_resolve(
+    State(state): State<AppState>,
+    request: Result<Json<ContextResolveRequest>, JsonRejection>,
+) -> impl IntoResponse {
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(rejection) => {
+            return error_response(StatusCode::BAD_REQUEST, rejection.body_text());
+        }
+    };
+
+    let request_id = match resolve_request_id(request.request_id.as_deref()) {
+        Ok(request_id) => request_id,
+        Err(message) => return error_response(StatusCode::BAD_REQUEST, message.to_string()),
+    };
+
+    let context_input = request.context_input();
+    let resolved_context = match state
+        .repository
+        .resolve_context_read_only(&request_id, request.user_id.as_deref(), &context_input)
+        .await
+    {
+        Ok(context) => context,
+        Err(error) => {
+            let status = context_resolution_error_status(&error);
+            let message = context_resolution_error_message(&error, &context_input);
+            return error_response(status, message);
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(ContextResolveResponse::from_context(
+            request_id,
+            resolved_context,
+        )),
+    )
+        .into_response()
 }
 
 async fn recommend(

@@ -1,5 +1,6 @@
 use api_contracts::{
-    ErrorResponse, FallbackStageDto, HealthResponse, ReadyResponse, RecommendationContextDto,
+    ContextResolveContextDto, ContextResolveRequest, ContextResolveResponse, ErrorResponse,
+    FallbackStageDto, HealthResponse, ReadyResponse, RecommendationContextDto,
     RecommendationItemDto, RecommendationRequest, RecommendationResponse, ScoreComponentDto,
     TrackRequest, TrackResponse,
 };
@@ -31,6 +32,20 @@ fn healthz_doc() {}
 )]
 #[allow(dead_code)]
 fn readyz_doc() {}
+
+#[utoipa::path(
+    post,
+    path = "/v1/context/resolve",
+    request_body = ContextResolveRequest,
+    responses(
+        (status = 200, description = "resolved recommendation context", body = ContextResolveResponse),
+        (status = 400, description = "invalid context resolve request", body = ErrorResponse),
+        (status = 500, description = "context resolution service error", body = ErrorResponse)
+    ),
+    tag = "context"
+)]
+#[allow(dead_code)]
+fn context_resolve_doc() {}
 
 #[utoipa::path(
     post,
@@ -68,13 +83,22 @@ fn track_doc() {}
         description = "Deterministic geo-first and line-first recommendation API.",
         version = "0.1.0"
     ),
-    paths(healthz_doc, readyz_doc, recommend_doc, track_doc),
+    paths(
+        healthz_doc,
+        readyz_doc,
+        context_resolve_doc,
+        recommend_doc,
+        track_doc
+    ),
     components(
         schemas(
             HealthResponse,
             ReadyResponse,
             ErrorResponse,
             FallbackStageDto,
+            ContextResolveContextDto,
+            ContextResolveRequest,
+            ContextResolveResponse,
             AreaContext,
             AreaContextInput,
             ContextEvidenceKind,
@@ -97,6 +121,7 @@ fn track_doc() {}
     ),
     tags(
         (name = "system", description = "System status endpoints"),
+        (name = "context", description = "Context inspection endpoints"),
         (name = "recommendations", description = "Deterministic recommendation endpoints"),
         (name = "tracking", description = "Append-only user event tracking")
     )

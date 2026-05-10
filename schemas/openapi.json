@@ -59,6 +59,56 @@
         }
       }
     },
+    "/v1/context/resolve": {
+      "post": {
+        "tags": [
+          "context"
+        ],
+        "operationId": "context_resolve_doc",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "resolved recommendation context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResolveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid context resolve request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "context resolution service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/recommendations": {
       "post": {
         "tags": [
@@ -280,6 +330,100 @@
           "station_id": {
             "type": "string",
             "nullable": true
+          }
+        }
+      },
+      "ContextResolveContextDto": {
+        "type": "object",
+        "required": [
+          "context_source",
+          "confidence",
+          "privacy_level"
+        ],
+        "properties": {
+          "area": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AreaContext"
+              }
+            ],
+            "nullable": true
+          },
+          "confidence": {
+            "type": "number",
+            "format": "double"
+          },
+          "context_source": {
+            "$ref": "#/components/schemas/ContextSource"
+          },
+          "line": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LineContext"
+              }
+            ],
+            "nullable": true
+          },
+          "privacy_level": {
+            "$ref": "#/components/schemas/PrivacyLevel"
+          },
+          "station": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StationContext"
+              }
+            ],
+            "nullable": true
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextWarning"
+            }
+          }
+        }
+      },
+      "ContextResolveRequest": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ContextInput"
+              }
+            ],
+            "nullable": true
+          },
+          "request_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "target_station_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "user_id": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ContextResolveResponse": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "context",
+          "evidence_summary"
+        ],
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/ContextResolveContextDto"
+          },
+          "evidence_summary": {
+            "$ref": "#/components/schemas/ContextEvidenceSummary"
+          },
+          "request_id": {
+            "type": "string"
           }
         }
       },
@@ -762,6 +906,10 @@
     {
       "name": "system",
       "description": "System status endpoints"
+    },
+    {
+      "name": "context",
+      "description": "Context inspection endpoints"
     },
     {
       "name": "recommendations",

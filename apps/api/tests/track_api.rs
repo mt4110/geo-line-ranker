@@ -18,7 +18,7 @@ use ranking::RankingEngine;
 use storage_opensearch::OpenSearchStore;
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
 use test_support::acquire_postgres_test_lock;
-use tokio_postgres::NoTls;
+use tokio_postgres::{Client, NoTls};
 use tower::ServiceExt;
 
 fn default_database_url() -> String {
@@ -114,6 +114,34 @@ async fn opensearch_search(
     State(response): State<Arc<serde_json::Value>>,
 ) -> Json<serde_json::Value> {
     Json((*response).clone())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ApiSideEffectCounts {
+    user_event_count: i64,
+    job_count: i64,
+    recommendation_trace_count: i64,
+    context_trace_count: i64,
+}
+
+async fn load_api_side_effect_counts(client: &Client) -> anyhow::Result<ApiSideEffectCounts> {
+    let row = client
+        .query_one(
+            "SELECT
+                (SELECT COUNT(*) FROM user_events) AS user_event_count,
+                (SELECT COUNT(*) FROM job_queue) AS job_count,
+                (SELECT COUNT(*) FROM recommendation_traces) AS recommendation_trace_count,
+                (SELECT COUNT(*) FROM context_resolution_traces) AS context_trace_count",
+            &[],
+        )
+        .await?;
+
+    Ok(ApiSideEffectCounts {
+        user_event_count: row.get("user_event_count"),
+        job_count: row.get("job_count"),
+        recommendation_trace_count: row.get("recommendation_trace_count"),
+        context_trace_count: row.get("context_trace_count"),
+    })
 }
 
 fn repo_root() -> PathBuf {
@@ -1383,6 +1411,204 @@ async fn recommend_endpoint_accepts_area_only_context() -> anyhow::Result<()> {
         assert!(payload["items"]
             .as_array()
             .is_some_and(|items| !items.is_empty()));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn context_resolve_endpoint_returns_read_only_resolved_context() -> anyhow::Result<()> {
+    let _postgres_test_lock = acquire_postgres_test_lock().await;
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_api_context_resolve").await
+    else {
+        eprintln!(
+            "skipping api context resolve integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let profiles = RankingProfiles::load_from_dir(root.join("configs/ranking"))?;
+        let state = AppState {
+            repository: Arc::new(PgRepository::new(database_url.clone())),
+            engine: RankingEngine::new(profiles.clone(), "v030-context-resolve-test"),
+            cache: RecommendationCache::new(None, 60),
+            profile_version: profiles.profile_version,
+            algorithm_version: "v030-context-resolve-test".to_string(),
+            candidate_retrieval_mode: CandidateRetrievalMode::SqlOnly,
+            candidate_retrieval_limit: 256,
+            neighbor_distance_cap_meters: profiles.fallback.neighbor_distance_cap_meters,
+            candidate_backend: api::CandidateBackend::SqlOnly,
+            worker_max_attempts: 3,
+        };
+        let app = build_app(state);
+        let request_id = "req-api-context-resolve";
+        let side_effect_baseline = load_api_side_effect_counts(&client).await?;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/context/resolve")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "request_id": request_id,
+                            "target_station_id": "st_tamachi",
+                            "context": {
+                                "area": {
+                                    "city_name": "Shibuya",
+                                    "prefecture_name": "Tokyo"
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("context resolve response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["request_id"], request_id);
+        assert_eq!(payload["context"]["context_source"], "request_station");
+        assert_eq!(payload["context"]["station"]["station_id"], "st_tamachi");
+        assert!(payload["context"].get("fallback_policy").is_none());
+        assert!(payload["context"].get("gate_policy").is_none());
+        assert_eq!(
+            payload["evidence_summary"]["primary_kind"],
+            "request_station"
+        );
+        assert!(payload["context"]["warnings"]
+            .as_array()
+            .is_some_and(|warnings| warnings
+                .iter()
+                .any(|warning| warning["code"].as_str() == Some("station_area_conflict"))));
+
+        let trace_count = client
+            .query_one(
+                "SELECT COUNT(*) AS count
+                 FROM context_resolution_traces
+                 WHERE request_id = $1",
+                &[&request_id],
+            )
+            .await?
+            .get::<_, i64>("count");
+        assert_eq!(trace_count, 0);
+        assert_eq!(
+            load_api_side_effect_counts(&client).await?,
+            side_effect_baseline
+        );
+
+        let recent_user_id = "context-resolve-recent-user";
+        client
+            .execute(
+                "INSERT INTO user_events (
+                    user_id,
+                    school_id,
+                    event_type,
+                    target_station_id,
+                    occurred_at,
+                    payload
+                ) VALUES (
+                    $1,
+                    NULL,
+                    'search_execute',
+                    'st_shinbashi',
+                    NOW() - INTERVAL '1 hour',
+                    '{}'::jsonb
+                )",
+                &[&recent_user_id],
+            )
+            .await?;
+        let recent_context_baseline = load_api_side_effect_counts(&client).await?;
+        let recent_context_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/context/resolve")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "request_id": "req-api-context-recent-search",
+                            "user_id": recent_user_id
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("recent context resolve response");
+        assert_eq!(recent_context_response.status(), StatusCode::OK);
+        let recent_context_body = to_bytes(recent_context_response.into_body(), usize::MAX).await?;
+        let recent_context_payload: serde_json::Value =
+            serde_json::from_slice(&recent_context_body)?;
+        assert_eq!(
+            recent_context_payload["context"]["context_source"],
+            "recent_search_context"
+        );
+        assert_eq!(
+            recent_context_payload["context"]["station"]["station_id"],
+            "st_shinbashi"
+        );
+        assert_eq!(
+            recent_context_payload["evidence_summary"]["primary_kind"],
+            "search_execute"
+        );
+        assert_eq!(
+            recent_context_payload["evidence_summary"]["has_search_execute"],
+            true
+        );
+        assert_eq!(
+            load_api_side_effect_counts(&client).await?,
+            recent_context_baseline
+        );
+
+        let error_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/context/resolve")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "context": {
+                                "station_id": "station_missing"
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("context resolve error response");
+
+        assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
+        let error_body = to_bytes(error_response.into_body(), usize::MAX).await?;
+        let error_payload: serde_json::Value = serde_json::from_slice(&error_body)?;
+        assert_eq!(
+            error_payload["error"],
+            "unknown target_station_id: station_missing"
+        );
 
         Ok(())
     }

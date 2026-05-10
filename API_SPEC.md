@@ -2,6 +2,44 @@
 
 The generated OpenAPI artifact is `schemas/openapi.json`.
 
+## `POST /v1/context/resolve`
+
+Resolves recommendation context without running ranking, writing tracking events,
+or creating context-resolution traces.
+
+The request accepts:
+
+- `request_id`
+- `user_id`
+- `target_station_id`
+- `context.station_id`
+- `context.line_id`
+- `context.line_name`
+- `context.area.prefecture_code`
+- `context.area.prefecture_name`
+- `context.area.city_code`
+- `context.area.city_name`
+
+The response includes:
+
+- `request_id`
+- `context.context_source`
+- `context.confidence`
+- `context.privacy_level`
+- `context.area`, when area context resolved
+- `context.line`, when line context resolved
+- `context.station`, when station context resolved
+- `context.warnings`, when warnings are present
+- `evidence_summary`
+
+The response intentionally omits ranking-only policy fields such as
+`fallback_policy` and `gate_policy`.
+
+When no explicit station, line, or area context is supplied, this endpoint may
+use read-only user context such as recent `search_execute` evidence or a stored
+profile context. If no usable context is available, it returns
+`default_safe_context`.
+
 ## `POST /v1/recommendations`
 
 The request keeps `target_station_id` compatibility and also accepts optional `context`.
