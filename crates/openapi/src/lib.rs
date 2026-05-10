@@ -1,4 +1,5 @@
 use api_contracts::{
+    CandidatePlanStageStatusDto, CandidatePlanStageTraceDto, CandidatePlanTraceDto,
     ContextResolveContextDto, ContextResolveRequest, ContextResolveResponse, ErrorResponse,
     FallbackStageDto, HealthResponse, ReadyResponse, RecommendationContextDto,
     RecommendationItemDto, RecommendationRequest, RecommendationResponse, ScoreComponentDto,
@@ -95,6 +96,9 @@ fn track_doc() {}
             HealthResponse,
             ReadyResponse,
             ErrorResponse,
+            CandidatePlanStageStatusDto,
+            CandidatePlanStageTraceDto,
+            CandidatePlanTraceDto,
             FallbackStageDto,
             ContextResolveContextDto,
             ContextResolveRequest,

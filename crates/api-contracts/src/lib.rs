@@ -3,7 +3,8 @@ use context::{
     ContextWarning, LineContext, PrivacyLevel, RankingContext, StationContext,
 };
 use domain::{
-    ContentKind, EventKind, PlacementKind, RecommendationResult, ScoreComponent, UserEvent,
+    CandidatePlanStageStatus, ContentKind, EventKind, PlacementKind, RecommendationResult,
+    ScoreComponent, UserEvent,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -164,6 +165,42 @@ impl FallbackStageDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CandidatePlanTraceDto {
+    pub minimum_candidate_count: usize,
+    pub selected_stage: FallbackStageDto,
+    pub stop_reason: String,
+    pub area_context_usable: bool,
+    pub stages: Vec<CandidatePlanStageTraceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CandidatePlanStageTraceDto {
+    pub stage: FallbackStageDto,
+    pub candidate_count: usize,
+    pub required_min_candidates: usize,
+    pub status: CandidatePlanStageStatusDto,
+    pub reason_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidatePlanStageStatusDto {
+    Selected,
+    Insufficient,
+    Skipped,
+}
+
+impl CandidatePlanStageStatusDto {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Selected => "selected",
+            Self::Insufficient => "insufficient",
+            Self::Skipped => "skipped",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RecommendationResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
@@ -172,6 +209,8 @@ pub struct RecommendationResponse {
     pub score_breakdown: Vec<ScoreComponentDto>,
     pub fallback_stage: FallbackStageDto,
     pub candidate_counts: std::collections::BTreeMap<String, usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_plan_trace: Option<CandidatePlanTraceDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<RecommendationContextDto>,
     pub profile_version: String,
@@ -381,6 +420,44 @@ impl From<domain::FallbackStage> for FallbackStageDto {
     }
 }
 
+impl From<CandidatePlanStageStatus> for CandidatePlanStageStatusDto {
+    fn from(value: CandidatePlanStageStatus) -> Self {
+        match value {
+            CandidatePlanStageStatus::Selected => Self::Selected,
+            CandidatePlanStageStatus::Insufficient => Self::Insufficient,
+            CandidatePlanStageStatus::Skipped => Self::Skipped,
+        }
+    }
+}
+
+impl From<domain::CandidatePlanTrace> for CandidatePlanTraceDto {
+    fn from(value: domain::CandidatePlanTrace) -> Self {
+        Self {
+            minimum_candidate_count: value.minimum_candidate_count,
+            selected_stage: value.selected_stage.into(),
+            stop_reason: value.stop_reason,
+            area_context_usable: value.area_context_usable,
+            stages: value
+                .stages
+                .into_iter()
+                .map(CandidatePlanStageTraceDto::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<domain::CandidatePlanStageTrace> for CandidatePlanStageTraceDto {
+    fn from(value: domain::CandidatePlanStageTrace) -> Self {
+        Self {
+            stage: value.stage.into(),
+            candidate_count: value.candidate_count,
+            required_min_candidates: value.required_min_candidates,
+            status: value.status.into(),
+            reason_code: value.reason_code,
+        }
+    }
+}
+
 impl From<RecommendationResult> for RecommendationResponse {
     fn from(value: RecommendationResult) -> Self {
         Self {
@@ -416,6 +493,7 @@ impl From<RecommendationResult> for RecommendationResponse {
                 .collect(),
             fallback_stage: value.fallback_stage.into(),
             candidate_counts: value.candidate_counts,
+            candidate_plan_trace: value.candidate_plan_trace.map(CandidatePlanTraceDto::from),
             context: value.context.map(RecommendationContextDto::from),
             profile_version: value.profile_version,
             algorithm_version: value.algorithm_version,
@@ -452,7 +530,10 @@ impl From<RankingContext> for ContextResolveContextDto {
 
 #[cfg(test)]
 mod tests {
-    use domain::{FallbackStage, RecommendationItem};
+    use domain::{
+        CandidatePlanStageStatus, CandidatePlanStageTrace, CandidatePlanTrace, FallbackStage,
+        RecommendationItem,
+    };
 
     use super::{
         ContextResolveRequest, ContextResolveResponse, RecommendationRequest,
@@ -481,6 +562,7 @@ mod tests {
             score_breakdown: Vec::new(),
             fallback_stage: FallbackStage::StrictStation,
             candidate_counts: Default::default(),
+            candidate_plan_trace: None,
             context: None,
             profile_version: "phase6-profile".to_string(),
             algorithm_version: "phase6-test".to_string(),
@@ -519,6 +601,44 @@ mod tests {
         assert_eq!(context.evidence_summary.evidence_count, 1);
         assert_eq!(context.evidence_summary.strongest_strength, 0.91);
         assert!(!context.evidence_summary.has_search_execute);
+    }
+
+    #[test]
+    fn recommendation_response_carries_candidate_plan_trace() {
+        let response = RecommendationResponse::from(domain::RecommendationResult {
+            items: Vec::new(),
+            explanation: "result".to_string(),
+            score_breakdown: Vec::new(),
+            fallback_stage: FallbackStage::SameLine,
+            candidate_counts: Default::default(),
+            candidate_plan_trace: Some(CandidatePlanTrace {
+                minimum_candidate_count: 3,
+                selected_stage: FallbackStage::SameLine,
+                stop_reason: "sufficient_scoped_candidates".to_string(),
+                area_context_usable: false,
+                stages: vec![CandidatePlanStageTrace {
+                    stage: FallbackStage::SameLine,
+                    candidate_count: 3,
+                    required_min_candidates: 3,
+                    status: CandidatePlanStageStatus::Selected,
+                    reason_code: "selected_sufficient_scoped_candidates".to_string(),
+                }],
+            }),
+            context: None,
+            profile_version: "phase6-profile".to_string(),
+            algorithm_version: "phase6-test".to_string(),
+        });
+
+        let payload = serde_json::to_value(response).expect("serialized response");
+
+        assert_eq!(
+            payload["candidate_plan_trace"]["selected_stage"],
+            "same_line"
+        );
+        assert_eq!(
+            payload["candidate_plan_trace"]["stages"][0]["status"],
+            "selected"
+        );
     }
 
     #[test]

@@ -243,6 +243,32 @@ impl FallbackStage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CandidatePlanTrace {
+    pub minimum_candidate_count: usize,
+    pub selected_stage: FallbackStage,
+    pub stop_reason: String,
+    pub area_context_usable: bool,
+    pub stages: Vec<CandidatePlanStageTrace>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CandidatePlanStageTrace {
+    pub stage: FallbackStage,
+    pub candidate_count: usize,
+    pub required_min_candidates: usize,
+    pub status: CandidatePlanStageStatus,
+    pub reason_code: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidatePlanStageStatus {
+    Selected,
+    Insufficient,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecommendationItem {
     pub content_kind: ContentKind,
     pub content_id: String,
@@ -270,6 +296,8 @@ pub struct RecommendationResult {
     pub fallback_stage: FallbackStage,
     #[serde(default)]
     pub candidate_counts: BTreeMap<String, usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_plan_trace: Option<CandidatePlanTrace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<RankingContext>,
     pub profile_version: String,

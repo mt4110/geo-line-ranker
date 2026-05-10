@@ -675,7 +675,7 @@ fn format_order(order: &[String]) -> String {
 
 fn format_trace_payload_summary(summary: &ExplainTracePayloadSummary) -> String {
     format!(
-        "trace_payload: response_source={} context={} confidence={} privacy={} retrieval={}/{} candidate_count={} duration_ms={} suppressed_item_reasons={}",
+        "trace_payload: response_source={} context={} confidence={} privacy={} retrieval={}/{} candidate_count={} duration_ms={} candidate_plan={} suppressed_item_reasons={}",
         optional_str(summary.response_source.as_deref()),
         optional_str(summary.context_source.as_deref()),
         optional_f64(summary.context_confidence),
@@ -684,6 +684,16 @@ fn format_trace_payload_summary(summary: &ExplainTracePayloadSummary) -> String 
         optional_str(summary.candidate_retrieval_backend.as_deref()),
         optional_usize(summary.candidate_count),
         optional_u64(summary.duration_ms),
+        summary
+            .candidate_plan_trace
+            .as_ref()
+            .map(|trace| format!(
+                "{}/{} stages={}",
+                trace.selected_stage,
+                trace.stop_reason,
+                trace.stages.len()
+            ))
+            .unwrap_or_else(|| "not_recorded".to_string()),
         if summary.suppressed_item_reasons_recorded {
             match summary.suppressed_item_count {
                 Some(count) => format!("recorded({count})"),

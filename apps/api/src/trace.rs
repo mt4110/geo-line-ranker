@@ -1,4 +1,4 @@
-use api_contracts::{RecommendationRequest, RecommendationResponse};
+use api_contracts::{CandidatePlanTraceDto, RecommendationRequest, RecommendationResponse};
 use config::CandidateRetrievalMode;
 use storage::{RecommendationRepository, RecommendationTrace};
 use storage_postgres::PgRepository;
@@ -11,6 +11,7 @@ pub(crate) struct TracePayloadInput<'a> {
     pub(crate) backend: &'a str,
     pub(crate) candidate_count: usize,
     pub(crate) duration_ms: u128,
+    pub(crate) candidate_plan_trace: Option<&'a CandidatePlanTraceDto>,
     pub(crate) target_station_id: &'a str,
     pub(crate) candidate_limit: usize,
     pub(crate) neighbor_distance_cap_meters: f64,
@@ -45,7 +46,7 @@ pub(crate) async fn record_trace_best_effort(
 }
 
 pub(crate) fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::Value {
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         "response_source": input.response_source,
         "context": {
             "context_source": input.context.context_source.as_str(),
@@ -63,11 +64,28 @@ pub(crate) fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::V
             "candidate_limit": input.candidate_limit,
             "neighbor_distance_cap_meters": input.neighbor_distance_cap_meters
         }
-    })
+    });
+
+    if let Some(candidate_plan_trace) = input.candidate_plan_trace {
+        match serde_json::to_value(candidate_plan_trace) {
+            Ok(candidate_plan_trace_value) => {
+                payload["candidate_plan_trace"] = candidate_plan_trace_value;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "failed to serialize candidate_plan_trace");
+            }
+        }
+    }
+
+    payload
 }
 
 #[cfg(test)]
 mod tests {
+    use api_contracts::{
+        CandidatePlanStageStatusDto, CandidatePlanStageTraceDto, CandidatePlanTraceDto,
+        FallbackStageDto,
+    };
     use config::CandidateRetrievalMode;
 
     use super::{build_trace_payload, TracePayloadInput};
@@ -85,6 +103,7 @@ mod tests {
             backend: "postgres",
             candidate_count: 3,
             duration_ms: 12,
+            candidate_plan_trace: None,
             target_station_id: "st_tamachi",
             candidate_limit: 256,
             neighbor_distance_cap_meters: 5_000.0,
@@ -97,6 +116,46 @@ mod tests {
         assert_eq!(
             payload["context"]["evidence_summary"]["has_search_execute"],
             true
+        );
+    }
+
+    #[test]
+    fn trace_payload_includes_candidate_plan_trace_when_available() {
+        let context = context::RankingContext::default_safe();
+        let candidate_plan_trace = CandidatePlanTraceDto {
+            minimum_candidate_count: 3,
+            selected_stage: FallbackStageDto::SafeGlobalPopular,
+            stop_reason: "sufficient_safe_global_candidates".to_string(),
+            area_context_usable: false,
+            stages: vec![CandidatePlanStageTraceDto {
+                stage: FallbackStageDto::SafeGlobalPopular,
+                candidate_count: 3,
+                required_min_candidates: 3,
+                status: CandidatePlanStageStatusDto::Selected,
+                reason_code: "selected_sufficient_safe_global_candidates".to_string(),
+            }],
+        };
+
+        let payload = build_trace_payload(TracePayloadInput {
+            response_source: "fresh",
+            context: &context,
+            mode: CandidateRetrievalMode::SqlOnly,
+            backend: "postgres",
+            candidate_count: 3,
+            duration_ms: 12,
+            candidate_plan_trace: Some(&candidate_plan_trace),
+            target_station_id: "st_tamachi",
+            candidate_limit: 256,
+            neighbor_distance_cap_meters: 5_000.0,
+        });
+
+        assert_eq!(
+            payload["candidate_plan_trace"]["selected_stage"],
+            "safe_global_popular"
+        );
+        assert_eq!(
+            payload["candidate_plan_trace"]["stages"][0]["status"],
+            "selected"
         );
     }
 }

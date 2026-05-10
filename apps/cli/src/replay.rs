@@ -1402,6 +1402,7 @@ mod tests {
             score_breakdown: Vec::new(),
             fallback_stage: FallbackStage::StrictStation,
             candidate_counts: BTreeMap::new(),
+            candidate_plan_trace: None,
             context: None,
             profile_version: "test".to_string(),
             algorithm_version: "test".to_string(),

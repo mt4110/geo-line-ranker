@@ -1,5 +1,7 @@
 use anyhow::{ensure, Context, Result};
-use api_contracts::{RecommendationRequest, RecommendationResponse, ScoreComponentDto};
+use api_contracts::{
+    CandidatePlanTraceDto, RecommendationRequest, RecommendationResponse, ScoreComponentDto,
+};
 use config::AppSettings;
 use serde::Serialize;
 use serde_json::Value;
@@ -90,8 +92,27 @@ pub struct ExplainTracePayloadSummary {
     pub candidate_retrieval_backend: Option<String>,
     pub candidate_count: Option<usize>,
     pub duration_ms: Option<u64>,
+    pub candidate_plan_trace: Option<ExplainTraceCandidatePlanSummary>,
     pub suppressed_item_reasons_recorded: bool,
     pub suppressed_item_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExplainTraceCandidatePlanSummary {
+    pub minimum_candidate_count: usize,
+    pub selected_stage: String,
+    pub stop_reason: String,
+    pub area_context_usable: bool,
+    pub stages: Vec<ExplainTraceCandidatePlanStageSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExplainTraceCandidatePlanStageSummary {
+    pub stage: String,
+    pub candidate_count: usize,
+    pub required_min_candidates: usize,
+    pub status: String,
+    pub reason_code: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -281,6 +302,8 @@ fn summarize_trace_payload(
 ) -> ExplainTracePayloadSummary {
     let context = trace_payload.get("context");
     let candidate_retrieval = trace_payload.get("candidate_retrieval");
+    let candidate_plan_trace =
+        summarize_candidate_plan_trace(trace_payload.get("candidate_plan_trace"), warnings);
     let suppressed_items = trace_payload.get("suppressed_items");
     let suppressed_item_count = match suppressed_items {
         Some(Value::Array(items)) => Some(items.len()),
@@ -303,8 +326,41 @@ fn summarize_trace_payload(
         candidate_count: candidate_retrieval
             .and_then(|value| usize_field(value, "candidate_count")),
         duration_ms: candidate_retrieval.and_then(|value| u64_field(value, "duration_ms")),
+        candidate_plan_trace,
         suppressed_item_reasons_recorded: suppressed_item_count.is_some(),
         suppressed_item_count,
+    }
+}
+
+fn summarize_candidate_plan_trace(
+    candidate_plan_trace: Option<&Value>,
+    warnings: &mut Vec<String>,
+) -> Option<ExplainTraceCandidatePlanSummary> {
+    let candidate_plan_trace = candidate_plan_trace?;
+    match serde_json::from_value::<CandidatePlanTraceDto>(candidate_plan_trace.clone()) {
+        Ok(trace) => Some(ExplainTraceCandidatePlanSummary {
+            minimum_candidate_count: trace.minimum_candidate_count,
+            selected_stage: trace.selected_stage.as_str().to_string(),
+            stop_reason: trace.stop_reason,
+            area_context_usable: trace.area_context_usable,
+            stages: trace
+                .stages
+                .into_iter()
+                .map(|stage| ExplainTraceCandidatePlanStageSummary {
+                    stage: stage.stage.as_str().to_string(),
+                    candidate_count: stage.candidate_count,
+                    required_min_candidates: stage.required_min_candidates,
+                    status: stage.status.as_str().to_string(),
+                    reason_code: stage.reason_code,
+                })
+                .collect(),
+        }),
+        Err(error) => {
+            warnings.push(format!(
+                "trace_payload.candidate_plan_trace could not be parsed: {error}"
+            ));
+            None
+        }
     }
 }
 
@@ -539,6 +595,49 @@ mod tests {
             .iter()
             .any(|check| check.name == "explanation_integrity.reason_catalog"
                 && check.status.as_str() == "failed"));
+    }
+
+    #[test]
+    fn explain_trace_summarizes_candidate_plan_trace() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.trace_payload["candidate_plan_trace"] = json!({
+            "minimum_candidate_count": 3,
+            "selected_stage": "same_line",
+            "stop_reason": "sufficient_scoped_candidates",
+            "area_context_usable": false,
+            "stages": [
+                {
+                    "stage": "strict_station",
+                    "candidate_count": 1,
+                    "required_min_candidates": 3,
+                    "status": "insufficient",
+                    "reason_code": "candidate_count_below_minimum"
+                },
+                {
+                    "stage": "same_line",
+                    "candidate_count": 3,
+                    "required_min_candidates": 3,
+                    "status": "selected",
+                    "reason_code": "selected_sufficient_scoped_candidates"
+                }
+            ]
+        });
+
+        let report = explain_trace_row(&trace);
+        let plan = report
+            .trace_payload
+            .candidate_plan_trace
+            .expect("candidate plan summary");
+
+        assert_eq!(plan.minimum_candidate_count, 3);
+        assert_eq!(plan.selected_stage, "same_line");
+        assert_eq!(plan.stages.len(), 2);
+        assert_eq!(plan.stages[1].status, "selected");
     }
 
     #[test]

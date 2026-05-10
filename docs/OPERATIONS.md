@@ -364,7 +364,8 @@ cargo run -p cli -- explain trace --id <trace_id> --json
 ranking and does not change fallback semantics. The report shows request
 identity, whether a user id was present without printing the raw user id,
 response fallback stage, result order, reason codes, trace payload
-context/candidate retrieval details, and explanation integrity checks. Treat
+context/candidate retrieval details, candidate plan trace, and explanation
+integrity checks. Treat
 `status=warning`, failed integrity checks, fallback-stage mismatches, and
 `payload_shape=legacy_or_invalid` as debugging signals for that trace. A missing
 trace id is an error.

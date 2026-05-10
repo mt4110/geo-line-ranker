@@ -64,6 +64,7 @@ The response includes:
 - `context.warnings`
 - `fallback_stage`
 - `candidate_counts`
+- `candidate_plan_trace`
 - `items[].fallback_stage`
 - `score_breakdown[].reason_code`
 - `items[].score_breakdown[].reason_code`
@@ -79,6 +80,19 @@ Fallback stages are:
 
 `items[].fallback_stage` uses the same enum values as the top-level `fallback_stage`.
 Score reason codes are cataloged in `docs/REASON_CATALOG.md`.
+
+`candidate_plan_trace` is a privacy-safe summary of fallback-stage selection.
+It includes the selected stage, the stop reason, the minimum candidate count,
+whether area context was usable, and one row per stage with candidate count,
+status, and reason code. It does not include user identifiers, school IDs, or
+raw context payloads.
+
+Candidate plan stage statuses are:
+
+- `selected`: the stage used for scoring
+- `insufficient`: the stage was considered before the selected stage but did not
+  satisfy the plan
+- `skipped`: the stage was not needed after the selected stage was chosen
 
 When a request has no explicit station, line, or area context, context
 resolution may use a user's recent `search_execute` station as context evidence.
