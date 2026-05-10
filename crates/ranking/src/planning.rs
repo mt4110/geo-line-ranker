@@ -195,6 +195,13 @@ impl CandidatePlanSelectionReason {
             Self::NoCandidates => "selected_no_candidates_available",
         }
     }
+
+    fn stops_before_later_stages(self) -> bool {
+        matches!(
+            self,
+            Self::SufficientScoped | Self::UnderfilledAreaContext | Self::SufficientSafeGlobal
+        )
+    }
 }
 
 fn build_candidate_plan_trace(
@@ -217,7 +224,9 @@ fn build_candidate_plan_trace(
                 let selected = stage == selected_stage;
                 let status = if selected {
                     CandidatePlanStageStatus::Selected
-                } else if stage.priority() > selected_stage.priority() {
+                } else if selection_reason.stops_before_later_stages()
+                    && stage.priority() > selected_stage.priority()
+                {
                     CandidatePlanStageStatus::Skipped
                 } else {
                     CandidatePlanStageStatus::Insufficient
@@ -291,5 +300,73 @@ fn insufficient_stage_reason(
             "station_context_not_explicit"
         }
         _ => "candidate_count_below_minimum",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use domain::{
+        CandidatePlanStageStatus, FallbackStage, PlacementKind, RankingQuery, SchoolStationLink,
+    };
+
+    use super::{build_candidate_plan_trace, CandidatePlanSelectionReason};
+
+    fn link(id: &str) -> SchoolStationLink {
+        SchoolStationLink {
+            school_id: id.to_string(),
+            station_id: format!("st_{id}"),
+            walking_minutes: 5,
+            distance_meters: 400,
+            hop_distance: 1,
+            line_name: "Target Line".to_string(),
+        }
+    }
+
+    fn query() -> RankingQuery {
+        RankingQuery {
+            target_station_id: "st_target".to_string(),
+            limit: Some(3),
+            user_id: None,
+            placement: PlacementKind::Search,
+            debug: false,
+            context: None,
+        }
+    }
+
+    #[test]
+    fn best_available_trace_marks_later_evaluated_stages_insufficient() {
+        let staged_candidates = vec![
+            (FallbackStage::StrictStation, vec![link("strict")]),
+            (
+                FallbackStage::SameLine,
+                vec![link("line_a"), link("line_b")],
+            ),
+            (FallbackStage::SafeGlobalPopular, vec![link("global")]),
+        ];
+
+        let trace = build_candidate_plan_trace(
+            &staged_candidates,
+            3,
+            &FallbackStage::SameLine,
+            CandidatePlanSelectionReason::BestAvailableNonEmpty,
+            &query(),
+            false,
+            false,
+        );
+        let safe_global_stage = trace
+            .stages
+            .iter()
+            .find(|stage| stage.stage == FallbackStage::SafeGlobalPopular)
+            .expect("safe global stage");
+
+        assert_eq!(trace.stop_reason, "best_available_non_empty_stage");
+        assert_eq!(
+            safe_global_stage.status,
+            CandidatePlanStageStatus::Insufficient
+        );
+        assert_eq!(
+            safe_global_stage.reason_code,
+            "candidate_count_below_minimum"
+        );
     }
 }
