@@ -2,6 +2,7 @@ mod diversity;
 mod explanation;
 mod fallback;
 mod feature;
+mod graph;
 mod planning;
 mod profile;
 mod scoring;
@@ -268,7 +269,7 @@ mod tests {
                 .find(|stage| stage.stage == FallbackStage::SameLine)
                 .expect("same_line stage")
                 .reason_code,
-            "candidate_count_below_minimum"
+            "line_graph_same_line_candidates_below_minimum"
         );
         assert_eq!(
             plan_trace
@@ -376,6 +377,7 @@ mod tests {
         profiles.fallback.min_results = 1;
         let engine = RankingEngine::new(profiles, "v020-line-id-stage-test");
         let mut query = query("st_target", PlacementKind::Search);
+        query.debug = true;
         query.context = Some(RankingContext {
             context_source: ContextSource::RequestLine,
             confidence: 0.95,
@@ -399,6 +401,15 @@ mod tests {
         assert_eq!(result.candidate_counts.get("same_line"), Some(&1));
         assert_eq!(result.fallback_stage, FallbackStage::SameLine);
         assert_eq!(result.items[0].school_id, "school_target_line");
+        let line_details = result.items[0]
+            .score_breakdown
+            .iter()
+            .find(|component| component.feature == "line_match_bonus")
+            .and_then(|component| component.details.as_ref())
+            .expect("line match debug details");
+        assert_eq!(line_details["match_kind"], "line_id");
+        assert_eq!(line_details["target_line_id"], "line_target");
+        assert_eq!(line_details["candidate_line_id"], "line_target");
     }
 
     #[test]
