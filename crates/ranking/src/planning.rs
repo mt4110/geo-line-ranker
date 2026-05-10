@@ -260,6 +260,8 @@ fn insufficient_stage_reason(
     }
 
     let context = query.context.as_ref();
+    // Legacy callers pass an explicit station through target_station_id while
+    // leaving context unset, so None is still station-explicit for stage traces.
     let station_context_is_explicit = context
         .map(|context| context.station_id().is_some())
         .unwrap_or(true);

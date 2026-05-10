@@ -67,8 +67,14 @@ pub(crate) fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::V
     });
 
     if let Some(candidate_plan_trace) = input.candidate_plan_trace {
-        payload["candidate_plan_trace"] =
-            serde_json::to_value(candidate_plan_trace).unwrap_or_default();
+        match serde_json::to_value(candidate_plan_trace) {
+            Ok(candidate_plan_trace_value) => {
+                payload["candidate_plan_trace"] = candidate_plan_trace_value;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "failed to serialize candidate_plan_trace");
+            }
+        }
     }
 
     payload

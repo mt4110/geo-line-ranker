@@ -111,6 +111,25 @@ mod tests {
             .items
             .iter()
             .all(|item| item.line_name == "JR Yamanote Line"));
+        let plan_trace = result
+            .candidate_plan_trace
+            .as_ref()
+            .expect("candidate plan trace");
+        let strict_stage = plan_trace
+            .stages
+            .iter()
+            .find(|stage| stage.stage == FallbackStage::StrictStation)
+            .expect("strict station stage");
+        assert_eq!(strict_stage.reason_code, "candidate_count_below_minimum");
+        assert_eq!(
+            plan_trace
+                .stages
+                .iter()
+                .find(|stage| stage.stage == FallbackStage::SameLine)
+                .expect("same line stage")
+                .status,
+            CandidatePlanStageStatus::Selected
+        );
     }
 
     #[test]
