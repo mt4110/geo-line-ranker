@@ -108,6 +108,12 @@
     "context_source": "request_line",
     "confidence": 0.95,
     "privacy_level": "coarse_area",
+    "evidence_summary": {
+      "primary_kind": "request_line",
+      "evidence_count": 1,
+      "strongest_strength": 0.95,
+      "has_search_execute": false
+    },
     "warnings": []
   },
   "profile_version": "phase5-profile-version",
