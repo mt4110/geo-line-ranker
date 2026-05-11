@@ -6,6 +6,9 @@ display_name: School Event JP Reference
 compatibility_level: reference
 default_locale: ja-JP
 description: Reference profile for deterministic JP school and event discovery.
+content_kinds:
+  - school
+  - event
 supported_content_kinds:
   - school
   - event

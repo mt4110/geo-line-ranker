@@ -57,7 +57,10 @@ Each `profile.yaml` declares:
   `stable`, `experimental`, or `deprecated`.
 - `default_locale`: selected reason-catalog locale when `reason_catalog`
   declares more than one locale file.
-- `supported_content_kinds`: content kinds the profile intentionally exposes.
+- `content_kinds`: profile-defined content kind registry. These are stable
+  string identifiers, not a fixed core enum.
+- `supported_content_kinds`: content kind refs the profile intentionally
+  exposes. Each entry must exist in `content_kinds`.
 - `context_inputs`: accepted context entry points such as station, line, area,
   or user profile.
 - `placements`: placement surfaces the profile supports. The current runtime
@@ -81,23 +84,29 @@ Each `profile.yaml` declares:
   implemented by a profile.
 
 For the current runtime, `article_support` must remain `reserved`. A profile
-cannot advertise `article` in `supported_content_kinds`, and the referenced
+cannot expose `article` in `supported_content_kinds`, and the referenced
 placement configs cannot mention `article` in enabled content kinds, score
 boosts, or content-kind diversity ratios. The first article implementation
 should update this contract together with the article read model, fixture
 coverage, ranking tests, and any public API/OpenAPI docs required by the shape
 change.
 
-The linter checks schema version, kind, duplicate IDs, placement declarations,
-path syntax, referenced files, fixture manifest identity, compatibility level,
-the active ranking config, all declared reason catalog locale files, connector
-manifest refs, and evaluation refs.
+The linter checks schema version, kind, duplicate IDs, content-kind registry
+syntax, supported content-kind refs, ranking-config content-kind refs,
+placement declarations, path syntax, referenced files, fixture manifest
+identity, compatibility level, the active ranking config, all declared reason
+catalog locale files, connector manifest refs, and evaluation refs. For legacy
+schema-2 manifests that omit `content_kinds`, the validator treats
+`supported_content_kinds` as the inline registry; new profile packs should
+declare `content_kinds` explicitly.
 
 The manifest spec draft also sketches a nested fallback config object, richer
 connector types, and per-profile evaluation packs. This repository has adopted
-only the local-reference contract above for now. It has not adopted dynamic
-connector loading, arbitrary content-kind strings in profile manifests,
-locale-specific explanation rendering, or a replacement ranking engine.
+only the local-reference contract above for now. It has adopted
+profile-defined content-kind identifiers in manifests, while the current
+ranking runtime still emits the implemented school/event response shape. It
+has not adopted dynamic connector loading, locale-specific explanation
+rendering, or a replacement ranking engine.
 
 Compatibility levels are profile-pack contract labels, not storage parity
 claims:

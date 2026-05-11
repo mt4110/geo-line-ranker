@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use domain::{ContentKind, PlacementKind};
+use domain::{ContentKind, ContentKindRef, PlacementKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -21,6 +21,8 @@ pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 2;
 pub const PROFILE_REASON_CATALOG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_FIXTURE_SET_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
+pub const CONTENT_KIND_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, underscores, and hyphens, and must not start or end with a separator";
+const ARTICLE_CONTENT_KIND_ID: &str = "article";
 
 fn required_runtime_placements() -> [PlacementKind; 4] {
     [
@@ -561,7 +563,9 @@ pub struct ProfilePackManifest {
     pub default_locale: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    pub supported_content_kinds: Vec<ContentKind>,
+    #[serde(default)]
+    pub content_kinds: Vec<ContentKindRef>,
+    pub supported_content_kinds: Vec<ContentKindRef>,
     pub context_inputs: Vec<ProfileContextInput>,
     pub placements: Vec<PlacementKind>,
     pub fallback_policy: String,
@@ -664,7 +668,8 @@ pub struct ProfilePackLintFile {
     pub kind: ProfilePackKind,
     pub manifest_version: u32,
     pub compatibility_level: ProfileCompatibilityLevel,
-    pub supported_content_kinds: Vec<ContentKind>,
+    pub content_kind_registry: Vec<ContentKindRef>,
+    pub supported_content_kinds: Vec<ContentKindRef>,
     pub placements: Vec<PlacementKind>,
     pub reason_catalog_locale_count: usize,
     pub reason_count: usize,
@@ -1070,6 +1075,8 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
             ranking_config_dir.display()
         )
     })?;
+    let ranking_profiles = RankingProfiles::load_from_dir(&ranking_config_dir)?;
+    validate_profile_ranking_content_kinds(&profile_pack_manifest, &manifest, &ranking_profiles)?;
 
     build_profile_pack_runtime_selection(
         profile_pack_manifest,
@@ -1323,6 +1330,8 @@ fn lint_loaded_profile_pack_file(
     } else {
         lint_ranking_config_dir(&ranking_config_dir)?;
     }
+    let ranking_profiles = RankingProfiles::load_from_dir(&ranking_config_dir)?;
+    validate_profile_ranking_content_kinds(path, manifest, &ranking_profiles)?;
 
     let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
         format!(
@@ -1447,6 +1456,7 @@ fn lint_loaded_profile_pack_file(
         kind: manifest.kind,
         manifest_version: manifest.manifest_version,
         compatibility_level: manifest.compatibility_level,
+        content_kind_registry: declared_content_kind_registry(manifest),
         supported_content_kinds: manifest.supported_content_kinds.clone(),
         placements: manifest.placements.clone(),
         reason_catalog_locale_count,
@@ -1504,6 +1514,51 @@ fn load_profile_reason_catalog_for_manifest(
     let (reason_catalog_path, reason_catalog) =
         primary_catalog.with_context(|| "selected reason_catalog was not loaded".to_string())?;
     Ok((reason_catalog_path, reason_catalog, locale_count))
+}
+
+fn validate_profile_ranking_content_kinds(
+    path: &Path,
+    manifest: &ProfilePackManifest,
+    ranking_profiles: &RankingProfiles,
+) -> Result<()> {
+    let supported_content_kinds = manifest
+        .supported_content_kinds
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect::<BTreeSet<_>>();
+
+    for placement in required_runtime_placements() {
+        let profile = ranking_profiles.placement(placement);
+        for kind in &profile.mixed_ranking.enabled_content_kinds {
+            ensure!(
+                supported_content_kinds.contains(kind.as_str()),
+                "profile pack {} placement.{}.mixed_ranking.enabled_content_kinds contains {} but supported_content_kinds does not declare it",
+                path.display(),
+                placement.as_str(),
+                kind.as_str()
+            );
+        }
+        for kind in profile.mixed_ranking.score_boosts.keys() {
+            ensure!(
+                supported_content_kinds.contains(kind.as_str()),
+                "profile pack {} placement.{}.mixed_ranking.score_boosts contains {} but supported_content_kinds does not declare it",
+                path.display(),
+                placement.as_str(),
+                kind.as_str()
+            );
+        }
+        for kind in profile.diversity.content_kind_max_ratio.keys() {
+            ensure!(
+                supported_content_kinds.contains(kind.as_str()),
+                "profile pack {} placement.{}.diversity.content_kind_max_ratio contains {} but supported_content_kinds does not declare it",
+                path.display(),
+                placement.as_str(),
+                kind.as_str()
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn lint_ranking_config_dir_cached(
@@ -1626,16 +1681,40 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
         validate_portable_relative_path(path, &label, reason_catalog_path)?;
     }
 
-    let mut seen_content_kinds = BTreeSet::new();
+    let content_kind_registry = declared_content_kind_registry(manifest);
+    let mut seen_content_kind_registry = BTreeSet::new();
+    ensure!(
+        !content_kind_registry.is_empty(),
+        "profile pack {} content_kinds must not be empty",
+        path.display()
+    );
+    for kind in &content_kind_registry {
+        ensure_valid_content_kind_id(path, "content_kinds", kind)?;
+        ensure!(
+            seen_content_kind_registry.insert(kind.clone()),
+            "profile pack {} content_kinds contains duplicate {}",
+            path.display(),
+            kind.as_str()
+        );
+    }
+
+    let mut seen_content_kind_refs = BTreeSet::new();
     ensure!(
         !manifest.supported_content_kinds.is_empty(),
         "profile pack {} supported_content_kinds must not be empty",
         path.display()
     );
     for kind in &manifest.supported_content_kinds {
+        ensure_valid_content_kind_id(path, "supported_content_kinds", kind)?;
         ensure!(
-            seen_content_kinds.insert(*kind),
+            seen_content_kind_refs.insert(kind.clone()),
             "profile pack {} supported_content_kinds contains duplicate {}",
+            path.display(),
+            kind.as_str()
+        );
+        ensure!(
+            seen_content_kind_registry.contains(kind),
+            "profile pack {} supported_content_kinds contains unknown content kind {}",
             path.display(),
             kind.as_str()
         );
@@ -1648,7 +1727,8 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
     ensure!(
         !manifest
             .supported_content_kinds
-            .contains(&ContentKind::Article),
+            .iter()
+            .any(|kind| kind.as_str() == ARTICLE_CONTENT_KIND_ID),
         "profile pack {} cannot enable article while article_support is {}",
         path.display(),
         manifest.article_support.as_str()
@@ -1725,6 +1805,53 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
     }
 
     Ok(())
+}
+
+fn declared_content_kind_registry(manifest: &ProfilePackManifest) -> Vec<ContentKindRef> {
+    if manifest.content_kinds.is_empty() {
+        return manifest.supported_content_kinds.clone();
+    }
+    manifest.content_kinds.clone()
+}
+
+fn ensure_valid_content_kind_id(
+    path: &Path,
+    field: &str,
+    content_kind: &ContentKindRef,
+) -> Result<()> {
+    ensure!(
+        is_content_kind_id(content_kind.as_str()),
+        "profile pack {} invalid {} '{}': {}",
+        path.display(),
+        field,
+        content_kind.as_str(),
+        CONTENT_KIND_ID_RULE_DESCRIPTION
+    );
+    Ok(())
+}
+
+fn is_content_kind_id(value: &str) -> bool {
+    if value.is_empty() || value.trim() != value {
+        return false;
+    }
+
+    let bytes = value.as_bytes();
+    let Some(first) = bytes.first() else {
+        return false;
+    };
+    let Some(last) = bytes.last() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+        return false;
+    }
+    if !last.is_ascii_lowercase() && !last.is_ascii_digit() {
+        return false;
+    }
+
+    bytes.iter().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+    })
 }
 
 fn validate_profile_reason_catalog(path: &Path, catalog: &ProfileReasonCatalog) -> Result<()> {
@@ -2176,8 +2303,12 @@ manifest_version: 1
 profile_id: {profile_id}
 display_name: Example Profile
 compatibility_level: experimental
+content_kinds:
+  - school
+  - event
 supported_content_kinds:
   - school
+  - event
 context_inputs:
   - station
 placements:
@@ -2494,8 +2625,12 @@ manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
 compatibility_level: experimental
+content_kinds:
+  - school
+  - event
 supported_content_kinds:
   - school
+  - event
 context_inputs:
   - station
 placements:
@@ -2528,8 +2663,12 @@ manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
 compatibility_level: experimental
+content_kinds:
+  - school
+  - event
 supported_content_kinds:
   - school
+  - event
 context_inputs:
   - station
 placements:
@@ -2633,8 +2772,12 @@ manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
 compatibility_level: experimental
+content_kinds:
+  - school
+  - event
 supported_content_kinds:
   - school
+  - event
 context_inputs:
   - station
 fallback_policy: example_default
@@ -2648,6 +2791,169 @@ article_support: reserved
         let error = load_profile_pack_manifest(&manifest_path).expect_err("placements");
 
         assert!(format!("{error:#}").contains("missing field `placements`"));
+    }
+
+    #[test]
+    fn accepts_profile_defined_content_kind_registry() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - place
+  - civic_event
+supported_content_kinds:
+  - place
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let manifest = load_profile_pack_manifest(&manifest_path).expect("profile manifest");
+
+        assert_eq!(
+            manifest
+                .content_kinds
+                .iter()
+                .map(|kind| kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["place", "civic_event"]
+        );
+        assert_eq!(manifest.supported_content_kinds[0].as_str(), "place");
+    }
+
+    #[test]
+    fn rejects_supported_content_kind_missing_from_registry() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+supported_content_kinds:
+  - place
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("unknown kind");
+
+        assert!(format!("{error:#}")
+            .contains("supported_content_kinds contains unknown content kind place"));
+    }
+
+    #[test]
+    fn rejects_invalid_profile_content_kind_id() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - Place
+supported_content_kinds:
+  - Place
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("invalid kind");
+
+        assert!(format!("{error:#}").contains("invalid content_kinds 'Place'"));
+    }
+
+    #[test]
+    fn rejects_ranking_content_kind_missing_from_profile_support() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("missing support");
+
+        assert!(format!("{error:#}").contains(
+            "mixed_ranking.enabled_content_kinds contains event but supported_content_kinds does not declare it"
+        ));
     }
 
     #[test]
@@ -2763,8 +3069,12 @@ profile_id: example-profile
 display_name: Example Profile
 compatibility_level: experimental
 default_locale: ja-JP
+content_kinds:
+  - school
+  - event
 supported_content_kinds:
   - school
+  - event
 context_inputs:
   - station
 placements:
@@ -3217,8 +3527,12 @@ manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
 compatibility_level: experimental
+content_kinds:
+  - school
+  - event
 supported_content_kinds:
   - school
+  - event
 context_inputs:
   - station
 placements:
@@ -3298,6 +3612,52 @@ article_support: reserved
     }
 
     #[test]
+    fn runtime_selection_rejects_ranking_content_kind_missing_from_profile_support() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = resolve_profile_pack_runtime_selection(&profiles_dir, "example-profile", None)
+            .expect_err("ranking content kind mismatch");
+
+        assert!(format!("{error:#}").contains(
+            "mixed_ranking.enabled_content_kinds contains event but supported_content_kinds does not declare it"
+        ));
+    }
+
+    #[test]
     fn rejects_unknown_runtime_fixture_set_id() {
         let temp = tempdir().expect("tempdir");
         let profiles_dir = temp.path().join("profiles");
@@ -3353,7 +3713,8 @@ article_support: reserved
             compatibility_level: ProfileCompatibilityLevel::Experimental,
             default_locale: None,
             description: None,
-            supported_content_kinds: vec![ContentKind::School],
+            content_kinds: vec![ContentKind::School.into()],
+            supported_content_kinds: vec![ContentKind::School.into()],
             context_inputs: vec![ProfileContextInput::Station],
             placements: vec![PlacementKind::Home],
             fallback_policy: "example_default".to_string(),
