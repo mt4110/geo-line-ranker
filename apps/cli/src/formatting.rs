@@ -394,11 +394,14 @@ pub fn format_explanation_integrity_doctor_summary(
 
 pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) -> String {
     let mut lines = vec![format!(
-        "doctor profile-pack completed: profile_packs={}, ranking_config_dirs={}, reasons={}, fixture_references={}, source_manifest_references={}, event_csv_example_references={}, optional_crawler_manifest_references={}",
+        "doctor profile-pack completed: profile_packs={}, ranking_config_dirs={}, reason_catalog_locales={}, reasons={}, fixture_references={}, connector_references={}, evaluation_references={}, source_manifest_references={}, event_csv_example_references={}, optional_crawler_manifest_references={}",
         summary.profile_packs,
         summary.ranking_config_dirs,
+        summary.reason_catalog_locales,
         summary.reason_count,
         summary.fixture_references,
+        summary.connector_references,
+        summary.evaluation_references,
         summary.source_manifest_references,
         summary.event_csv_example_references,
         summary.optional_crawler_manifest_references
@@ -406,12 +409,16 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
 
     for file in &summary.files {
         lines.push(format!(
-            "  profile_id={} compatibility_level={} content_kinds={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
             file.profile_id,
             file.compatibility_level,
             file.supported_content_kinds.join(","),
+            file.placements.join(","),
+            file.reason_catalog_locale_count,
             file.reason_count,
             file.fixture_references,
+            file.connector_references,
+            file.evaluation_references,
             file.source_manifest_references,
             file.event_csv_example_references,
             file.optional_crawler_manifest_references,
@@ -426,7 +433,7 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
 
 pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary) -> String {
     let mut lines = vec![format!(
-        "doctor ranking-config completed: active_profile_id={}, fixture_set_id={}, ranking_files={}, ranking_kinds={}, profile_packs={}, referenced_ranking_config_dirs={}, reason_catalog_references={}, reasons={}, fixture_references={}, source_manifest_references={}, event_csv_example_references={}, optional_crawler_manifest_references={}, profile_version={}",
+        "doctor ranking-config completed: active_profile_id={}, fixture_set_id={}, ranking_files={}, ranking_kinds={}, profile_packs={}, referenced_ranking_config_dirs={}, reason_catalog_references={}, reason_catalog_locales={}, reasons={}, fixture_references={}, connector_references={}, evaluation_references={}, source_manifest_references={}, event_csv_example_references={}, optional_crawler_manifest_references={}, profile_version={}",
         summary.active_profile_id.as_deref().unwrap_or("not-selected"),
         summary.fixture_set_id.as_deref().unwrap_or("none"),
         summary.ranking_files,
@@ -434,8 +441,11 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
         summary.profile_packs,
         summary.referenced_ranking_config_dirs,
         summary.reason_catalog_references,
+        summary.reason_catalog_locales,
         summary.reason_count,
         summary.fixture_references,
+        summary.connector_references,
+        summary.evaluation_references,
         summary.source_manifest_references,
         summary.event_csv_example_references,
         summary.optional_crawler_manifest_references,
@@ -458,11 +468,15 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
     lines.push("profile packs:".to_string());
     lines.extend(summary.profiles.iter().map(|profile| {
         format!(
-            "  profile_id={} compatibility_level={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
             profile.profile_id,
             profile.compatibility_level,
+            profile.placements.join(","),
+            profile.reason_catalog_locale_count,
             profile.reason_count,
             profile.fixture_references,
+            profile.connector_references,
+            profile.evaluation_references,
             profile.source_manifest_references,
             profile.event_csv_example_references,
             profile.optional_crawler_manifest_references,

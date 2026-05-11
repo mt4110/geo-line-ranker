@@ -50,18 +50,33 @@ or marketplace assumptions to the profile-author starting path.
 
 Each `profile.yaml` declares:
 
+- `schema_version`: profile pack document schema. The current generic boundary
+  contract is `2`.
 - `profile_id`: stable profile identifier.
 - `compatibility_level`: profile support level, one of `reference`,
   `stable`, `experimental`, or `deprecated`.
+- `default_locale`: selected reason-catalog locale when `reason_catalog`
+  declares more than one locale file.
 - `supported_content_kinds`: content kinds the profile intentionally exposes.
 - `context_inputs`: accepted context entry points such as station, line, area,
   or user profile.
+- `placements`: placement surfaces the profile supports. The current runtime
+  validates that the profile includes `home`, `search`, `detail`, and `mypage`
+  because the active ranking config still requires those four placement files.
 - `fallback_policy`: profile-side fallback policy name.
 - `ranking_config_dir`: active ranking config used by the profile.
 - `reason_catalog`: profile-owned reason labels and core/profile layering.
+  The manifest accepts either a legacy single path or `locale_files`; when
+  multiple locale files are declared, `default_locale` selects the runtime
+  catalog path.
 - `fixtures`: committed fixture sets that exercise the profile.
+- `connectors`: optional normalized local connector manifest references. These
+  are validated local references, not dynamic runtime connector loading.
+- `evaluation`: optional committed evaluation references such as the golden
+  scenario pack.
 - `source_manifests`, `event_csv_examples`, and `optional_crawler_manifests`:
-  source mapping references owned by the profile.
+  source mapping references owned by the profile. These remain readable for
+  current reference-profile docs and can coexist with `connectors`.
 - `article_support`: `reserved` until article candidates are explicitly
   implemented by a profile.
 
@@ -73,9 +88,16 @@ should update this contract together with the article read model, fixture
 coverage, ranking tests, and any public API/OpenAPI docs required by the shape
 change.
 
-The linter checks schema version, kind, duplicate IDs, path syntax, referenced
-files, fixture manifest identity, compatibility level, the active ranking
-config, and the profile reason catalog.
+The linter checks schema version, kind, duplicate IDs, placement declarations,
+path syntax, referenced files, fixture manifest identity, compatibility level,
+the active ranking config, all declared reason catalog locale files, connector
+manifest refs, and evaluation refs.
+
+The manifest spec draft also sketches a nested fallback config object, richer
+connector types, and per-profile evaluation packs. This repository has adopted
+only the local-reference contract above for now. It has not adopted dynamic
+connector loading, arbitrary content-kind strings in profile manifests,
+locale-specific explanation rendering, or a replacement ranking engine.
 
 Compatibility levels are profile-pack contract labels, not storage parity
 claims:
@@ -166,7 +188,11 @@ because crawler manifests carry their own source inputs.
 Core ranking remains deterministic Rust over canonical records. A connector
 produces canonical inputs such as stations, schools, events, and school-station
 links; the profile pack explains why that source belongs to a profile and which
-fixture path proves it locally.
+fixture path proves it locally. The domain crate now also exposes a minimal
+generic boundary (`Entity`, `Occurrence`, `Candidate`,
+`FeatureContribution`, and `ProfilePolicy`) so reference-profile records can be
+mapped toward platform-level concepts without rewriting the current ranking
+path in one step.
 
 `school-event-jp` stays the best-maintained reference profile, but JP source
 manifests and crawler examples live behind that profile boundary. The

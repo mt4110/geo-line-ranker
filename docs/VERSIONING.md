@@ -64,7 +64,7 @@ the active runtime profile set.
 Profile pack manifests in `configs/profiles/*/profile.yaml` use:
 
 ```yaml
-schema_version: 1
+schema_version: 2
 kind: profile_pack
 manifest_version: 1
 compatibility_level: stable
@@ -84,7 +84,8 @@ Profile pack loading is strict:
 - `compatibility_level` must be one of `reference`, `stable`,
   `experimental`, or `deprecated`.
 - Unknown keys fail profile manifest and reason catalog loading.
-- Profile-owned references to ranking configs, fixture manifests, source
+- Profile-owned references to ranking configs, fixture manifests, reason
+  catalog locale files, connector manifests, evaluation packs, source
   manifests, crawler manifests, examples, and event CSV files must use portable
   relative paths and resolve locally when linted.
 
