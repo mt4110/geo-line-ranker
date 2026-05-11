@@ -396,6 +396,12 @@ pub struct RankingConfigLintSummary {
     pub profile_version: String,
 }
 
+#[derive(Debug, Clone)]
+struct RankingConfigLintCacheEntry {
+    summary: RankingConfigLintSummary,
+    profiles: RankingProfiles,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfilePackKind {
@@ -1216,7 +1222,12 @@ fn select_runtime_fixture<'a>(
 }
 
 pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLintSummary> {
-    let path = path.as_ref();
+    Ok(lint_ranking_config_dir_with_profiles(path.as_ref())?.0)
+}
+
+fn lint_ranking_config_dir_with_profiles(
+    path: &Path,
+) -> Result<(RankingConfigLintSummary, RankingProfiles)> {
     let canonical_path = path.canonicalize().with_context(|| {
         format!(
             "failed to canonicalize ranking config dir {}",
@@ -1263,11 +1274,12 @@ pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLi
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
 
-    Ok(RankingConfigLintSummary {
+    let summary = RankingConfigLintSummary {
         path: canonical_path,
         files,
-        profile_version: profiles.profile_version,
-    })
+        profile_version: profiles.profile_version.clone(),
+    };
+    Ok((summary, profiles))
 }
 
 pub fn load_profile_pack_manifest(path: impl AsRef<Path>) -> Result<ProfilePackManifest> {
@@ -1304,7 +1316,7 @@ pub fn load_and_lint_profile_pack_file(
 
 fn lint_profile_pack_file_with_cache(
     path: &Path,
-    ranking_config_cache: Option<&mut BTreeMap<PathBuf, RankingConfigLintSummary>>,
+    ranking_config_cache: Option<&mut BTreeMap<PathBuf, RankingConfigLintCacheEntry>>,
 ) -> Result<ProfilePackLintFile> {
     let manifest = load_profile_pack_manifest(path)?;
     lint_loaded_profile_pack_file(path, &manifest, ranking_config_cache)
@@ -1313,7 +1325,7 @@ fn lint_profile_pack_file_with_cache(
 fn lint_loaded_profile_pack_file(
     path: &Path,
     manifest: &ProfilePackManifest,
-    ranking_config_cache: Option<&mut BTreeMap<PathBuf, RankingConfigLintSummary>>,
+    ranking_config_cache: Option<&mut BTreeMap<PathBuf, RankingConfigLintCacheEntry>>,
 ) -> Result<ProfilePackLintFile> {
     let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
 
@@ -1325,12 +1337,13 @@ fn lint_loaded_profile_pack_file(
         path.display(),
         ranking_config_dir.display()
     );
-    if let Some(cache) = ranking_config_cache {
-        lint_ranking_config_dir_cached(&ranking_config_dir, cache)?;
+    let ranking_profiles = if let Some(cache) = ranking_config_cache {
+        lint_ranking_config_dir_cached(&ranking_config_dir, cache)?
+            .profiles
+            .clone()
     } else {
-        lint_ranking_config_dir(&ranking_config_dir)?;
-    }
-    let ranking_profiles = RankingProfiles::load_from_dir(&ranking_config_dir)?;
+        lint_ranking_config_dir_with_profiles(&ranking_config_dir)?.1
+    };
     validate_profile_ranking_content_kinds(path, manifest, &ranking_profiles)?;
 
     let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
@@ -1561,10 +1574,10 @@ fn validate_profile_ranking_content_kinds(
     Ok(())
 }
 
-fn lint_ranking_config_dir_cached(
+fn lint_ranking_config_dir_cached<'a>(
     path: &Path,
-    cache: &mut BTreeMap<PathBuf, RankingConfigLintSummary>,
-) -> Result<()> {
+    cache: &'a mut BTreeMap<PathBuf, RankingConfigLintCacheEntry>,
+) -> Result<&'a RankingConfigLintCacheEntry> {
     let canonical_path = path.canonicalize().with_context(|| {
         format!(
             "failed to canonicalize ranking config dir {}",
@@ -1572,10 +1585,10 @@ fn lint_ranking_config_dir_cached(
         )
     })?;
     match cache.entry(canonical_path) {
-        Entry::Occupied(_) => Ok(()),
+        Entry::Occupied(entry) => Ok(entry.into_mut()),
         Entry::Vacant(entry) => {
-            entry.insert(lint_ranking_config_dir(path)?);
-            Ok(())
+            let (summary, profiles) = lint_ranking_config_dir_with_profiles(path)?;
+            Ok(entry.insert(RankingConfigLintCacheEntry { summary, profiles }))
         }
     }
 }
@@ -1605,7 +1618,10 @@ pub fn lint_profile_pack_dir(path: impl AsRef<Path>) -> Result<ProfilePackLintSu
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(ProfilePackLintSummary {
         files,
-        ranking_configs: ranking_config_cache.into_values().collect(),
+        ranking_configs: ranking_config_cache
+            .into_values()
+            .map(|entry| entry.summary)
+            .collect(),
     })
 }
 
@@ -1682,18 +1698,20 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
     }
 
     let content_kind_registry = declared_content_kind_registry(manifest);
+    let content_kind_registry_field = declared_content_kind_registry_field(manifest);
     let mut seen_content_kind_registry = BTreeSet::new();
     ensure!(
         !content_kind_registry.is_empty(),
-        "profile pack {} content_kinds must not be empty",
+        "profile pack {} content kind registry must not be empty; declare content_kinds or supported_content_kinds for legacy schema-2 manifests",
         path.display()
     );
     for kind in &content_kind_registry {
-        ensure_valid_content_kind_id(path, "content_kinds", kind)?;
+        ensure_valid_content_kind_id(path, content_kind_registry_field, kind)?;
         ensure!(
             seen_content_kind_registry.insert(kind.clone()),
-            "profile pack {} content_kinds contains duplicate {}",
+            "profile pack {} {} contains duplicate {}",
             path.display(),
+            content_kind_registry_field,
             kind.as_str()
         );
     }
@@ -1812,6 +1830,14 @@ fn declared_content_kind_registry(manifest: &ProfilePackManifest) -> Vec<Content
         return manifest.supported_content_kinds.clone();
     }
     manifest.content_kinds.clone()
+}
+
+fn declared_content_kind_registry_field(manifest: &ProfilePackManifest) -> &'static str {
+    if manifest.content_kinds.is_empty() {
+        "supported_content_kinds (implicit content_kinds registry)"
+    } else {
+        "content_kinds"
+    }
 }
 
 fn ensure_valid_content_kind_id(
@@ -2909,6 +2935,41 @@ article_support: reserved
         let error = load_profile_pack_manifest(&manifest_path).expect_err("invalid kind");
 
         assert!(format!("{error:#}").contains("invalid content_kinds 'Place'"));
+    }
+
+    #[test]
+    fn legacy_implicit_content_kind_registry_errors_name_supported_refs() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+supported_content_kinds:
+  - Place
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("invalid implicit kind");
+
+        assert!(format!("{error:#}")
+            .contains("invalid supported_content_kinds (implicit content_kinds registry) 'Place'"));
     }
 
     #[test]
