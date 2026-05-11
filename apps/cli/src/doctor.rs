@@ -67,8 +67,11 @@ pub struct ExplanationIntegrityDoctorCase {
 pub struct ProfilePackDoctorSummary {
     pub profile_packs: usize,
     pub ranking_config_dirs: usize,
+    pub reason_catalog_locales: usize,
     pub reason_count: usize,
     pub fixture_references: usize,
+    pub connector_references: usize,
+    pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
     pub optional_crawler_manifest_references: usize,
@@ -86,8 +89,12 @@ pub struct ProfilePackDoctorFile {
     pub manifest_version: u32,
     pub compatibility_level: String,
     pub supported_content_kinds: Vec<String>,
+    pub placements: Vec<String>,
+    pub reason_catalog_locale_count: usize,
     pub reason_count: usize,
     pub fixture_references: usize,
+    pub connector_references: usize,
+    pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
     pub optional_crawler_manifest_references: usize,
@@ -104,8 +111,11 @@ pub struct RankingConfigDoctorSummary {
     pub profile_packs: usize,
     pub referenced_ranking_config_dirs: usize,
     pub reason_catalog_references: usize,
+    pub reason_catalog_locales: usize,
     pub reason_count: usize,
     pub fixture_references: usize,
+    pub connector_references: usize,
+    pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
     pub optional_crawler_manifest_references: usize,
@@ -127,8 +137,12 @@ pub struct RankingConfigDoctorProfile {
     pub ranking_config_dir: PathBuf,
     pub reason_catalog_path: PathBuf,
     pub compatibility_level: String,
+    pub placements: Vec<String>,
+    pub reason_catalog_locale_count: usize,
     pub reason_count: usize,
     pub fixture_references: usize,
+    pub connector_references: usize,
+    pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
     pub optional_crawler_manifest_references: usize,
@@ -330,10 +344,22 @@ pub fn ranking_config_doctor_summary_from_lint(
         profile_packs: profiles.len(),
         referenced_ranking_config_dirs,
         reason_catalog_references,
+        reason_catalog_locales: profiles
+            .iter()
+            .map(|profile| profile.reason_catalog_locale_count)
+            .sum(),
         reason_count: profiles.iter().map(|profile| profile.reason_count).sum(),
         fixture_references: profiles
             .iter()
             .map(|profile| profile.fixture_references)
+            .sum(),
+        connector_references: profiles
+            .iter()
+            .map(|profile| profile.connector_references)
+            .sum(),
+        evaluation_references: profiles
+            .iter()
+            .map(|profile| profile.evaluation_references)
             .sum(),
         source_manifest_references: profiles
             .iter()
@@ -992,8 +1018,14 @@ fn profile_pack_doctor_summary_from_lint(
     ProfilePackDoctorSummary {
         profile_packs: files.len(),
         ranking_config_dirs: lint_summary.ranking_configs.len(),
+        reason_catalog_locales: files
+            .iter()
+            .map(|file| file.reason_catalog_locale_count)
+            .sum(),
         reason_count: files.iter().map(|file| file.reason_count).sum(),
         fixture_references: files.iter().map(|file| file.fixture_references).sum(),
+        connector_references: files.iter().map(|file| file.connector_references).sum(),
+        evaluation_references: files.iter().map(|file| file.evaluation_references).sum(),
         source_manifest_references: files
             .iter()
             .map(|file| file.source_manifest_references)
@@ -1025,8 +1057,16 @@ fn profile_pack_doctor_file(file: ProfilePackLintFile) -> ProfilePackDoctorFile 
             .into_iter()
             .map(|kind| kind.as_str().to_string())
             .collect(),
+        placements: file
+            .placements
+            .into_iter()
+            .map(|placement| placement.as_str().to_string())
+            .collect(),
+        reason_catalog_locale_count: file.reason_catalog_locale_count,
         reason_count: file.reason_count,
         fixture_references: file.fixture_count,
+        connector_references: file.connector_count,
+        evaluation_references: file.evaluation_reference_count,
         source_manifest_references: file.source_manifest_count,
         event_csv_example_references: file.event_csv_example_count,
         optional_crawler_manifest_references: file.optional_crawler_manifest_count,
@@ -1048,8 +1088,16 @@ fn ranking_config_doctor_profile(file: ProfilePackLintFile) -> RankingConfigDoct
         ranking_config_dir: file.ranking_config_dir,
         reason_catalog_path: file.reason_catalog_path,
         compatibility_level: file.compatibility_level.as_str().to_string(),
+        placements: file
+            .placements
+            .into_iter()
+            .map(|placement| placement.as_str().to_string())
+            .collect(),
+        reason_catalog_locale_count: file.reason_catalog_locale_count,
         reason_count: file.reason_count,
         fixture_references: file.fixture_count,
+        connector_references: file.connector_count,
+        evaluation_references: file.evaluation_reference_count,
         source_manifest_references: file.source_manifest_count,
         event_csv_example_references: file.event_csv_example_count,
         optional_crawler_manifest_references: file.optional_crawler_manifest_count,

@@ -17,10 +17,19 @@ pub const DEFAULT_RANKING_CONFIG_DIR: &str = "configs/ranking";
 pub const DEFAULT_FIXTURE_DIR: &str = "storage/fixtures/minimal";
 pub const DEFAULT_ALGORITHM_VERSION: &str = "phase8-policy-diversity-v1";
 pub const RANKING_CONFIG_SCHEMA_VERSION: u32 = 1;
-pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 1;
+pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 2;
 pub const PROFILE_REASON_CATALOG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_FIXTURE_SET_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
+
+fn required_runtime_placements() -> [PlacementKind; 4] {
+    [
+        PlacementKind::Home,
+        PlacementKind::Search,
+        PlacementKind::Detail,
+        PlacementKind::Mypage,
+    ]
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -456,6 +465,90 @@ impl ArticleSupport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ProfileReasonCatalogRef {
+    Path(String),
+    Localized(ProfileReasonCatalogLocaleFiles),
+}
+
+impl ProfileReasonCatalogRef {
+    pub fn display(&self) -> String {
+        match self {
+            Self::Path(path) => path.clone(),
+            Self::Localized(localized) => localized
+                .locale_files
+                .iter()
+                .map(|(locale, path)| format!("{locale}:{path}"))
+                .collect::<Vec<_>>()
+                .join(","),
+        }
+    }
+
+    fn catalog_paths(&self) -> Vec<(Option<&str>, &str)> {
+        match self {
+            Self::Path(path) => vec![(None, path.as_str())],
+            Self::Localized(localized) => localized
+                .locale_files
+                .iter()
+                .map(|(locale, path)| (Some(locale.as_str()), path.as_str()))
+                .collect(),
+        }
+    }
+
+    fn primary_path<'a>(&'a self, default_locale: Option<&str>) -> Result<&'a str> {
+        match self {
+            Self::Path(path) => Ok(path.as_str()),
+            Self::Localized(localized) => {
+                if let Some(default_locale) = default_locale {
+                    return localized
+                        .locale_files
+                        .get(default_locale)
+                        .map(String::as_str)
+                        .with_context(|| {
+                            format!(
+                                "default_locale {} is not declared in reason_catalog.locale_files",
+                                default_locale
+                            )
+                        });
+                }
+                ensure!(
+                    localized.locale_files.len() == 1,
+                    "default_locale is required when reason_catalog.locale_files has multiple locales"
+                );
+                localized
+                    .locale_files
+                    .values()
+                    .next()
+                    .map(String::as_str)
+                    .with_context(|| "reason_catalog.locale_files must not be empty".to_string())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileReasonCatalogLocaleFiles {
+    pub locale_files: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileConnectorRef {
+    #[serde(rename = "type")]
+    pub connector_type: String,
+    pub manifest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileEvaluationRef {
+    pub scenario_pack: String,
+    #[serde(default)]
+    pub pairwise_pack: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProfilePackManifest {
     pub schema_version: u32,
@@ -465,15 +558,22 @@ pub struct ProfilePackManifest {
     pub display_name: String,
     pub compatibility_level: ProfileCompatibilityLevel,
     #[serde(default)]
+    pub default_locale: Option<String>,
+    #[serde(default)]
     pub description: Option<String>,
     pub supported_content_kinds: Vec<ContentKind>,
     pub context_inputs: Vec<ProfileContextInput>,
+    pub placements: Vec<PlacementKind>,
     pub fallback_policy: String,
     pub ranking_config_dir: String,
-    pub reason_catalog: String,
+    pub reason_catalog: ProfileReasonCatalogRef,
     pub article_support: ArticleSupport,
     #[serde(default)]
     pub fixtures: Vec<ProfileFixtureRef>,
+    #[serde(default)]
+    pub connectors: Vec<ProfileConnectorRef>,
+    #[serde(default)]
+    pub evaluation: Option<ProfileEvaluationRef>,
     #[serde(default)]
     pub source_manifests: Vec<String>,
     #[serde(default)]
@@ -565,8 +665,12 @@ pub struct ProfilePackLintFile {
     pub manifest_version: u32,
     pub compatibility_level: ProfileCompatibilityLevel,
     pub supported_content_kinds: Vec<ContentKind>,
+    pub placements: Vec<PlacementKind>,
+    pub reason_catalog_locale_count: usize,
     pub reason_count: usize,
     pub fixture_count: usize,
+    pub connector_count: usize,
+    pub evaluation_reference_count: usize,
     pub source_manifest_count: usize,
     pub event_csv_example_count: usize,
     pub optional_crawler_manifest_count: usize,
@@ -701,12 +805,7 @@ impl RankingProfiles {
         let mut digest = Sha256::new();
         let mut placement_raws = Vec::new();
         let mut placements = BTreeMap::new();
-        for placement in [
-            PlacementKind::Home,
-            PlacementKind::Search,
-            PlacementKind::Detail,
-            PlacementKind::Mypage,
-        ] {
+        for placement in required_runtime_placements() {
             let placement_path = path.join(format!("placement.{}.yaml", placement.as_str()));
             let placement_raw = read_raw(&placement_path)?;
             digest.update(placement_raw.as_bytes());
@@ -818,12 +917,7 @@ impl RankingProfiles {
             "tracking weights must be zero or positive"
         );
 
-        for placement in [
-            PlacementKind::Home,
-            PlacementKind::Search,
-            PlacementKind::Detail,
-            PlacementKind::Mypage,
-        ] {
+        for placement in required_runtime_placements() {
             let profile = self
                 .placements
                 .get(&placement)
@@ -1065,7 +1159,7 @@ fn resolve_runtime_reason_catalog_path(
     profile_pack_manifest: &Path,
     manifest: &ProfilePackManifest,
 ) -> Result<PathBuf> {
-    let (reason_catalog_path, _) =
+    let (reason_catalog_path, _, _) =
         load_profile_reason_catalog_for_manifest(profile_pack_manifest, manifest)?;
     let reason_catalog_path = reason_catalog_path.canonicalize().with_context(|| {
         format!(
@@ -1237,7 +1331,7 @@ fn lint_loaded_profile_pack_file(
         )
     })?;
 
-    let (reason_catalog_path, reason_catalog) =
+    let (reason_catalog_path, reason_catalog, reason_catalog_locale_count) =
         load_profile_reason_catalog_for_manifest(path, manifest)?;
     let reason_catalog_path = reason_catalog_path.canonicalize().with_context(|| {
         format!(
@@ -1282,6 +1376,48 @@ fn lint_loaded_profile_pack_file(
         )?;
     }
 
+    for connector in &manifest.connectors {
+        let resolved = manifest_dir.join(validate_portable_relative_path(
+            path,
+            "connectors.manifest",
+            &connector.manifest,
+        )?);
+        ensure!(
+            resolved.is_file(),
+            "profile pack {} connector {} manifest {} is missing or not a file",
+            path.display(),
+            connector.connector_type,
+            resolved.display()
+        );
+    }
+
+    if let Some(evaluation) = &manifest.evaluation {
+        let scenario_pack = manifest_dir.join(validate_portable_relative_path(
+            path,
+            "evaluation.scenario_pack",
+            &evaluation.scenario_pack,
+        )?);
+        ensure!(
+            scenario_pack.is_file() || scenario_pack.is_dir(),
+            "profile pack {} evaluation.scenario_pack {} is missing",
+            path.display(),
+            scenario_pack.display()
+        );
+        if let Some(pairwise_pack) = evaluation.pairwise_pack.as_deref() {
+            let pairwise_pack = manifest_dir.join(validate_portable_relative_path(
+                path,
+                "evaluation.pairwise_pack",
+                pairwise_pack,
+            )?);
+            ensure!(
+                pairwise_pack.is_file() || pairwise_pack.is_dir(),
+                "profile pack {} evaluation.pairwise_pack {} is missing",
+                path.display(),
+                pairwise_pack.display()
+            );
+        }
+    }
+
     for referenced_file in manifest
         .source_manifests
         .iter()
@@ -1312,8 +1448,16 @@ fn lint_loaded_profile_pack_file(
         manifest_version: manifest.manifest_version,
         compatibility_level: manifest.compatibility_level,
         supported_content_kinds: manifest.supported_content_kinds.clone(),
+        placements: manifest.placements.clone(),
+        reason_catalog_locale_count,
         reason_count: reason_catalog.reasons.len(),
         fixture_count: manifest.fixtures.len(),
+        connector_count: manifest.connectors.len(),
+        evaluation_reference_count: manifest
+            .evaluation
+            .as_ref()
+            .map(|evaluation| 1 + usize::from(evaluation.pairwise_pack.is_some()))
+            .unwrap_or(0),
         source_manifest_count: manifest.source_manifests.len(),
         event_csv_example_count: manifest.event_csv_examples.len(),
         optional_crawler_manifest_count: manifest.optional_crawler_manifests.len(),
@@ -1323,27 +1467,43 @@ fn lint_loaded_profile_pack_file(
 fn load_profile_reason_catalog_for_manifest(
     profile_pack_manifest: &Path,
     manifest: &ProfilePackManifest,
-) -> Result<(PathBuf, ProfileReasonCatalog)> {
-    let reason_catalog_path = resolve_profile_ref(
-        profile_pack_manifest,
-        "reason_catalog",
-        &manifest.reason_catalog,
-    )?;
-    ensure!(
-        reason_catalog_path.is_file(),
-        "profile pack {} reason_catalog {} is missing or not a file",
-        profile_pack_manifest.display(),
-        reason_catalog_path.display()
-    );
-    let reason_catalog = load_profile_reason_catalog(&reason_catalog_path)?;
-    ensure!(
-        reason_catalog.profile_id == manifest.profile_id,
-        "profile pack {} reason_catalog profile_id {} does not match {}",
-        profile_pack_manifest.display(),
-        reason_catalog.profile_id,
-        manifest.profile_id
-    );
-    Ok((reason_catalog_path, reason_catalog))
+) -> Result<(PathBuf, ProfileReasonCatalog, usize)> {
+    let primary_path = manifest
+        .reason_catalog
+        .primary_path(manifest.default_locale.as_deref())?;
+    let mut primary_catalog = None;
+    let mut locale_count = 0;
+
+    for (locale, raw_path) in manifest.reason_catalog.catalog_paths() {
+        locale_count += 1;
+        let label = locale
+            .map(|locale| format!("reason_catalog.locale_files.{locale}"))
+            .unwrap_or_else(|| "reason_catalog".to_string());
+        let reason_catalog_path = resolve_profile_ref(profile_pack_manifest, &label, raw_path)?;
+        ensure!(
+            reason_catalog_path.is_file(),
+            "profile pack {} {} {} is missing or not a file",
+            profile_pack_manifest.display(),
+            label,
+            reason_catalog_path.display()
+        );
+        let reason_catalog = load_profile_reason_catalog(&reason_catalog_path)?;
+        ensure!(
+            reason_catalog.profile_id == manifest.profile_id,
+            "profile pack {} {} profile_id {} does not match {}",
+            profile_pack_manifest.display(),
+            label,
+            reason_catalog.profile_id,
+            manifest.profile_id
+        );
+        if raw_path == primary_path {
+            primary_catalog = Some((reason_catalog_path, reason_catalog));
+        }
+    }
+
+    let (reason_catalog_path, reason_catalog) =
+        primary_catalog.with_context(|| "selected reason_catalog was not loaded".to_string())?;
+    Ok((reason_catalog_path, reason_catalog, locale_count))
 }
 
 fn lint_ranking_config_dir_cached(
@@ -1436,7 +1596,35 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
         path.display()
     );
     validate_portable_relative_path(path, "ranking_config_dir", &manifest.ranking_config_dir)?;
-    validate_portable_relative_path(path, "reason_catalog", &manifest.reason_catalog)?;
+    if let Some(default_locale) = manifest.default_locale.as_deref() {
+        ensure!(
+            !default_locale.trim().is_empty(),
+            "profile pack {} default_locale must not be empty when present",
+            path.display()
+        );
+    }
+    let reason_catalog_paths = manifest.reason_catalog.catalog_paths();
+    ensure!(
+        !reason_catalog_paths.is_empty(),
+        "profile pack {} reason_catalog.locale_files must not be empty",
+        path.display()
+    );
+    manifest
+        .reason_catalog
+        .primary_path(manifest.default_locale.as_deref())?;
+    for (locale, reason_catalog_path) in reason_catalog_paths {
+        if let Some(locale) = locale {
+            ensure!(
+                !locale.trim().is_empty(),
+                "profile pack {} reason_catalog.locale_files contains an empty locale",
+                path.display()
+            );
+        }
+        let label = locale
+            .map(|locale| format!("reason_catalog.locale_files.{locale}"))
+            .unwrap_or_else(|| "reason_catalog".to_string());
+        validate_portable_relative_path(path, &label, reason_catalog_path)?;
+    }
 
     let mut seen_content_kinds = BTreeSet::new();
     ensure!(
@@ -1481,8 +1669,50 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
         );
     }
 
+    let mut seen_placements = BTreeSet::new();
+    ensure!(
+        !manifest.placements.is_empty(),
+        "profile pack {} placements must not be empty",
+        path.display()
+    );
+    for placement in &manifest.placements {
+        ensure!(
+            seen_placements.insert(*placement),
+            "profile pack {} placements contains duplicate {}",
+            path.display(),
+            placement.as_str()
+        );
+    }
+    for placement in required_runtime_placements() {
+        ensure!(
+            seen_placements.contains(&placement),
+            "profile pack {} placements must include {} while the current runtime requires placement.{}.yaml",
+            path.display(),
+            placement.as_str(),
+            placement.as_str()
+        );
+    }
+
     for fixture in &manifest.fixtures {
         validate_portable_relative_path(path, "fixtures.path", &fixture.path)?;
+    }
+    for connector in &manifest.connectors {
+        ensure!(
+            !connector.connector_type.trim().is_empty(),
+            "profile pack {} connectors.type must not be empty",
+            path.display()
+        );
+        validate_portable_relative_path(path, "connectors.manifest", &connector.manifest)?;
+    }
+    if let Some(evaluation) = &manifest.evaluation {
+        validate_portable_relative_path(
+            path,
+            "evaluation.scenario_pack",
+            &evaluation.scenario_pack,
+        )?;
+        if let Some(pairwise_pack) = evaluation.pairwise_pack.as_deref() {
+            validate_portable_relative_path(path, "evaluation.pairwise_pack", pairwise_pack)?;
+        }
     }
     for referenced_file in manifest
         .source_manifests
@@ -1863,11 +2093,12 @@ mod tests {
         validate_portable_relative_path, validate_profile_pack_contract,
         validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
         ProfileCompatibilityLevel, ProfileContextInput, ProfilePackKind, ProfilePackManifest,
-        ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind, RankingConfigKind,
-        RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind,
+        ProfileReasonCatalogRef, RankingConfigKind, RankingProfiles,
+        DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
-    use domain::ContentKind;
+    use domain::{ContentKind, PlacementKind};
 
     fn repo_config_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
@@ -1939,7 +2170,7 @@ reasons:
         fs::write(
             path,
             format!(
-                r#"schema_version: 1
+                r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: {profile_id}
@@ -1949,6 +2180,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: example_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
@@ -2252,7 +2488,7 @@ diversity:
         let manifest_path = temp.path().join("profile.yaml");
         fs::write(
             &manifest_path,
-            r#"schema_version: 1
+            r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
@@ -2262,6 +2498,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: example_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
@@ -2281,7 +2522,7 @@ unknown_key: true
         let manifest_path = temp.path().join("profile.yaml");
         fs::write(
             &manifest_path,
-            r#"schema_version: 1
+            r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
@@ -2291,6 +2532,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: example_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
@@ -2313,7 +2559,7 @@ fixtures:
         let manifest_path = temp.path().join("profile.yaml");
         fs::write(
             &manifest_path,
-            r#"schema_version: 1
+            r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
@@ -2323,6 +2569,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: example_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
@@ -2344,11 +2595,44 @@ article_support: reserved
         let manifest_path = temp.path().join("profile.yaml");
         fs::write(
             &manifest_path,
-            r#"schema_version: 1
+            r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
 display_name: Example Profile
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("compatibility level");
+        assert!(format!("{error:#}").contains("missing field `compatibility_level`"));
+    }
+
+    #[test]
+    fn rejects_missing_profile_placements() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
 supported_content_kinds:
   - school
 context_inputs:
@@ -2361,8 +2645,40 @@ article_support: reserved
         )
         .expect("profile");
 
-        let error = load_profile_pack_manifest(&manifest_path).expect_err("compatibility level");
-        assert!(format!("{error:#}").contains("missing field `compatibility_level`"));
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("placements");
+
+        assert!(format!("{error:#}").contains("missing field `placements`"));
+    }
+
+    #[test]
+    fn rejects_profile_manifest_missing_runtime_placements() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+placements:
+  - home
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("missing placement");
+
+        assert!(format!("{error:#}").contains("placements must include search"));
     }
 
     #[test]
@@ -2409,6 +2725,164 @@ reasons:
 
         let error = load_profile_reason_catalog(&catalog_path).expect_err("unknown key");
         assert!(format!("{error:#}").contains("unknown field `unknown_reason_key`"));
+    }
+
+    #[test]
+    fn lints_profile_pack_with_localized_reason_catalog_connectors_and_evaluation() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        let source_dir = profile_dir.join("sources");
+        let evaluation_dir = profile_dir.join("evaluation").join("scenarios");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        fs::create_dir_all(&evaluation_dir).expect("evaluation dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.ja-JP.yaml"), "example-profile");
+        write_minimal_reason_catalog(&profile_dir.join("reasons.en-US.yaml"), "example-profile");
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "example-profile",
+        );
+        fs::write(source_dir.join("events.yaml"), "schema_version: 1\n").expect("source");
+        fs::write(
+            profile_dir.join("evaluation").join("pairwise.yaml"),
+            "schema_version: 1\n",
+        )
+        .expect("pairwise");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+default_locale: ja-JP
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog:
+  locale_files:
+    ja-JP: reasons.ja-JP.yaml
+    en-US: reasons.en-US.yaml
+article_support: reserved
+fixtures:
+  - fixture_set_id: minimal
+    path: ../../fixtures/minimal
+connectors:
+  - type: csv_import
+    manifest: sources/events.yaml
+evaluation:
+  scenario_pack: evaluation/scenarios
+  pairwise_pack: evaluation/pairwise.yaml
+"#,
+        )
+        .expect("profile");
+
+        let lint = lint_profile_pack_file(profile_dir.join("profile.yaml")).expect("profile lint");
+
+        assert_eq!(lint.reason_catalog_locale_count, 2);
+        assert_eq!(lint.reason_count, 1);
+        assert_eq!(lint.connector_count, 1);
+        assert_eq!(lint.evaluation_reference_count, 2);
+        assert_eq!(
+            lint.placements,
+            vec![
+                PlacementKind::Home,
+                PlacementKind::Search,
+                PlacementKind::Detail,
+                PlacementKind::Mypage,
+            ]
+        );
+        assert_eq!(
+            lint.reason_catalog_path,
+            profile_dir
+                .join("reasons.ja-JP.yaml")
+                .canonicalize()
+                .expect("reason catalog")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_profile_manifest_placements() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+placements:
+  - home
+  - home
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("duplicate placement");
+
+        assert!(format!("{error:#}").contains("placements contains duplicate home"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_localized_reason_catalog_without_default_locale() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog:
+  locale_files:
+    ja-JP: reasons.ja-JP.yaml
+    en-US: reasons.en-US.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("default locale");
+
+        assert!(format!("{error:#}").contains("default_locale is required"));
     }
 
     #[test]
@@ -2737,7 +3211,7 @@ worker_max_attempts: 3
         write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
         fs::write(
             profile_dir.join("profile.yaml"),
-            r#"schema_version: 1
+            r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
@@ -2747,6 +3221,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: example_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
@@ -2872,14 +3351,18 @@ article_support: reserved
             profile_id: "school-event-jp ".to_string(),
             display_name: "Example".to_string(),
             compatibility_level: ProfileCompatibilityLevel::Experimental,
+            default_locale: None,
             description: None,
             supported_content_kinds: vec![ContentKind::School],
             context_inputs: vec![ProfileContextInput::Station],
+            placements: vec![PlacementKind::Home],
             fallback_policy: "example_default".to_string(),
             ranking_config_dir: "../../ranking".to_string(),
-            reason_catalog: "reasons.yaml".to_string(),
+            reason_catalog: ProfileReasonCatalogRef::Path("reasons.yaml".to_string()),
             article_support: ArticleSupport::Reserved,
             fixtures: vec![],
+            connectors: vec![],
+            evaluation: None,
             source_manifests: vec![],
             event_csv_examples: vec![],
             optional_crawler_manifests: vec![],
@@ -2973,7 +3456,7 @@ article_support: reserved
         write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
         fs::write(
             profile_dir.join("profile.yaml"),
-            r#"schema_version: 1
+            r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
@@ -2984,6 +3467,11 @@ supported_content_kinds:
   - article
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: example_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
@@ -3005,7 +3493,7 @@ fixtures:
         let manifest_path = temp.path().join("profile.yaml");
         fs::write(
             &manifest_path,
-            r#"schema_version: 1
+            r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: example-profile
@@ -3015,6 +3503,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: example_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml

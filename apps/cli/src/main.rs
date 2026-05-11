@@ -1136,8 +1136,14 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         .map(|kind| kind.as_str())
         .collect::<Vec<_>>()
         .join(",");
+    let placements = file
+        .placements
+        .iter()
+        .map(|placement| placement.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kinds={} reasons={} fixtures={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
+        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
         file.path.display(),
         file.profile_id,
         file.schema_version,
@@ -1145,8 +1151,12 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         file.manifest_version,
         file.compatibility_level.as_str(),
         content_kinds,
+        placements,
+        file.reason_catalog_locale_count,
         file.reason_count,
         file.fixture_count,
+        file.connector_count,
+        file.evaluation_reference_count,
         file.source_manifest_count,
         file.event_csv_example_count,
         file.optional_crawler_manifest_count
@@ -1190,8 +1200,10 @@ fn format_profile_inspect_summary(
         format!("fallback_policy={}", manifest.fallback_policy),
         format!("ranking_config_dir={}", manifest.ranking_config_dir),
         format!(
-            "reason_catalog={} reasons={}",
-            manifest.reason_catalog, lint_file.reason_count
+            "reason_catalog={} reason_catalog_locales={} reasons={}",
+            manifest.reason_catalog.display(),
+            lint_file.reason_catalog_locale_count,
+            lint_file.reason_count
         ),
         format!(
             "runtime_reason_catalog_path={}",
@@ -1202,6 +1214,20 @@ fn format_profile_inspect_summary(
             runtime_selection.ranking_config_dir.display()
         ),
         format!("article_support={}", manifest.article_support.as_str()),
+        format!(
+            "placements={}",
+            manifest
+                .placements
+                .iter()
+                .map(|placement| placement.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        format!(
+            "connectors={} evaluation_refs={}",
+            manifest.connectors.len(),
+            lint_file.evaluation_reference_count
+        ),
     ];
 
     lines.push(format!(
@@ -1287,6 +1313,7 @@ mod tests {
         ProfileCompatibilityLevel, ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary,
         RankingConfigKind, RankingConfigLintFile, RankingConfigLintSummary,
     };
+    use domain::PlacementKind;
     use std::{collections::BTreeMap, fs};
 
     #[test]
@@ -1754,8 +1781,11 @@ mod tests {
         let summary = cli::ProfilePackDoctorSummary {
             profile_packs: 1,
             ranking_config_dirs: 1,
+            reason_catalog_locales: 1,
             reason_count: 14,
             fixture_references: 1,
+            connector_references: 6,
+            evaluation_references: 1,
             source_manifest_references: 4,
             event_csv_example_references: 1,
             optional_crawler_manifest_references: 1,
@@ -1764,13 +1794,22 @@ mod tests {
                 profile_id: "school-event-jp".to_string(),
                 ranking_config_dir: PathBuf::from("configs/ranking"),
                 reason_catalog_path: PathBuf::from("configs/profiles/school-event-jp/reasons.yaml"),
-                schema_version: 1,
+                schema_version: 2,
                 kind: "profile_pack".to_string(),
                 manifest_version: 1,
                 compatibility_level: "reference".to_string(),
                 supported_content_kinds: vec!["school".to_string(), "event".to_string()],
+                placements: vec![
+                    "home".to_string(),
+                    "search".to_string(),
+                    "detail".to_string(),
+                    "mypage".to_string(),
+                ],
+                reason_catalog_locale_count: 1,
                 reason_count: 14,
                 fixture_references: 1,
+                connector_references: 6,
+                evaluation_references: 1,
                 source_manifest_references: 4,
                 event_csv_example_references: 1,
                 optional_crawler_manifest_references: 1,
@@ -1782,6 +1821,8 @@ mod tests {
         assert!(rendered.contains("doctor profile-pack completed: profile_packs=1"));
         assert!(rendered.contains("reasons=14"));
         assert!(rendered.contains("fixture_references=1"));
+        assert!(rendered.contains("connector_references=6"));
+        assert!(rendered.contains("evaluation_references=1"));
         assert!(rendered.contains("source_manifest_references=4"));
         assert!(rendered.contains("event_csv_example_references=1"));
         assert!(rendered.contains("optional_crawler_manifest_references=1"));
@@ -1808,8 +1849,11 @@ mod tests {
             profile_packs: 1,
             referenced_ranking_config_dirs: 1,
             reason_catalog_references: 1,
+            reason_catalog_locales: 1,
             reason_count: 14,
             fixture_references: 1,
+            connector_references: 0,
+            evaluation_references: 1,
             source_manifest_references: 2,
             event_csv_example_references: 1,
             optional_crawler_manifest_references: 1,
@@ -1826,8 +1870,17 @@ mod tests {
                     "configs/profiles/local-discovery-generic/reasons.yaml",
                 ),
                 compatibility_level: "stable".to_string(),
+                placements: vec![
+                    "home".to_string(),
+                    "search".to_string(),
+                    "detail".to_string(),
+                    "mypage".to_string(),
+                ],
+                reason_catalog_locale_count: 1,
                 reason_count: 14,
                 fixture_references: 1,
+                connector_references: 0,
+                evaluation_references: 1,
                 source_manifest_references: 2,
                 event_csv_example_references: 1,
                 optional_crawler_manifest_references: 1,
@@ -1843,6 +1896,7 @@ mod tests {
         assert!(rendered.contains("referenced_ranking_config_dirs=1"));
         assert!(rendered.contains("reason_catalog_references=1"));
         assert!(rendered.contains("fixture_references=1"));
+        assert!(rendered.contains("evaluation_references=1"));
         assert!(rendered.contains("ranking_config_dir=configs/ranking"));
         assert!(rendered.contains("kind=ranking_schools"));
         assert!(rendered.contains("profile_id=local-discovery-generic"));
@@ -1890,13 +1944,22 @@ mod tests {
                     reason_catalog_path: PathBuf::from(
                         "configs/profiles/local-discovery-generic/reasons.yaml",
                     ),
-                    schema_version: 1,
+                    schema_version: 2,
                     kind: ProfilePackKind::ProfilePack,
                     manifest_version: 1,
                     compatibility_level: ProfileCompatibilityLevel::Stable,
                     supported_content_kinds: Vec::new(),
+                    placements: vec![
+                        PlacementKind::Home,
+                        PlacementKind::Search,
+                        PlacementKind::Detail,
+                        PlacementKind::Mypage,
+                    ],
+                    reason_catalog_locale_count: 1,
                     reason_count: 14,
                     fixture_count: 1,
+                    connector_count: 0,
+                    evaluation_reference_count: 1,
                     source_manifest_count: 2,
                     event_csv_example_count: 1,
                     optional_crawler_manifest_count: 1,
@@ -1908,13 +1971,22 @@ mod tests {
                     reason_catalog_path: PathBuf::from(
                         "configs/profiles/local-discovery-generic/reasons.yaml",
                     ),
-                    schema_version: 1,
+                    schema_version: 2,
                     kind: ProfilePackKind::ProfilePack,
                     manifest_version: 1,
                     compatibility_level: ProfileCompatibilityLevel::Reference,
                     supported_content_kinds: Vec::new(),
+                    placements: vec![
+                        PlacementKind::Home,
+                        PlacementKind::Search,
+                        PlacementKind::Detail,
+                        PlacementKind::Mypage,
+                    ],
+                    reason_catalog_locale_count: 1,
                     reason_count: 7,
                     fixture_count: 0,
+                    connector_count: 6,
+                    evaluation_reference_count: 1,
                     source_manifest_count: 1,
                     event_csv_example_count: 0,
                     optional_crawler_manifest_count: 0,
@@ -1941,7 +2013,10 @@ mod tests {
         assert_eq!(summary.profile_packs, 2);
         assert_eq!(summary.referenced_ranking_config_dirs, 1);
         assert_eq!(summary.reason_catalog_references, 1);
+        assert_eq!(summary.reason_catalog_locales, 2);
         assert_eq!(summary.reason_count, 21);
+        assert_eq!(summary.connector_references, 6);
+        assert_eq!(summary.evaluation_references, 2);
         assert_eq!(summary.source_manifest_references, 3);
     }
 
@@ -1955,13 +2030,22 @@ mod tests {
                 reason_catalog_path: PathBuf::from(
                     "configs/profiles/local-discovery-generic/reasons.yaml",
                 ),
-                schema_version: 1,
+                schema_version: 2,
                 kind: ProfilePackKind::ProfilePack,
                 manifest_version: 1,
                 compatibility_level: ProfileCompatibilityLevel::Stable,
                 supported_content_kinds: Vec::new(),
+                placements: vec![
+                    PlacementKind::Home,
+                    PlacementKind::Search,
+                    PlacementKind::Detail,
+                    PlacementKind::Mypage,
+                ],
+                reason_catalog_locale_count: 1,
                 reason_count: 14,
                 fixture_count: 1,
+                connector_count: 0,
+                evaluation_reference_count: 1,
                 source_manifest_count: 0,
                 event_csv_example_count: 0,
                 optional_crawler_manifest_count: 0,
@@ -1980,7 +2064,7 @@ mod tests {
     fn profile_inspect_summary_reports_runtime_paths() {
         let manifest_path = PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml");
         let manifest: ProfilePackManifest = serde_yaml::from_str(
-            r#"schema_version: 1
+            r#"schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: local-discovery-generic
@@ -1990,6 +2074,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: geo_line_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
@@ -2004,13 +2093,17 @@ article_support: reserved
             reason_catalog_path: PathBuf::from(
                 "configs/profiles/local-discovery-generic/reasons.yaml",
             ),
-            schema_version: 1,
+            schema_version: 2,
             kind: ProfilePackKind::ProfilePack,
             manifest_version: 1,
             compatibility_level: ProfileCompatibilityLevel::Stable,
             supported_content_kinds: manifest.supported_content_kinds.clone(),
+            placements: manifest.placements.clone(),
+            reason_catalog_locale_count: 1,
             reason_count: 14,
             fixture_count: 0,
+            connector_count: 0,
+            evaluation_reference_count: 0,
             source_manifest_count: 0,
             event_csv_example_count: 0,
             optional_crawler_manifest_count: 0,
@@ -2068,7 +2161,7 @@ article_support: reserved
         fs::write(
             profiles_dir.join("profile.yaml"),
             r#"
-schema_version: 1
+schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: root-profile
@@ -2078,6 +2171,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: custom_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
@@ -2088,7 +2186,7 @@ article_support: reserved
         fs::write(
             other_profile_dir.join("profile.yaml"),
             r#"
-schema_version: 1
+schema_version: 2
 kind: profile_pack
 manifest_version: 1
 profile_id: other-profile
@@ -2098,6 +2196,11 @@ supported_content_kinds:
   - school
 context_inputs:
   - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
 fallback_policy: other_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml

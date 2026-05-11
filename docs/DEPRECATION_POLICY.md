@@ -57,7 +57,7 @@ underlying feature is removed, document the behavior change and update
 
 - Active ranking config files require `schema_version: 1` and a matching
   `kind`.
-- Profile pack manifests carry `schema_version: 1`, `kind: profile_pack`,
+- Profile pack manifests carry `schema_version: 2`, `kind: profile_pack`,
   `manifest_version: 1`, and a declared `compatibility_level`.
 - Import and crawler manifests carry `schema_version: 1` plus `kind`, while
   keeping `manifest_version` for audit history.
