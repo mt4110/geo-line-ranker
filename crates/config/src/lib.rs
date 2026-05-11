@@ -570,7 +570,7 @@ pub struct ProfilePackManifest {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
-    pub content_kinds: Vec<ContentKindRef>,
+    pub content_kinds: Option<Vec<ContentKindRef>>,
     pub supported_content_kinds: Vec<ContentKindRef>,
     pub context_inputs: Vec<ProfileContextInput>,
     pub placements: Vec<PlacementKind>,
@@ -1702,8 +1702,9 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
     let mut seen_content_kind_registry = BTreeSet::new();
     ensure!(
         !content_kind_registry.is_empty(),
-        "profile pack {} content kind registry must not be empty; declare content_kinds or supported_content_kinds for legacy schema-2 manifests",
-        path.display()
+        "profile pack {} {} must not be empty",
+        path.display(),
+        content_kind_registry_field
     );
     for kind in &content_kind_registry {
         ensure_valid_content_kind_id(path, content_kind_registry_field, kind)?;
@@ -1826,17 +1827,17 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
 }
 
 fn declared_content_kind_registry(manifest: &ProfilePackManifest) -> Vec<ContentKindRef> {
-    if manifest.content_kinds.is_empty() {
-        return manifest.supported_content_kinds.clone();
+    if let Some(content_kinds) = &manifest.content_kinds {
+        return content_kinds.clone();
     }
-    manifest.content_kinds.clone()
+    manifest.supported_content_kinds.clone()
 }
 
 fn declared_content_kind_registry_field(manifest: &ProfilePackManifest) -> &'static str {
-    if manifest.content_kinds.is_empty() {
-        "supported_content_kinds (implicit content_kinds registry)"
-    } else {
+    if manifest.content_kinds.is_some() {
         "content_kinds"
+    } else {
+        "supported_content_kinds (implicit content_kinds registry)"
     }
 }
 
@@ -2856,12 +2857,49 @@ article_support: reserved
         assert_eq!(
             manifest
                 .content_kinds
+                .as_ref()
+                .expect("explicit content kind registry")
                 .iter()
                 .map(|kind| kind.as_str())
                 .collect::<Vec<_>>(),
             vec!["place", "civic_event"]
         );
         assert_eq!(manifest.supported_content_kinds[0].as_str(), "place");
+    }
+
+    #[test]
+    fn rejects_explicit_empty_content_kind_registry() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds: []
+supported_content_kinds:
+  - school
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("empty registry");
+
+        assert!(format!("{error:#}").contains("content_kinds must not be empty"));
     }
 
     #[test]
@@ -3774,7 +3812,7 @@ article_support: reserved
             compatibility_level: ProfileCompatibilityLevel::Experimental,
             default_locale: None,
             description: None,
-            content_kinds: vec![ContentKind::School.into()],
+            content_kinds: Some(vec![ContentKind::School.into()]),
             supported_content_kinds: vec![ContentKind::School.into()],
             context_inputs: vec![ProfileContextInput::Station],
             placements: vec![PlacementKind::Home],

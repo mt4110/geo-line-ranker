@@ -2119,7 +2119,10 @@ article_support: reserved
             kind: ProfilePackKind::ProfilePack,
             manifest_version: 1,
             compatibility_level: ProfileCompatibilityLevel::Stable,
-            content_kind_registry: manifest.content_kinds.clone(),
+            content_kind_registry: manifest
+                .content_kinds
+                .clone()
+                .unwrap_or_else(|| manifest.supported_content_kinds.clone()),
             supported_content_kinds: manifest.supported_content_kinds.clone(),
             placements: manifest.placements.clone(),
             reason_catalog_locale_count: 1,
