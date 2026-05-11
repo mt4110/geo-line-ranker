@@ -88,6 +88,7 @@ pub struct ProfilePackDoctorFile {
     pub kind: String,
     pub manifest_version: u32,
     pub compatibility_level: String,
+    pub content_kind_registry: Vec<String>,
     pub supported_content_kinds: Vec<String>,
     pub placements: Vec<String>,
     pub reason_catalog_locale_count: usize,
@@ -137,6 +138,8 @@ pub struct RankingConfigDoctorProfile {
     pub ranking_config_dir: PathBuf,
     pub reason_catalog_path: PathBuf,
     pub compatibility_level: String,
+    pub content_kind_registry: Vec<String>,
+    pub supported_content_kinds: Vec<String>,
     pub placements: Vec<String>,
     pub reason_catalog_locale_count: usize,
     pub reason_count: usize,
@@ -1052,6 +1055,11 @@ fn profile_pack_doctor_file(file: ProfilePackLintFile) -> ProfilePackDoctorFile 
         kind: file.kind.as_str().to_string(),
         manifest_version: file.manifest_version,
         compatibility_level: file.compatibility_level.as_str().to_string(),
+        content_kind_registry: file
+            .content_kind_registry
+            .into_iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
         supported_content_kinds: file
             .supported_content_kinds
             .into_iter()
@@ -1088,6 +1096,16 @@ fn ranking_config_doctor_profile(file: ProfilePackLintFile) -> RankingConfigDoct
         ranking_config_dir: file.ranking_config_dir,
         reason_catalog_path: file.reason_catalog_path,
         compatibility_level: file.compatibility_level.as_str().to_string(),
+        content_kind_registry: file
+            .content_kind_registry
+            .into_iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
+        supported_content_kinds: file
+            .supported_content_kinds
+            .into_iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
         placements: file
             .placements
             .into_iter()

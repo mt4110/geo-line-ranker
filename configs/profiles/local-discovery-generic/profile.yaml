@@ -6,6 +6,9 @@ display_name: Local Discovery Generic
 compatibility_level: stable
 default_locale: ja-JP
 description: Small deterministic local-discovery profile backed only by committed minimal fixtures.
+content_kinds:
+  - school
+  - event
 supported_content_kinds:
   - school
   - event

@@ -1130,6 +1130,12 @@ fn format_profile_validate_summary(summary: &ProfilePackLintSummary) -> String {
 }
 
 fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
+    let content_kind_registry = file
+        .content_kind_registry
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
     let content_kinds = file
         .supported_content_kinds
         .iter()
@@ -1143,13 +1149,14 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
+        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kind_registry={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
         file.path.display(),
         file.profile_id,
         file.schema_version,
         file.kind.as_str(),
         file.manifest_version,
         file.compatibility_level.as_str(),
+        content_kind_registry,
         content_kinds,
         placements,
         file.reason_catalog_locale_count,
@@ -1169,6 +1176,12 @@ fn format_profile_inspect_summary(
     lint_file: &ProfilePackLintFile,
     runtime_selection: &config::ProfilePackRuntimeSelection,
 ) -> String {
+    let content_kind_registry = lint_file
+        .content_kind_registry
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
     let content_kinds = manifest
         .supported_content_kinds
         .iter()
@@ -1195,6 +1208,7 @@ fn format_profile_inspect_summary(
             manifest.manifest_version,
             manifest.compatibility_level.as_str()
         ),
+        format!("content_kind_registry={content_kind_registry}"),
         format!("content_kinds={content_kinds}"),
         format!("context_inputs={context_inputs}"),
         format!("fallback_policy={}", manifest.fallback_policy),
@@ -1798,6 +1812,7 @@ mod tests {
                 kind: "profile_pack".to_string(),
                 manifest_version: 1,
                 compatibility_level: "reference".to_string(),
+                content_kind_registry: vec!["school".to_string(), "event".to_string()],
                 supported_content_kinds: vec!["school".to_string(), "event".to_string()],
                 placements: vec![
                     "home".to_string(),
@@ -1870,6 +1885,8 @@ mod tests {
                     "configs/profiles/local-discovery-generic/reasons.yaml",
                 ),
                 compatibility_level: "stable".to_string(),
+                content_kind_registry: vec!["school".to_string(), "event".to_string()],
+                supported_content_kinds: vec!["school".to_string(), "event".to_string()],
                 placements: vec![
                     "home".to_string(),
                     "search".to_string(),
@@ -1948,6 +1965,7 @@ mod tests {
                     kind: ProfilePackKind::ProfilePack,
                     manifest_version: 1,
                     compatibility_level: ProfileCompatibilityLevel::Stable,
+                    content_kind_registry: vec!["school".into(), "event".into()],
                     supported_content_kinds: Vec::new(),
                     placements: vec![
                         PlacementKind::Home,
@@ -1975,6 +1993,7 @@ mod tests {
                     kind: ProfilePackKind::ProfilePack,
                     manifest_version: 1,
                     compatibility_level: ProfileCompatibilityLevel::Reference,
+                    content_kind_registry: vec!["school".into(), "event".into()],
                     supported_content_kinds: Vec::new(),
                     placements: vec![
                         PlacementKind::Home,
@@ -2034,6 +2053,7 @@ mod tests {
                 kind: ProfilePackKind::ProfilePack,
                 manifest_version: 1,
                 compatibility_level: ProfileCompatibilityLevel::Stable,
+                content_kind_registry: vec!["school".into(), "event".into()],
                 supported_content_kinds: Vec::new(),
                 placements: vec![
                     PlacementKind::Home,
@@ -2070,6 +2090,8 @@ manifest_version: 1
 profile_id: local-discovery-generic
 display_name: Local Discovery Generic
 compatibility_level: stable
+content_kinds:
+  - school
 supported_content_kinds:
   - school
 context_inputs:
@@ -2097,6 +2119,10 @@ article_support: reserved
             kind: ProfilePackKind::ProfilePack,
             manifest_version: 1,
             compatibility_level: ProfileCompatibilityLevel::Stable,
+            content_kind_registry: manifest
+                .content_kinds
+                .clone()
+                .unwrap_or_else(|| manifest.supported_content_kinds.clone()),
             supported_content_kinds: manifest.supported_content_kinds.clone(),
             placements: manifest.placements.clone(),
             reason_catalog_locale_count: 1,
@@ -2143,6 +2169,8 @@ article_support: reserved
             "runtime_reason_catalog_path={}",
             reason_catalog_path.display()
         )));
+        assert!(rendered.contains("content_kind_registry=school"));
+        assert!(rendered.contains("content_kinds=school"));
         assert!(rendered.contains(&format!(
             "runtime_ranking_config_dir={}",
             ranking_config_dir.display()

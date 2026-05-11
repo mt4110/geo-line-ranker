@@ -76,6 +76,18 @@ impl From<ContentKind> for ContentKindRef {
     }
 }
 
+impl From<&str> for ContentKindRef {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<String> for ContentKindRef {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Entity {
     pub id: String,
