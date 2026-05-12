@@ -68,6 +68,7 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'profile_registry_active_manifest_lineage_fk'
+          AND conrelid = 'profile_registry'::regclass
     ) THEN
         ALTER TABLE profile_registry
             ADD CONSTRAINT profile_registry_active_manifest_lineage_fk
