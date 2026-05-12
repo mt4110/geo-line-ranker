@@ -4,6 +4,10 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 
+[features]
+default = []
+schema = ["dep:utoipa"]
+
 [dependencies]
 serde.workspace = true
-utoipa.workspace = true
+utoipa = { workspace = true, optional = true }

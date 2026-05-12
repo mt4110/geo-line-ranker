@@ -10,6 +10,13 @@ use domain::{ContentKind, ContentKindRef, PlacementKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod profile_connectors;
+
+pub use profile_connectors::{
+    ProfileConnectorRef, ProfileConnectorRegistryEntry, ProfileConnectorSafetyMetadata,
+    ProfileConnectorType, ProfileSourceClass,
+};
+
 pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
 pub const DEFAULT_PROFILE_PACKS_DIR: &str = "configs/profiles";
 pub const DEFAULT_PROFILE_ID: &str = "local-discovery-generic";
@@ -542,14 +549,6 @@ pub struct ProfileReasonCatalogLocaleFiles {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ProfileConnectorRef {
-    #[serde(rename = "type")]
-    pub connector_type: String,
-    pub manifest: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct ProfileEvaluationRef {
     pub scenario_pack: String,
     #[serde(default)]
@@ -681,6 +680,7 @@ pub struct ProfilePackLintFile {
     pub reason_count: usize,
     pub fixture_count: usize,
     pub connector_count: usize,
+    pub connector_registry: Vec<ProfileConnectorRegistryEntry>,
     pub evaluation_reference_count: usize,
     pub source_manifest_count: usize,
     pub event_csv_example_count: usize,
@@ -1556,20 +1556,8 @@ fn lint_loaded_profile_pack_file(
         )?;
     }
 
-    for connector in &manifest.connectors {
-        let resolved = manifest_dir.join(validate_portable_relative_path(
-            path,
-            "connectors.manifest",
-            &connector.manifest,
-        )?);
-        ensure!(
-            resolved.is_file(),
-            "profile pack {} connector {} manifest {} is missing or not a file",
-            path.display(),
-            connector.connector_type,
-            resolved.display()
-        );
-    }
+    let connector_registry =
+        profile_connectors::build_profile_connector_registry(path, manifest, manifest_dir)?;
 
     if let Some(evaluation) = &manifest.evaluation {
         let scenario_pack = manifest_dir.join(validate_portable_relative_path(
@@ -1633,7 +1621,8 @@ fn lint_loaded_profile_pack_file(
         reason_catalog_locale_count,
         reason_count: reason_catalog.reasons.len(),
         fixture_count: manifest.fixtures.len(),
-        connector_count: manifest.connectors.len(),
+        connector_count: connector_registry.len(),
+        connector_registry,
         evaluation_reference_count: manifest
             .evaluation
             .as_ref()
@@ -1954,11 +1943,6 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
         validate_portable_relative_path(path, "fixtures.path", &fixture.path)?;
     }
     for connector in &manifest.connectors {
-        ensure!(
-            !connector.connector_type.trim().is_empty(),
-            "profile pack {} connectors.type must not be empty",
-            path.display()
-        );
         validate_portable_relative_path(path, "connectors.manifest", &connector.manifest)?;
     }
     if let Some(evaluation) = &manifest.evaluation {
@@ -2427,9 +2411,9 @@ mod tests {
         resolve_profile_pack_ranking_selection, resolve_profile_pack_runtime_selection,
         validate_portable_relative_path, validate_profile_pack_contract,
         validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
-        ProfileCompatibilityLevel, ProfileContextInput, ProfilePackKind, ProfilePackManifest,
-        ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind,
-        ProfileReasonCatalogRef, RankingConfigKind, RankingProfiles,
+        ProfileCompatibilityLevel, ProfileConnectorType, ProfileContextInput, ProfilePackKind,
+        ProfilePackManifest, ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind,
+        ProfileReasonCatalogRef, ProfileSourceClass, RankingConfigKind, RankingProfiles,
         DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
@@ -3399,7 +3383,7 @@ reasons:
             "minimal",
             "example-profile",
         );
-        fs::write(source_dir.join("events.yaml"), "schema_version: 1\n").expect("source");
+        fs::write(source_dir.join("events.csv"), "event_id,title\n").expect("source");
         fs::write(
             profile_dir.join("evaluation").join("pairwise.yaml"),
             "schema_version: 1\n",
@@ -3439,7 +3423,8 @@ fixtures:
     path: ../../fixtures/minimal
 connectors:
   - type: csv_import
-    manifest: sources/events.yaml
+    manifest: sources/events.csv
+    source_id: example-events
 evaluation:
   scenario_pack: evaluation/scenarios
   pairwise_pack: evaluation/pairwise.yaml
@@ -3452,6 +3437,20 @@ evaluation:
         assert_eq!(lint.reason_catalog_locale_count, 2);
         assert_eq!(lint.reason_count, 1);
         assert_eq!(lint.connector_count, 1);
+        assert_eq!(
+            lint.connector_registry[0].connector_type,
+            ProfileConnectorType::CsvImport
+        );
+        assert_eq!(
+            lint.connector_registry[0].source_class,
+            ProfileSourceClass::CsvImport
+        );
+        assert_eq!(lint.connector_registry[0].manifest_kind, "csv_file");
+        assert_eq!(
+            lint.connector_registry[0].source_id.as_deref(),
+            Some("example-events")
+        );
+        assert!(!lint.connector_registry[0].safety.dynamic_loading_enabled);
         assert_eq!(lint.evaluation_reference_count, 2);
         assert_eq!(
             lint.placements,
@@ -3469,6 +3468,64 @@ evaluation:
                 .canonicalize()
                 .expect("reason catalog")
         );
+    }
+
+    #[test]
+    fn rejects_profile_connector_manifest_kind_mismatch() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let source_dir = profile_dir.join("sources");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            source_dir.join("crawl.yaml"),
+            r#"schema_version: 1
+kind: crawler_source
+source_id: example-crawler
+"#,
+        )
+        .expect("source manifest");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+connectors:
+  - type: source_manifest
+    manifest: sources/crawl.yaml
+"#,
+        )
+        .expect("profile");
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("kind mismatch");
+
+        assert!(format!("{error:#}").contains("connector source_manifest manifest"));
+        assert!(format!("{error:#}").contains("expected import_source"));
     }
 
     #[test]

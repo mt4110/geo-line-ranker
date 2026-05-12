@@ -1,36 +1,43 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+#[cfg(feature = "api-docs")]
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use cli::{
-    format_context_coverage_doctor_summary, format_context_inspect_summary,
-    format_eval_golden_summary, format_eval_replay_summary, format_explain_trace_report,
+    format_context_coverage_doctor_summary, format_eval_golden_summary,
     format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
-    format_job_enqueue_summary, format_job_inspection, format_job_list,
-    format_job_mutation_summary, format_profile_pack_doctor_summary,
-    format_ranking_config_doctor_summary, format_replay_evaluation_summary,
-    format_replay_scenario_summary, format_retrieval_parity_doctor_summary,
-    format_snapshot_refresh_summary, format_storage_compatibility_doctor_summary, format_summary,
+    format_profile_pack_doctor_summary, format_ranking_config_doctor_summary,
+    format_retrieval_parity_doctor_summary, format_storage_compatibility_doctor_summary,
     generate_demo_jp_fixture, ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
-    run_context_inspect, run_derive_school_station_links, run_event_csv_import, run_explain_trace,
-    run_explanation_integrity_doctor, run_fixture_doctor, run_import_command, run_job_due,
-    run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_profile_pack_doctor,
-    run_replay_evaluate, run_replay_scenarios, run_replay_scenarios_with_source,
-    run_retrieval_parity_doctor, run_snapshot_refresh, run_storage_compatibility_doctor,
-    ContextInspectInput, ImportTarget, ReplayScenarioSource, DEFAULT_REPLAY_SCENARIO_PATH,
+    run_explanation_integrity_doctor, run_fixture_doctor, run_profile_pack_doctor,
+    run_replay_scenarios_with_source, run_retrieval_parity_doctor,
+    run_storage_compatibility_doctor, ReplayScenarioSource, DEFAULT_REPLAY_SCENARIO_PATH,
 };
+#[cfg(feature = "storage-backends")]
+use cli::{
+    format_context_inspect_summary, format_eval_replay_summary, format_explain_trace_report,
+    format_job_enqueue_summary, format_job_inspection, format_job_list,
+    format_job_mutation_summary, format_replay_evaluation_summary, format_replay_scenario_summary,
+    format_snapshot_refresh_summary, format_summary, run_context_inspect,
+    run_derive_school_station_links, run_event_csv_import, run_explain_trace, run_import_command,
+    run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
+    run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
+    ImportTarget,
+};
+#[cfg(feature = "storage-backends")]
+use config::AppSettings;
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
-    resolve_linted_profile_pack_runtime_selection, resolve_runtime_path, AppSettings,
-    ProfilePackLintFile, ProfilePackLintSummary, ProfilePackManifest, ProfilePackRegistry,
-    RankingConfigLintSummary, DEFAULT_ALGORITHM_VERSION, DEFAULT_PROFILE_ID,
-    DEFAULT_PROFILE_PACKS_DIR, DEFAULT_RANKING_CONFIG_DIR,
+    resolve_linted_profile_pack_runtime_selection, resolve_runtime_path, ProfilePackLintFile,
+    ProfilePackLintSummary, ProfilePackManifest, ProfilePackRegistry, RankingConfigLintSummary,
+    DEFAULT_ALGORITHM_VERSION, DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
+    DEFAULT_RANKING_CONFIG_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
+#[cfg(feature = "storage-backends")]
 use storage_opensearch::ProjectionSyncService;
+#[cfg(feature = "storage-backends")]
 use storage_postgres::{run_migrations, seed_fixture};
 
 #[derive(Debug, Parser)]
@@ -42,15 +49,19 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[cfg(feature = "storage-backends")]
     Migrate,
+    #[cfg(feature = "storage-backends")]
     Seed {
         #[command(subcommand)]
         target: SeedTarget,
     },
+    #[cfg(feature = "storage-backends")]
     Import {
         #[command(subcommand)]
         target: ImportCommand,
     },
+    #[cfg(feature = "storage-backends")]
     Derive {
         #[command(subcommand)]
         target: DeriveCommand,
@@ -59,18 +70,22 @@ enum Command {
         #[command(subcommand)]
         target: FixtureCommand,
     },
+    #[cfg(feature = "storage-backends")]
     Index {
         #[command(subcommand)]
         target: IndexCommand,
     },
+    #[cfg(feature = "storage-backends")]
     Projection {
         #[command(subcommand)]
         target: ProjectionCommand,
     },
+    #[cfg(feature = "storage-backends")]
     Snapshot {
         #[command(subcommand)]
         target: SnapshotCommand,
     },
+    #[cfg(feature = "storage-backends")]
     Replay {
         #[command(subcommand)]
         target: ReplayCommand,
@@ -80,6 +95,7 @@ enum Command {
         #[command(subcommand)]
         target: EvalCommand,
     },
+    #[cfg(feature = "storage-backends")]
     Explain {
         #[command(subcommand)]
         target: ExplainCommand,
@@ -92,6 +108,7 @@ enum Command {
         #[command(subcommand)]
         target: ProfileCommand,
     },
+    #[cfg(feature = "storage-backends")]
     Context {
         #[command(subcommand)]
         target: ContextCommand,
@@ -106,21 +123,25 @@ enum Command {
         target: SourceManifestCommand,
     },
     #[command(about = "Inspect and recover DB-backed worker jobs")]
+    #[cfg(feature = "storage-backends")]
     Jobs {
         #[command(subcommand)]
         target: JobsCommand,
     },
+    #[cfg(feature = "api-docs")]
     DumpOpenapi {
         #[arg(default_value = "schemas/openapi.json")]
         output: PathBuf,
     },
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum SeedTarget {
     Example,
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum ImportCommand {
     #[command(name = "jp-rail")]
@@ -150,6 +171,7 @@ enum ImportCommand {
     },
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum DeriveCommand {
     SchoolStationLinks,
@@ -171,21 +193,25 @@ enum FixtureCommand {
     },
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum IndexCommand {
     Rebuild,
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum ProjectionCommand {
     Sync,
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum SnapshotCommand {
     Refresh,
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum ReplayCommand {
     #[command(about = "Replay recent recommendation traces against the current SQL-only path")]
@@ -258,6 +284,7 @@ enum EvalCommand {
         #[arg(long, help = "Exit zero even when blocker checks fail")]
         allow_blockers: bool,
     },
+    #[cfg(feature = "storage-backends")]
     #[command(
         about = "Replay recent recommendation traces against the current SQL-only path",
         long_about = "Replay recent recommendation traces against the current SQL-only path. This is an operator-facing alias for `replay evaluate`; both commands use the same persisted trace replay runner, checks, and JSON report shape.\n\nExamples:\n  geo-line-ranker-cli eval replay --limit 20\n  geo-line-ranker-cli eval replay --limit 20 --fail-on-mismatch"
@@ -270,6 +297,7 @@ enum EvalCommand {
     },
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum ExplainCommand {
     #[command(
@@ -417,6 +445,7 @@ enum ProfileCommand {
     },
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum ContextCommand {
     #[command(
@@ -487,6 +516,7 @@ enum SourceManifestCommand {
     },
 }
 
+#[cfg(feature = "storage-backends")]
 #[derive(Debug, Subcommand)]
 enum JobsCommand {
     #[command(about = "Show recent jobs and queue pressure by type and status")]
@@ -529,16 +559,19 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        #[cfg(feature = "storage-backends")]
         Command::Migrate => {
             let settings = AppSettings::from_env_without_profile_pack()?;
             run_migrations(&settings.database_url, "storage/migrations/postgres").await?;
         }
+        #[cfg(feature = "storage-backends")]
         Command::Seed { target } => match target {
             SeedTarget::Example => {
                 let settings = AppSettings::from_env_requiring_fixture()?;
                 seed_fixture(&settings.database_url, &settings.fixture_dir).await?
             }
         },
+        #[cfg(feature = "storage-backends")]
         Command::Import { target } => {
             let settings = AppSettings::from_env_without_profile_pack()?;
             let summary = match target {
@@ -558,6 +591,7 @@ async fn main() -> anyhow::Result<()> {
             };
             println!("{}", format_summary(&summary));
         }
+        #[cfg(feature = "storage-backends")]
         Command::Derive { target } => match target {
             DeriveCommand::SchoolStationLinks => {
                 let settings = AppSettings::from_env_without_profile_pack()?;
@@ -575,6 +609,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", format_fixture_doctor_summary(&summary));
             }
         },
+        #[cfg(feature = "storage-backends")]
         Command::Index { target } => match target {
             IndexCommand::Rebuild => {
                 let settings = AppSettings::from_env_without_profile_pack()?;
@@ -589,6 +624,7 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         },
+        #[cfg(feature = "storage-backends")]
         Command::Projection { target } => match target {
             ProjectionCommand::Sync => {
                 let settings = AppSettings::from_env_without_profile_pack()?;
@@ -603,6 +639,7 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         },
+        #[cfg(feature = "storage-backends")]
         Command::Snapshot { target } => match target {
             SnapshotCommand::Refresh => {
                 let settings = AppSettings::from_env()?;
@@ -610,6 +647,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", format_snapshot_refresh_summary(&summary));
             }
         },
+        #[cfg(feature = "storage-backends")]
         Command::Replay { target } => match target {
             ReplayCommand::Evaluate {
                 limit,
@@ -657,6 +695,7 @@ async fn main() -> anyhow::Result<()> {
                 json,
                 allow_blockers,
             )?,
+            #[cfg(feature = "storage-backends")]
             EvalCommand::Replay {
                 limit,
                 fail_on_mismatch,
@@ -670,6 +709,7 @@ async fn main() -> anyhow::Result<()> {
                 .await?
             }
         },
+        #[cfg(feature = "storage-backends")]
         Command::Explain { target } => match target {
             ExplainCommand::Trace { id, json } => {
                 let settings = AppSettings::from_env_without_profile_pack()?;
@@ -838,6 +878,7 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         },
+        #[cfg(feature = "storage-backends")]
         Command::Context { target } => match target {
             ContextCommand::Inspect {
                 request_id,
@@ -901,6 +942,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", format_source_manifest_lint_summary(&summary));
             }
         },
+        #[cfg(feature = "storage-backends")]
         Command::Jobs { target } => match target {
             JobsCommand::List { limit } => {
                 let settings = AppSettings::from_env_without_profile_pack()?;
@@ -932,6 +974,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", format_job_enqueue_summary(&summary));
             }
         },
+        #[cfg(feature = "api-docs")]
         Command::DumpOpenapi { output } => {
             let raw = serde_json::to_string_pretty(&openapi::api_doc())?;
             if let Some(parent) = output.parent() {
@@ -944,6 +987,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "storage-backends")]
 async fn run_replay_evaluate_command(
     limit: i64,
     fail_on_mismatch: bool,
@@ -1116,6 +1160,7 @@ fn resolve_algorithm_version(algorithm_version: Option<String>) -> anyhow::Resul
         .unwrap_or_else(|| DEFAULT_ALGORITHM_VERSION.to_string()))
 }
 
+#[cfg(feature = "storage-backends")]
 fn run_replay_scenarios_command(
     path: PathBuf,
     ranking_config_dir: Option<PathBuf>,
@@ -1438,6 +1483,27 @@ fn format_profile_inspect_summary(
         }));
     }
 
+    lines.push("connector_registry:".to_string());
+    if lint_file.connector_registry.is_empty() {
+        lines.push("- none".to_string());
+    } else {
+        lines.extend(lint_file.connector_registry.iter().map(|connector| {
+            format!(
+                "- type={} source_class={} manifest_kind={} source_id={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
+                connector.connector_type.as_str(),
+                connector.source_class.as_str(),
+                connector.manifest_kind,
+                connector.source_id.as_deref().unwrap_or("none"),
+                connector.profile_compatibility.as_str(),
+                connector.safety.local_reference_only,
+                connector.safety.dynamic_loading_enabled,
+                connector.safety.live_fetch_default,
+                connector.safety.allowlist_required,
+                connector.manifest_path.display()
+            )
+        }));
+    }
+
     push_profile_ref_summary(&mut lines, "source_manifests", &manifest.source_manifests);
     push_profile_ref_summary(
         &mut lines,
@@ -1487,8 +1553,9 @@ mod tests {
     use clap::CommandFactory;
     use cli::ReplayScenarioSourceKind;
     use config::{
-        ProfileCompatibilityLevel, ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary,
-        RankingConfigKind, RankingConfigLintFile, RankingConfigLintSummary,
+        ProfileCompatibilityLevel, ProfileConnectorRegistryEntry, ProfileConnectorSafetyMetadata,
+        ProfileConnectorType, ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary,
+        ProfileSourceClass, RankingConfigKind, RankingConfigLintFile, RankingConfigLintSummary,
     };
     use domain::PlacementKind;
     use std::{collections::BTreeMap, fs};
@@ -1513,6 +1580,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "storage-backends")]
     #[test]
     fn context_inspect_help_explains_read_only_evidence_flow() {
         let mut command = Cli::command();
@@ -1532,6 +1600,7 @@ mod tests {
         assert!(help.contains("country-only input is ignored"));
     }
 
+    #[cfg(feature = "storage-backends")]
     #[test]
     fn explain_trace_help_points_to_persisted_trace_debugging() {
         let mut command = Cli::command();
@@ -1572,8 +1641,11 @@ mod tests {
 
         assert!(help.contains("golden"));
         assert!(help.contains("Run the committed golden scenario evaluation"));
-        assert!(help.contains("replay"));
-        assert!(help.contains("Replay recent recommendation traces"));
+        #[cfg(feature = "storage-backends")]
+        {
+            assert!(help.contains("replay"));
+            assert!(help.contains("Replay recent recommendation traces"));
+        }
     }
 
     #[test]
@@ -1597,6 +1669,7 @@ mod tests {
         assert!(help.contains("--allow-blockers"));
     }
 
+    #[cfg(feature = "storage-backends")]
     #[test]
     fn eval_replay_help_points_to_replay_evaluate_alias() {
         let mut command = Cli::command();
@@ -1883,22 +1956,25 @@ evaluation:
             explanation_integrity_total: 0,
             cases: Vec::new(),
         };
-        let evaluation_summary = cli::ReplayEvaluationSummary {
-            evaluated: 0,
-            matched: 0,
-            mismatched: 0,
-            failed: 0,
-            cases: Vec::new(),
-        };
 
         assert!(format_eval_golden_summary(&scenario_summary).starts_with("eval golden completed:"));
-        assert!(format_replay_scenario_summary(&scenario_summary)
-            .starts_with("replay scenarios completed:"));
-        assert!(
-            format_eval_replay_summary(&evaluation_summary).starts_with("eval replay completed:")
-        );
-        assert!(format_replay_evaluation_summary(&evaluation_summary)
-            .starts_with("replay evaluation completed:"));
+        #[cfg(feature = "storage-backends")]
+        {
+            let evaluation_summary = cli::ReplayEvaluationSummary {
+                evaluated: 0,
+                matched: 0,
+                mismatched: 0,
+                failed: 0,
+                cases: Vec::new(),
+            };
+
+            assert!(format_replay_scenario_summary(&scenario_summary)
+                .starts_with("replay scenarios completed:"));
+            assert!(format_eval_replay_summary(&evaluation_summary)
+                .starts_with("eval replay completed:"));
+            assert!(format_replay_evaluation_summary(&evaluation_summary)
+                .starts_with("replay evaluation completed:"));
+        }
     }
 
     #[test]
@@ -2237,6 +2313,20 @@ evaluation:
                 reason_count: 14,
                 fixture_references: 1,
                 connector_references: 6,
+                connector_registry: vec![ProfileConnectorRegistryEntry {
+                    connector_type: ProfileConnectorType::SourceManifest,
+                    source_class: ProfileSourceClass::CsvImport,
+                    manifest_path: PathBuf::from("storage/sources/jp_rail/example.yaml"),
+                    manifest_kind: "import_source".to_string(),
+                    source_id: Some("jp-rail".to_string()),
+                    profile_compatibility: ProfileCompatibilityLevel::Reference,
+                    safety: ProfileConnectorSafetyMetadata {
+                        local_reference_only: true,
+                        dynamic_loading_enabled: false,
+                        live_fetch_default: false,
+                        allowlist_required: false,
+                    },
+                }],
                 evaluation_references: 1,
                 source_manifest_references: 4,
                 event_csv_example_references: 1,
@@ -2255,6 +2345,9 @@ evaluation:
         assert!(rendered.contains("event_csv_example_references=1"));
         assert!(rendered.contains("optional_crawler_manifest_references=1"));
         assert!(rendered.contains("event_csv_examples=1"));
+        assert!(rendered.contains("connector type=source_manifest source_class=csv_import"));
+        assert!(rendered.contains("manifest_kind=import_source"));
+        assert!(rendered.contains("source_id=jp-rail"));
         assert!(rendered.contains("profile_id=school-event-jp"));
         assert!(rendered.contains("compatibility_level=reference"));
 
@@ -2390,6 +2483,7 @@ evaluation:
                     reason_count: 14,
                     fixture_count: 1,
                     connector_count: 0,
+                    connector_registry: Vec::new(),
                     evaluation_reference_count: 1,
                     source_manifest_count: 2,
                     event_csv_example_count: 1,
@@ -2418,6 +2512,7 @@ evaluation:
                     reason_count: 7,
                     fixture_count: 0,
                     connector_count: 6,
+                    connector_registry: Vec::new(),
                     evaluation_reference_count: 1,
                     source_manifest_count: 1,
                     event_csv_example_count: 0,
@@ -2478,6 +2573,7 @@ evaluation:
                 reason_count: 14,
                 fixture_count: 1,
                 connector_count: 0,
+                connector_registry: Vec::new(),
                 evaluation_reference_count: 1,
                 source_manifest_count: 0,
                 event_csv_example_count: 0,
@@ -2542,6 +2638,7 @@ article_support: reserved
             reason_count: 14,
             fixture_count: 0,
             connector_count: 0,
+            connector_registry: Vec::new(),
             evaluation_reference_count: 0,
             source_manifest_count: 0,
             event_csv_example_count: 0,
@@ -2590,6 +2687,8 @@ article_support: reserved
         )));
         assert!(rendered.contains("runtime_fixture_set_id=minimal"));
         assert!(rendered.contains(&format!("runtime_fixture_dir={}", fixture_dir.display())));
+        assert!(rendered.contains("connector_registry:"));
+        assert!(rendered.contains("- none"));
         assert!(rendered.contains("compatibility_level=stable"));
     }
 

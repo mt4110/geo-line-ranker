@@ -1,4 +1,4 @@
-# cspell:ignore pipefail
+# cspell:ignore pipefail sccache nextest
 
 name: ci
 
@@ -14,6 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Configure Rust compiler cache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all --check
@@ -36,6 +42,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Configure Rust compiler cache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - name: OpenAPI drift
         run: ./scripts/openapi_drift_check.sh
@@ -58,34 +70,70 @@ jobs:
         run: ./scripts/frontend_smoke.sh
 
   rust-unit-tests:
+    name: rust-unit-tests (${{ matrix.partition }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ["slice:1/2", "slice:2/2"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Configure Rust compiler cache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Test DB-free packages
+        run: NEXTEST_PROFILE=ci NEXTEST_PARTITION=${{ matrix.partition }} RUN_DOCTESTS=0 ./scripts/rust_test_fast.sh
+
+  rust-fast-doctests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Configure Rust compiler cache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Doctest DB-free packages
+        run: RUN_NEXTEST=0 ./scripts/rust_test_fast.sh
+      - name: Check CLI core feature set
+        run: |
+          cargo check -p cli --no-default-features
+          cargo nextest run --profile default -p cli --no-default-features
+
+  rust-heavy-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Test DB-free packages
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Configure Rust compiler cache
         run: |
-          cargo test \
-            -p api-contracts \
-            -p cache \
-            -p compatibility-tests \
-            -p config \
-            -p crawler-core \
-            -p domain \
-            -p generic-csv \
-            -p generic-http \
-            -p geo \
-            -p jp-postal \
-            -p jp-rail \
-            -p jp-school \
-            -p observability \
-            -p openapi \
-            -p ranking \
-            -p storage \
-            -p storage-opensearch \
-            -p test-support \
-            -p worker-core
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Test DB-free heavy packages
+        run: NEXTEST_PROFILE=ci ./scripts/rust_test_heavy.sh
 
   rust-postgres-tests:
     name: rust-postgres-tests (${{ matrix.shard }})
@@ -133,15 +181,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Configure Rust compiler cache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - name: Test ${{ matrix.shard }}
-        run: cargo test ${{ matrix.packages }}
+        run: cargo nextest run --profile ci-postgres ${{ matrix.packages }}
+      - name: Rust doctests ${{ matrix.shard }}
+        run: cargo test --doc ${{ matrix.packages }}
 
   mvp-acceptance:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Configure Rust compiler cache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - name: Check MVP acceptance runner
         run: |
@@ -195,6 +260,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - name: Configure Rust compiler cache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - name: Expose PostgreSQL client from service container
         run: |

@@ -4,10 +4,20 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 
+[features]
+default = ["api-docs", "storage-backends"]
+api-docs = ["dep:openapi"]
+storage-backends = [
+  "dep:api-contracts",
+  "dep:cache",
+  "dep:storage-opensearch",
+  "dep:storage-postgres",
+]
+
 [dependencies]
 anyhow.workspace = true
-api-contracts = { path = "../../crates/api-contracts" }
-cache = { path = "../../crates/cache" }
+api-contracts = { path = "../../crates/api-contracts", optional = true }
+cache = { path = "../../crates/cache", optional = true }
 chrono.workspace = true
 clap.workspace = true
 config = { path = "../../crates/config" }
@@ -17,7 +27,7 @@ generic-csv = { path = "../../crates/connectors/generic-csv" }
 jp-postal = { path = "../../crates/connectors/jp-postal" }
 jp-rail = { path = "../../crates/connectors/jp-rail" }
 jp-school = { path = "../../crates/connectors/jp-school" }
-openapi = { path = "../../crates/openapi" }
+openapi = { path = "../../crates/openapi", optional = true }
 ranking = { path = "../../crates/ranking" }
 csv.workspace = true
 serde.workspace = true
@@ -25,10 +35,25 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 sha2.workspace = true
 storage = { path = "../../crates/storage" }
-storage-opensearch = { path = "../../crates/storage-opensearch" }
-storage-postgres = { path = "../../crates/storage-postgres" }
+storage-opensearch = { path = "../../crates/storage-opensearch", optional = true }
+storage-postgres = { path = "../../crates/storage-postgres", optional = true }
 tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 tokio-postgres.workspace = true
+
+[[test]]
+name = "import_demo_jp"
+path = "tests/import_demo_jp.rs"
+required-features = ["storage-backends"]
+
+[[test]]
+name = "import_event_csv"
+path = "tests/import_event_csv.rs"
+required-features = ["storage-backends"]
+
+[[test]]
+name = "snapshot_refresh"
+path = "tests/snapshot_refresh.rs"
+required-features = ["storage-backends"]

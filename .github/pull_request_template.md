@@ -23,7 +23,10 @@ This PR template is a review aid, not a new acceptance gate.
 
 - [ ] `cargo fmt --all --check`
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --workspace`
+- [ ] `just test`
+- [ ] `just test-cli-core` when CLI command surface or feature gates changed
+- [ ] `just test-heavy` when storage-opensearch or mock compatibility behavior changed
+- [ ] `just test-db` when PostgreSQL/Redis-backed behavior changed
 - [ ] `cargo run -p cli -- config lint`
 - [ ] `cargo run -p cli -- source-manifest lint`
 - [ ] `cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal`

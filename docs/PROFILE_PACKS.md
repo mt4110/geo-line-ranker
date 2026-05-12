@@ -73,8 +73,11 @@ Each `profile.yaml` declares:
   multiple locale files are declared, `default_locale` selects the runtime
   catalog path.
 - `fixtures`: committed fixture sets that exercise the profile.
-- `connectors`: optional normalized local connector manifest references. These
-  are validated local references, not dynamic runtime connector loading.
+- `connectors`: optional registry-facing local connector references. Supported
+  connector types are `source_manifest`, `csv_import`, and
+  `crawler_manifest`. Validation resolves each manifest path, derives source
+  class, manifest kind, profile compatibility, and safety metadata, and keeps
+  the references local. This is not dynamic runtime connector loading.
 - `evaluation`: optional committed evaluation references such as the golden
   scenario pack and an optional pairwise pack.
 - `source_manifests`, `event_csv_examples`, and `optional_crawler_manifests`:
@@ -95,23 +98,29 @@ The linter checks schema version, kind, duplicate IDs, content-kind registry
 syntax, supported content-kind refs, ranking-config content-kind refs,
 placement declarations, path syntax, referenced files, fixture manifest
 identity, compatibility level, the active ranking config, all declared reason
-catalog locale files, connector manifest refs, and evaluation refs. For legacy
+catalog locale files, connector manifest refs, connector type / manifest-kind
+consistency, and evaluation refs. `source_manifest` refs must point to YAML
+with `kind: import_source`, `crawler_manifest` refs must point to YAML with
+`kind: crawler_source`, and `csv_import` refs must point to a CSV file with a
+profile-declared `source_id`. Optional `source_id` values on YAML-backed
+connectors must match the referenced manifest's `source_id`. For legacy
 schema-2 manifests that omit `content_kinds`, the validator treats
 `supported_content_kinds` as the inline registry; new profile packs should
 declare `content_kinds` explicitly.
 
 The manifest spec draft also sketches a nested fallback config object, richer
-connector types, and per-profile evaluation packs. This repository has adopted
-the local-reference contract above and the `eval golden --profile-id <id>`
-execution path for `evaluation.scenario_pack`. When a profile declares
-`evaluation.pairwise_pack`, the same golden runner loads those pairwise
-expectations into the selected scenario run and reports the pack path in the
-summary metadata. Pairwise packs use `schema_version: 1`,
-`kind: replay_pairwise_pack`, and `expectations` entries keyed by
-`scenario_id`. It has adopted profile-defined content-kind identifiers in
-manifests, while the current ranking runtime still emits the implemented
-school/event response shape. It has not adopted dynamic connector loading,
-locale-specific explanation rendering, or a replacement ranking engine.
+connector families, and per-profile evaluation packs. This repository has
+adopted the local-reference contract above, a small source connector registry
+metadata surface, and the `eval golden --profile-id <id>` execution path for
+`evaluation.scenario_pack`. When a profile declares `evaluation.pairwise_pack`,
+the same golden runner loads those pairwise expectations into the selected
+scenario run and reports the pack path in the summary metadata. Pairwise packs
+use `schema_version: 1`, `kind: replay_pairwise_pack`, and `expectations`
+entries keyed by `scenario_id`. It has adopted profile-defined content-kind
+identifiers in manifests, while the current ranking runtime still emits the
+implemented school/event response shape. It has not adopted dynamic connector
+loading, locale-specific explanation rendering, profile-specific field mapping
+layers, or a replacement ranking engine.
 
 Compatibility levels are profile-pack contract labels, not storage parity
 claims:
@@ -222,11 +231,12 @@ because crawler manifests carry their own source inputs.
 Core ranking remains deterministic Rust over canonical records. A connector
 produces canonical inputs such as stations, schools, events, and school-station
 links; the profile pack explains why that source belongs to a profile and which
-fixture path proves it locally. The domain crate now also exposes a minimal
-generic boundary (`Entity`, `Occurrence`, `Candidate`,
-`FeatureContribution`, and `ProfilePolicy`) so reference-profile records can be
-mapped toward platform-level concepts without rewriting the current ranking
-path in one step.
+fixture path proves it locally. The domain crate exposes a minimal generic
+boundary (`Entity`, `Occurrence`, `Candidate`, `FeatureContribution`, and
+`ProfilePolicy`) plus a canonical ingest output boundary
+(`CanonicalIngestOutput`, `CanonicalIngestRecord`, location context, and
+lineage). These types let connector/profile/import responsibilities line up
+without rewriting the current ranking path in one step.
 
 `school-event-jp` stays the best-maintained reference profile, but JP source
 manifests and crawler examples live behind that profile boundary. The

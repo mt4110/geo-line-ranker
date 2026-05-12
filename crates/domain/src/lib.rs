@@ -154,6 +154,82 @@ pub struct ProfilePolicy {
     pub attributes: BTreeMap<String, Value>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CanonicalIngestRecordKind {
+    Entity,
+    Occurrence,
+    ContextEvidence,
+}
+
+impl CanonicalIngestRecordKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Entity => "entity",
+            Self::Occurrence => "occurrence",
+            Self::ContextEvidence => "context_evidence",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CanonicalIngestLocationContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub station_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefecture_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub city_code: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CanonicalIngestLineage {
+    pub source_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CanonicalIngestRecord {
+    pub record_kind: CanonicalIngestRecordKind,
+    pub profile_id: String,
+    pub content_kind: ContentKindRef,
+    pub entity_id: String,
+    pub record_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starts_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location_context: Option<CanonicalIngestLocationContext>,
+    pub lineage: CanonicalIngestLineage,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CanonicalIngestOutput {
+    pub profile_id: String,
+    pub source_id: String,
+    pub records: Vec<CanonicalIngestRecord>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Event {
     pub id: String,
@@ -507,7 +583,10 @@ fn default_reason_code() -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{ContentKind, Event, School, ScoreComponent};
+    use super::{
+        CanonicalIngestLineage, CanonicalIngestLocationContext, CanonicalIngestRecord,
+        CanonicalIngestRecordKind, ContentKind, Event, School, ScoreComponent,
+    };
 
     fn event_with_details(details: serde_json::Value) -> Event {
         Event {
@@ -601,5 +680,46 @@ mod tests {
         assert_eq!(contribution.reason_code, "geo.line_match");
         assert_eq!(contribution.value, 1.25);
         assert_eq!(contribution.details, Some(json!({ "line_id": "line-a" })));
+    }
+
+    #[test]
+    fn canonical_ingest_record_serializes_minimal_occurrence_contract() {
+        let record = CanonicalIngestRecord {
+            record_kind: CanonicalIngestRecordKind::Occurrence,
+            profile_id: "school-event-jp".to_string(),
+            content_kind: ContentKind::Event.into(),
+            entity_id: "school-a".to_string(),
+            record_id: "event-a".to_string(),
+            title: Some("Open Campus".to_string()),
+            starts_at: Some("2026-06-01T10:00:00+09:00".to_string()),
+            location_context: Some(CanonicalIngestLocationContext {
+                station_id: Some("st_tamachi".to_string()),
+                line_id: Some("jr_yamanote".to_string()),
+                line_name: None,
+                prefecture_code: Some("13".to_string()),
+                city_code: None,
+                attributes: Default::default(),
+            }),
+            lineage: CanonicalIngestLineage {
+                source_id: "utokyo_events".to_string(),
+                connector_type: Some("crawler_manifest".to_string()),
+                manifest_path: Some("configs/crawler/sources/utokyo_events.yaml".to_string()),
+                import_run_id: None,
+                checksum_sha256: None,
+                attributes: Default::default(),
+            },
+            attributes: Default::default(),
+        };
+
+        let payload = serde_json::to_value(record).expect("record serializes");
+
+        assert_eq!(payload["record_kind"], json!("occurrence"));
+        assert_eq!(payload["content_kind"], json!("event"));
+        assert_eq!(
+            payload["location_context"]["station_id"],
+            json!("st_tamachi")
+        );
+        assert_eq!(payload["lineage"]["source_id"], json!("utokyo_events"));
+        assert!(payload["lineage"].get("import_run_id").is_none());
     }
 }

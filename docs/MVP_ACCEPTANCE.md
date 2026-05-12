@@ -66,7 +66,7 @@ Before marking the public MVP ready:
 
 - `cargo fmt --all --check` passes
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes
-- `cargo test --workspace` passes
+- `just test-all` passes
 - `just mvp-acceptance` passes
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` evidence is captured and classified
 - `git diff --check` passes

@@ -52,7 +52,7 @@ No AI/ML/embeddings/vector search.
 - Default workspace validation commands:
   - `cargo fmt --all --check`
   - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  - `cargo test --workspace`
+  - `just test`
 - PostgreSQL reference verification commands:
   - `docker compose -f .docker/docker-compose.yaml up -d postgres redis`
   - `cargo run -p cli -- migrate`

@@ -5,13 +5,13 @@ use std::{
 
 use anyhow::Result;
 use config::{
-    lint_profile_pack_dir, ProfilePackLintFile, ProfilePackLintSummary, RankingConfigLintFile,
-    RankingConfigLintSummary,
+    lint_profile_pack_dir, ProfileConnectorRegistryEntry, ProfilePackLintFile,
+    ProfilePackLintSummary, RankingConfigLintFile, RankingConfigLintSummary,
 };
 use context::ContextSource;
 use domain::SchoolStationLink;
 use serde::Serialize;
-use storage_opensearch::{
+use storage::{
     candidate_retrieval_opensearch_sort_contract, candidate_retrieval_ordering_contract,
     sort_candidate_links_for_retrieval,
 };
@@ -95,6 +95,7 @@ pub struct ProfilePackDoctorFile {
     pub reason_count: usize,
     pub fixture_references: usize,
     pub connector_references: usize,
+    pub connector_registry: Vec<ProfileConnectorRegistryEntry>,
     pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
@@ -1074,6 +1075,7 @@ fn profile_pack_doctor_file(file: ProfilePackLintFile) -> ProfilePackDoctorFile 
         reason_count: file.reason_count,
         fixture_references: file.fixture_count,
         connector_references: file.connector_count,
+        connector_registry: file.connector_registry,
         evaluation_references: file.evaluation_reference_count,
         source_manifest_references: file.source_manifest_count,
         event_csv_example_references: file.event_csv_example_count,
@@ -1235,6 +1237,14 @@ mod tests {
         assert!(school_event_jp.source_manifest_references > 0);
         assert!(school_event_jp.event_csv_example_references > 0);
         assert!(school_event_jp.optional_crawler_manifest_references > 0);
+        assert_eq!(
+            school_event_jp.connector_registry.len(),
+            school_event_jp.connector_references
+        );
+        assert!(school_event_jp
+            .connector_registry
+            .iter()
+            .any(|entry| entry.safety.allowlist_required));
     }
 
     #[test]

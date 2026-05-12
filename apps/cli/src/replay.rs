@@ -5,22 +5,25 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+#[cfg(feature = "storage-backends")]
 use api_contracts::{FallbackStageDto, RecommendationRequest, RecommendationResponse};
-use config::{AppSettings, RankingProfiles};
+#[cfg(feature = "storage-backends")]
+use config::AppSettings;
+use config::RankingProfiles;
 use domain::{
     ContentKind, FallbackStage, RankingDataset, RankingQuery, RecommendationItem,
     RecommendationResult,
 };
 use ranking::RankingEngine;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "storage-backends")]
 use storage_postgres::{PgRepository, RecommendationTraceReplayRow};
 
-use crate::{
-    explanation_integrity::{
-        check_recommendation_result_integrity, QualityCheckStatus, QualitySeverity,
-    },
-    repository::pg_repository,
+use crate::explanation_integrity::{
+    check_recommendation_result_integrity, QualityCheckStatus, QualitySeverity,
 };
+#[cfg(feature = "storage-backends")]
+use crate::repository::pg_repository;
 
 pub const DEFAULT_REPLAY_SCENARIO_PATH: &str = "configs/evaluation/scenarios";
 const REPLAY_SCENARIO_SCHEMA_VERSION: u32 = 1;
@@ -1088,6 +1091,7 @@ fn format_order(order: &[String]) -> String {
     }
 }
 
+#[cfg(feature = "storage-backends")]
 pub async fn run_replay_evaluate(
     settings: &AppSettings,
     limit: i64,
@@ -1136,6 +1140,7 @@ pub async fn run_replay_evaluate(
     })
 }
 
+#[cfg(feature = "storage-backends")]
 async fn evaluate_replay_trace(
     repository: &PgRepository,
     engine: &RankingEngine,
@@ -1278,6 +1283,7 @@ async fn evaluate_replay_trace(
     }
 }
 
+#[cfg(feature = "storage-backends")]
 fn failed_replay_case(
     trace: &RecommendationTraceReplayRow,
     request_id: Option<String>,
@@ -1296,6 +1302,7 @@ fn failed_replay_case(
     }
 }
 
+#[cfg(feature = "storage-backends")]
 fn response_order(response: &RecommendationResponse) -> Vec<String> {
     response
         .items
@@ -1304,6 +1311,7 @@ fn response_order(response: &RecommendationResponse) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "storage-backends")]
 fn stored_response_order(response: &serde_json::Value) -> Result<Vec<String>> {
     let items = response
         .get("items")
@@ -1328,6 +1336,7 @@ fn stored_response_order(response: &serde_json::Value) -> Result<Vec<String>> {
         .collect()
 }
 
+#[cfg(feature = "storage-backends")]
 fn stored_response_fallback_stage(response: &serde_json::Value) -> Option<String> {
     response
         .get("fallback_stage")
@@ -1335,6 +1344,7 @@ fn stored_response_fallback_stage(response: &serde_json::Value) -> Option<String
         .map(normalize_fallback_stage)
 }
 
+#[cfg(feature = "storage-backends")]
 fn normalize_fallback_stage(stage: &str) -> String {
     match stage {
         "strict" => "strict_station",
@@ -1343,6 +1353,7 @@ fn normalize_fallback_stage(stage: &str) -> String {
     .to_string()
 }
 
+#[cfg(feature = "storage-backends")]
 fn fallback_stage_label(fallback_stage: &FallbackStageDto) -> String {
     fallback_stage.as_str().to_string()
 }
@@ -1355,13 +1366,15 @@ mod tests {
     };
 
     use super::{
-        check_max_items_per_school, normalize_fallback_stage, run_replay_scenarios,
-        run_replay_scenarios_with_source, stored_response_order, validate_replay_scenario,
-        ReplayScenario, ReplayScenarioCase, ReplayScenarioSource, ReplayScenarioSourceKind,
-        ReplayScenarioStatus, DEFAULT_REPLAY_SCENARIO_PATH,
+        check_max_items_per_school, run_replay_scenarios, run_replay_scenarios_with_source,
+        validate_replay_scenario, ReplayScenario, ReplayScenarioCase, ReplayScenarioSource,
+        ReplayScenarioSourceKind, ReplayScenarioStatus, DEFAULT_REPLAY_SCENARIO_PATH,
     };
+    #[cfg(feature = "storage-backends")]
+    use super::{normalize_fallback_stage, stored_response_order};
     use domain::{ContentKind, FallbackStage, RecommendationItem, RecommendationResult};
 
+    #[cfg(feature = "storage-backends")]
     #[test]
     fn replay_reader_accepts_legacy_school_only_trace_shape() {
         let payload = serde_json::json!({
@@ -1378,6 +1391,7 @@ mod tests {
         assert_eq!(normalize_fallback_stage("strict"), "strict_station");
     }
 
+    #[cfg(feature = "storage-backends")]
     #[test]
     fn replay_reader_rejects_non_string_content_kind() {
         let payload = serde_json::json!({

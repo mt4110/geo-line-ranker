@@ -1,3 +1,4 @@
+#[cfg(feature = "storage-backends")]
 use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 
 use crate::{
@@ -6,18 +7,22 @@ use crate::{
         RankingConfigDoctorSummary, RetrievalParityDoctorSummary,
         StorageCompatibilityDoctorSummary,
     },
+    explanation_integrity::QualityCheckStatus,
+    fixtures::FixtureDoctorSummary,
+    replay::{ReplayEvaluationSummary, ReplayScenarioSummary},
+};
+#[cfg(feature = "storage-backends")]
+use crate::{
     explain::{
         ExplainTraceCandidatePlanSummary, ExplainTracePayloadSummary, ExplainTraceReasonSummary,
         ExplainTraceReport,
     },
-    explanation_integrity::QualityCheckStatus,
-    fixtures::FixtureDoctorSummary,
     import::CommandSummary,
     jobs::JobEnqueueSummary,
-    replay::{ReplayEvaluationSummary, ReplayScenarioSummary},
     snapshot::SnapshotRefreshSummary,
 };
 
+#[cfg(feature = "storage-backends")]
 pub fn format_summary(summary: &CommandSummary) -> String {
     match summary.import_run_id {
         Some(import_run_id) => format!(
@@ -53,6 +58,7 @@ pub fn format_fixture_doctor_summary(summary: &FixtureDoctorSummary) -> String {
     lines.join("\n")
 }
 
+#[cfg(feature = "storage-backends")]
 pub fn format_snapshot_refresh_summary(summary: &SnapshotRefreshSummary) -> String {
     format!(
         "snapshot refresh completed: school_rows={}, area_rows={}, cache_deleted={}, projection_indexed={}, projection_deleted={}, school_weight={}, area_weight={}",
@@ -66,6 +72,7 @@ pub fn format_snapshot_refresh_summary(summary: &SnapshotRefreshSummary) -> Stri
     )
 }
 
+#[cfg(feature = "storage-backends")]
 pub fn format_job_list(snapshot: &JobQueueSnapshot) -> String {
     let mut lines = vec!["job queue".to_string()];
     if snapshot.jobs.is_empty() {
@@ -106,6 +113,7 @@ pub fn format_job_list(snapshot: &JobQueueSnapshot) -> String {
     lines.join("\n")
 }
 
+#[cfg(feature = "storage-backends")]
 pub fn format_job_inspection(inspection: &JobInspection) -> String {
     let job = &inspection.job;
     let mut lines = vec![
@@ -143,6 +151,7 @@ pub fn format_job_inspection(inspection: &JobInspection) -> String {
     lines.join("\n")
 }
 
+#[cfg(feature = "storage-backends")]
 pub fn format_job_mutation_summary(action: &str, summary: &JobMutationSummary) -> String {
     let outcome = if summary.updated {
         "updated"
@@ -161,6 +170,7 @@ pub fn format_job_mutation_summary(action: &str, summary: &JobMutationSummary) -
     )
 }
 
+#[cfg(feature = "storage-backends")]
 pub fn format_job_enqueue_summary(summary: &JobEnqueueSummary) -> String {
     format!(
         "job enqueued: id={} type={} max_attempts={} payload={}",
@@ -171,6 +181,7 @@ pub fn format_job_enqueue_summary(summary: &JobEnqueueSummary) -> String {
     )
 }
 
+#[cfg(feature = "storage-backends")]
 pub fn format_explain_trace_report(report: &ExplainTraceReport) -> String {
     let mut lines = vec![format!(
         "explain trace: id={} status={} created_at={} algorithm_version={}",
@@ -257,6 +268,7 @@ pub fn format_replay_evaluation_summary(summary: &ReplayEvaluationSummary) -> St
     format_replay_evaluation_summary_with_label("replay evaluation", summary)
 }
 
+#[cfg(feature = "storage-backends")]
 pub fn format_eval_replay_summary(summary: &ReplayEvaluationSummary) -> String {
     format_replay_evaluation_summary_with_label("eval replay", summary)
 }
@@ -433,6 +445,21 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
             file.ranking_config_dir.display(),
             file.reason_catalog_path.display()
         ));
+        for connector in &file.connector_registry {
+            lines.push(format!(
+                "    connector type={} source_class={} manifest_kind={} source_id={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
+                connector.connector_type.as_str(),
+                connector.source_class.as_str(),
+                connector.manifest_kind,
+                connector.source_id.as_deref().unwrap_or("none"),
+                connector.profile_compatibility.as_str(),
+                connector.safety.local_reference_only,
+                connector.safety.dynamic_loading_enabled,
+                connector.safety.live_fetch_default,
+                connector.safety.allowlist_required,
+                connector.manifest_path.display()
+            ));
+        }
     }
 
     lines.join("\n")
@@ -699,6 +726,7 @@ fn format_order(order: &[String]) -> String {
     }
 }
 
+#[cfg(feature = "storage-backends")]
 fn format_trace_payload_summary(summary: &ExplainTracePayloadSummary) -> String {
     format!(
         "trace_payload: response_source={} context={} confidence={} privacy={} retrieval={}/{} candidate_count={} duration_ms={} candidate_plan={} suppressed_item_reasons={}",
@@ -726,6 +754,7 @@ fn format_trace_payload_summary(summary: &ExplainTracePayloadSummary) -> String 
     )
 }
 
+#[cfg(feature = "storage-backends")]
 fn format_candidate_plan(trace: &ExplainTraceCandidatePlanSummary) -> String {
     let stage_reasons = trace
         .stages
@@ -743,6 +772,7 @@ fn format_candidate_plan(trace: &ExplainTraceCandidatePlanSummary) -> String {
     )
 }
 
+#[cfg(feature = "storage-backends")]
 fn format_reasons(reasons: &[ExplainTraceReasonSummary]) -> String {
     if reasons.is_empty() {
         return "-".to_string();
@@ -759,28 +789,33 @@ fn format_reasons(reasons: &[ExplainTraceReasonSummary]) -> String {
         .join(",")
 }
 
+#[cfg(feature = "storage-backends")]
 fn optional_str(value: Option<&str>) -> &str {
     value.unwrap_or("-")
 }
 
+#[cfg(feature = "storage-backends")]
 fn optional_bool(value: Option<bool>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
 }
 
+#[cfg(feature = "storage-backends")]
 fn optional_usize(value: Option<usize>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
 }
 
+#[cfg(feature = "storage-backends")]
 fn optional_u64(value: Option<u64>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
 }
 
+#[cfg(feature = "storage-backends")]
 fn optional_f64(value: Option<f64>) -> String {
     value
         .map(|value| format!("{value:.3}"))

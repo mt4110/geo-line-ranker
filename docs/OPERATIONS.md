@@ -87,7 +87,7 @@ This gate deliberately starts only PostgreSQL/PostGIS and Redis, forces `CANDIDA
 For release candidate evidence, capture the local validation results
 (`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --workspace`, config/source/crawler manifest lint, fixture doctor,
+`just test-all`, config/source/crawler manifest lint, fixture doctor,
 `eval golden`, the doctor evidence suite, and `git diff --check`), CI status, release notes,
 and the required `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
 evidence. The data quality doctor is required evidence capture for release
