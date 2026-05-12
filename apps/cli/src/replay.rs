@@ -264,8 +264,32 @@ pub fn run_replay_scenarios(
     ranking_config_dir: impl AsRef<Path>,
     algorithm_version: &str,
 ) -> Result<ReplayScenarioSummary> {
-    let source = ReplayScenarioSource::explicit_path(scenario_path.as_ref().to_path_buf());
+    let source = replay_scenario_source_for_path(scenario_path.as_ref());
     run_replay_scenarios_with_source(ranking_config_dir, algorithm_version, None, source)
+}
+
+fn replay_scenario_source_for_path(scenario_path: &Path) -> ReplayScenarioSource {
+    if is_default_replay_scenario_path(scenario_path) {
+        ReplayScenarioSource::default_path(scenario_path.to_path_buf())
+    } else {
+        ReplayScenarioSource::explicit_path(scenario_path.to_path_buf())
+    }
+}
+
+fn is_default_replay_scenario_path(scenario_path: &Path) -> bool {
+    if scenario_path == Path::new(DEFAULT_REPLAY_SCENARIO_PATH) {
+        return true;
+    }
+
+    let default_path = config::resolve_runtime_path(DEFAULT_REPLAY_SCENARIO_PATH);
+    if scenario_path == default_path {
+        return true;
+    }
+
+    match (scenario_path.canonicalize(), default_path.canonicalize()) {
+        (Ok(scenario_path), Ok(default_path)) => scenario_path == default_path,
+        _ => false,
+    }
 }
 
 pub fn run_replay_scenarios_with_source(
@@ -1333,8 +1357,8 @@ mod tests {
     use super::{
         check_max_items_per_school, normalize_fallback_stage, run_replay_scenarios,
         run_replay_scenarios_with_source, stored_response_order, validate_replay_scenario,
-        ReplayScenario, ReplayScenarioCase, ReplayScenarioSource, ReplayScenarioStatus,
-        DEFAULT_REPLAY_SCENARIO_PATH,
+        ReplayScenario, ReplayScenarioCase, ReplayScenarioSource, ReplayScenarioSourceKind,
+        ReplayScenarioStatus, DEFAULT_REPLAY_SCENARIO_PATH,
     };
     use domain::{ContentKind, FallbackStage, RecommendationItem, RecommendationResult};
 
@@ -1402,6 +1426,10 @@ mod tests {
         assert_eq!(summary.blockers, 0);
         assert!(summary.pairwise_total >= 7);
         assert!(summary.explanation_integrity_total >= summary.scenarios * 6);
+        assert_eq!(
+            summary.scenario_source.kind,
+            ReplayScenarioSourceKind::DefaultPath
+        );
     }
 
     #[test]
