@@ -164,6 +164,13 @@ which remains the combined active ranking config and profile-pack lint command.
 reason catalog, and fixture set so local refs can be checked without changing
 runtime semantics.
 
+`profile validate --persist` and `doctor profile-pack --persist` keep the same
+validation behavior, then write the validated profile registry boundary to
+PostgreSQL: `profile_registry`, `profile_pack_manifest_lineage`, and
+`profile_compatibility_status`. Persistence is opt-in, requires migrated
+PostgreSQL and `DATABASE_URL`, and does not make profile packs mandatory for
+DB-free authoring commands.
+
 ## Runtime Selection
 
 API, worker, and ranking/fixture-consuming CLI commands select
@@ -209,6 +216,13 @@ profile id and ranking config resolution, but it bypasses the manifest
 `evaluation.scenario_pack` and does not load the manifest
 `evaluation.pairwise_pack`. Use the profile manifest path for the complete
 profile-owned evaluation contract.
+
+`eval golden --persist` records the completed run in PostgreSQL
+`evaluation_runs` and `evaluation_run_cases`. When a profile is selected, the
+same run also upserts the profile manifest lineage and compatibility status so
+the evaluation row can point at the manifest checksum that was tested. This is
+historical evidence only; ranking inputs, weights, candidate retrieval, and
+crawler behavior are unchanged.
 
 Setting either `RANKING_CONFIG_DIR` or `FIXTURE_DIR` keeps legacy path mode:
 the explicit directory is used, the other directory falls back to its built-in

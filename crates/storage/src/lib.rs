@@ -52,6 +52,275 @@ pub struct RecommendationTrace {
     pub algorithm_version: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProfileManifestRecord {
+    pub profile_id: String,
+    pub display_name: String,
+    pub schema_version: i32,
+    pub manifest_kind: String,
+    pub manifest_version: i32,
+    pub compatibility_level: String,
+    pub default_locale: Option<String>,
+    pub description: Option<String>,
+    pub manifest_path: String,
+    pub manifest_checksum_sha256: String,
+    pub manifest_payload: Value,
+    pub ranking_config_dir: String,
+    pub reason_catalog_path: String,
+    pub content_kind_registry: Vec<String>,
+    pub supported_content_kinds: Vec<String>,
+    pub context_inputs: Vec<String>,
+    pub placements: Vec<String>,
+    pub fallback_policy: String,
+    pub fixture_count: i32,
+    pub connector_count: i32,
+    pub evaluation_reference_count: i32,
+}
+
+impl ProfileManifestRecord {
+    pub fn validate(&self) -> Result<()> {
+        ensure_non_empty("profile_id", &self.profile_id)?;
+        ensure_non_empty("display_name", &self.display_name)?;
+        ensure_non_empty("manifest_kind", &self.manifest_kind)?;
+        ensure_non_empty("compatibility_level", &self.compatibility_level)?;
+        ensure_non_empty("manifest_path", &self.manifest_path)?;
+        ensure_non_empty("manifest_checksum_sha256", &self.manifest_checksum_sha256)?;
+        ensure_non_empty("ranking_config_dir", &self.ranking_config_dir)?;
+        ensure_non_empty("reason_catalog_path", &self.reason_catalog_path)?;
+        ensure_non_empty("fallback_policy", &self.fallback_policy)?;
+        ensure_positive("schema_version", self.schema_version)?;
+        ensure_positive("manifest_version", self.manifest_version)?;
+        ensure_non_negative("fixture_count", self.fixture_count)?;
+        ensure_non_negative("connector_count", self.connector_count)?;
+        ensure_non_negative(
+            "evaluation_reference_count",
+            self.evaluation_reference_count,
+        )?;
+        anyhow::ensure!(
+            self.manifest_checksum_sha256.len() == 64
+                && self
+                    .manifest_checksum_sha256
+                    .chars()
+                    .all(|value| value.is_ascii_hexdigit()),
+            "manifest_checksum_sha256 must be a 64-character hex digest"
+        );
+        ensure_json_object("manifest_payload", &self.manifest_payload)?;
+        ensure_non_empty_string_list("content_kind_registry", &self.content_kind_registry)?;
+        ensure_non_empty_string_list("supported_content_kinds", &self.supported_content_kinds)?;
+        ensure_non_empty_string_list("context_inputs", &self.context_inputs)?;
+        ensure_non_empty_string_list("placements", &self.placements)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileCompatibilityStatus {
+    Valid,
+    Warning,
+    Blocked,
+}
+
+impl ProfileCompatibilityStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Valid => "valid",
+            Self::Warning => "warning",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProfileCompatibilityStatusRecord {
+    pub profile_id: String,
+    pub compatibility_level: String,
+    pub status: ProfileCompatibilityStatus,
+    pub evidence: Value,
+}
+
+impl ProfileCompatibilityStatusRecord {
+    pub fn validate(&self) -> Result<()> {
+        ensure_non_empty("profile_id", &self.profile_id)?;
+        ensure_non_empty("compatibility_level", &self.compatibility_level)?;
+        ensure_json_object("evidence", &self.evidence)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationRunKind {
+    Golden,
+}
+
+impl EvaluationRunKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Golden => "golden",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationRunStatus {
+    Passed,
+    Blocked,
+    Failed,
+}
+
+impl EvaluationRunStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationRunCaseStatus {
+    Passed,
+    Blocked,
+}
+
+impl EvaluationRunCaseStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EvaluationRunCaseRecord {
+    pub case_id: String,
+    pub title: String,
+    pub path: String,
+    pub status: EvaluationRunCaseStatus,
+    pub expected_fallback_stage: String,
+    pub actual_fallback_stage: Option<String>,
+    pub expected_order: Vec<String>,
+    pub actual_order: Vec<String>,
+    pub checks_payload: Value,
+}
+
+impl EvaluationRunCaseRecord {
+    pub fn validate(&self) -> Result<()> {
+        ensure_non_empty("case_id", &self.case_id)?;
+        ensure_non_empty("title", &self.title)?;
+        ensure_non_empty("path", &self.path)?;
+        ensure_non_empty("expected_fallback_stage", &self.expected_fallback_stage)?;
+        ensure_string_list("expected_order", &self.expected_order)?;
+        ensure_string_list("actual_order", &self.actual_order)?;
+        ensure_json_array("checks_payload", &self.checks_payload)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EvaluationRunRecord {
+    pub profile_id: Option<String>,
+    pub profile_manifest_lineage_id: Option<i64>,
+    pub run_kind: EvaluationRunKind,
+    pub scenario_source_kind: String,
+    pub scenario_path: String,
+    pub pairwise_pack_path: Option<String>,
+    pub algorithm_version: String,
+    pub status: EvaluationRunStatus,
+    pub scenarios: i32,
+    pub passed: i32,
+    pub blocked: i32,
+    pub blockers: i32,
+    pub warnings: i32,
+    pub summary_payload: Value,
+    pub cases: Vec<EvaluationRunCaseRecord>,
+}
+
+impl EvaluationRunRecord {
+    pub fn validate(&self) -> Result<()> {
+        if let Some(profile_id) = self.profile_id.as_deref() {
+            ensure_non_empty("profile_id", profile_id)?;
+        }
+        anyhow::ensure!(
+            self.profile_manifest_lineage_id.is_none() || self.profile_id.is_some(),
+            "profile_manifest_lineage_id requires profile_id"
+        );
+        ensure_non_empty("scenario_source_kind", &self.scenario_source_kind)?;
+        ensure_non_empty("scenario_path", &self.scenario_path)?;
+        ensure_non_empty("algorithm_version", &self.algorithm_version)?;
+        ensure_json_object("summary_payload", &self.summary_payload)?;
+        ensure_non_negative("scenarios", self.scenarios)?;
+        ensure_non_negative("passed", self.passed)?;
+        ensure_non_negative("blocked", self.blocked)?;
+        ensure_non_negative("blockers", self.blockers)?;
+        ensure_non_negative("warnings", self.warnings)?;
+        let completed_cases = self
+            .passed
+            .checked_add(self.blocked)
+            .ok_or_else(|| anyhow::anyhow!("passed plus blocked overflowed"))?;
+        anyhow::ensure!(
+            completed_cases == self.scenarios,
+            "passed plus blocked must match scenarios"
+        );
+        let cases_len: i32 = self
+            .cases
+            .len()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("cases length is too large for storage"))?;
+        anyhow::ensure!(
+            cases_len == self.scenarios,
+            "cases length must match scenarios"
+        );
+        let passed_cases: i32 = self
+            .cases
+            .iter()
+            .filter(|case| case.status == EvaluationRunCaseStatus::Passed)
+            .count()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("passed case count is too large for storage"))?;
+        let blocked_cases: i32 = self
+            .cases
+            .iter()
+            .filter(|case| case.status == EvaluationRunCaseStatus::Blocked)
+            .count()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("blocked case count is too large for storage"))?;
+        anyhow::ensure!(
+            passed_cases == self.passed,
+            "passed case count must match passed"
+        );
+        anyhow::ensure!(
+            blocked_cases == self.blocked,
+            "blocked case count must match blocked"
+        );
+        match self.status {
+            EvaluationRunStatus::Passed => {
+                anyhow::ensure!(
+                    self.blocked == 0,
+                    "passed runs must not include blocked cases"
+                );
+                anyhow::ensure!(self.blockers == 0, "passed runs must not include blockers");
+            }
+            EvaluationRunStatus::Blocked => {
+                anyhow::ensure!(
+                    self.blocked > 0 || self.blockers > 0,
+                    "blocked runs must include blocked cases or blockers"
+                );
+            }
+            EvaluationRunStatus::Failed => {}
+        }
+        for case in &self.cases {
+            case.validate()?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobType {
@@ -149,6 +418,53 @@ pub trait RecommendationRepository: Send + Sync {
     ) -> Result<SnapshotRefreshStats>;
 }
 
+#[async_trait]
+pub trait ProfileRegistryRepository: Send + Sync {
+    async fn upsert_profile_manifest(&self, manifest: &ProfileManifestRecord) -> Result<i64>;
+    async fn record_profile_compatibility_status(
+        &self,
+        status: &ProfileCompatibilityStatusRecord,
+    ) -> Result<()>;
+    async fn record_evaluation_run(&self, run: &EvaluationRunRecord) -> Result<i64>;
+}
+
+fn ensure_non_empty(field: &str, value: &str) -> Result<()> {
+    anyhow::ensure!(!value.trim().is_empty(), "{field} must not be empty");
+    Ok(())
+}
+
+fn ensure_non_negative(field: &str, value: i32) -> Result<()> {
+    anyhow::ensure!(value >= 0, "{field} must not be negative");
+    Ok(())
+}
+
+fn ensure_positive(field: &str, value: i32) -> Result<()> {
+    anyhow::ensure!(value > 0, "{field} must be positive");
+    Ok(())
+}
+
+fn ensure_string_list(field: &str, values: &[String]) -> Result<()> {
+    for value in values {
+        ensure_non_empty(field, value)?;
+    }
+    Ok(())
+}
+
+fn ensure_non_empty_string_list(field: &str, values: &[String]) -> Result<()> {
+    anyhow::ensure!(!values.is_empty(), "{field} must not be empty");
+    ensure_string_list(field, values)
+}
+
+fn ensure_json_object(field: &str, value: &Value) -> Result<()> {
+    anyhow::ensure!(value.is_object(), "{field} must be a JSON object");
+    Ok(())
+}
+
+fn ensure_json_array(field: &str, value: &Value) -> Result<()> {
+    anyhow::ensure!(value.is_array(), "{field} must be a JSON array");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +496,106 @@ mod tests {
         );
     }
 
+    #[test]
+    fn profile_manifest_record_validation_rejects_bad_lineage_digest() {
+        let mut record = profile_manifest_record();
+        record.manifest_checksum_sha256 = "not-a-digest".to_string();
+
+        let error = record.validate().expect_err("digest should be rejected");
+
+        assert!(error
+            .to_string()
+            .contains("manifest_checksum_sha256 must be a 64-character hex digest"));
+    }
+
+    #[test]
+    fn evaluation_run_record_validation_checks_nested_cases() {
+        let mut run = evaluation_run_record();
+        assert!(run.validate().is_ok());
+
+        run.cases[0].case_id = " ".to_string();
+
+        let error = run.validate().expect_err("blank case id should fail");
+
+        assert!(error.to_string().contains("case_id must not be empty"));
+    }
+
+    #[test]
+    fn evaluation_run_record_validation_requires_complete_case_counts() {
+        let mut run = evaluation_run_record();
+        run.scenarios = 2;
+
+        let error = run
+            .validate()
+            .expect_err("scenario count must match persisted case outcomes");
+
+        assert!(error
+            .to_string()
+            .contains("passed plus blocked must match scenarios"));
+    }
+
+    #[test]
+    fn evaluation_run_record_validation_requires_status_to_match_outcomes() {
+        let mut run = evaluation_run_record();
+        run.status = EvaluationRunStatus::Passed;
+        run.passed = 0;
+        run.blocked = 1;
+        run.blockers = 1;
+        run.cases[0].status = EvaluationRunCaseStatus::Blocked;
+
+        let error = run
+            .validate()
+            .expect_err("passed run must not carry blocker outcomes");
+
+        assert!(error
+            .to_string()
+            .contains("passed runs must not include blocked cases"));
+
+        let mut run = evaluation_run_record();
+        run.status = EvaluationRunStatus::Blocked;
+
+        let error = run
+            .validate()
+            .expect_err("blocked run must carry blocked evidence");
+
+        assert!(error
+            .to_string()
+            .contains("blocked runs must include blocked cases or blockers"));
+    }
+
+    #[test]
+    fn profile_manifest_record_validation_rejects_loose_json_and_empty_registry() {
+        let mut record = profile_manifest_record();
+        record.manifest_payload = serde_json::json!([]);
+
+        let error = record
+            .validate()
+            .expect_err("manifest payload must be an object");
+
+        assert!(error
+            .to_string()
+            .contains("manifest_payload must be a JSON object"));
+
+        let mut record = profile_manifest_record();
+        record.content_kind_registry.clear();
+
+        let error = record
+            .validate()
+            .expect_err("content kind registry must not be empty");
+
+        assert!(error
+            .to_string()
+            .contains("content_kind_registry must not be empty"));
+    }
+
+    #[test]
+    fn profile_status_strings_are_storage_contract_values() {
+        assert_eq!(ProfileCompatibilityStatus::Valid.as_str(), "valid");
+        assert_eq!(EvaluationRunKind::Golden.as_str(), "golden");
+        assert_eq!(EvaluationRunStatus::Blocked.as_str(), "blocked");
+        assert_eq!(EvaluationRunCaseStatus::Passed.as_str(), "passed");
+    }
+
     fn school_station_link(
         school_id: &str,
         station_id: &str,
@@ -193,6 +609,63 @@ mod tests {
             distance_meters,
             hop_distance: 1,
             line_name: "JR Yamanote Line".to_string(),
+        }
+    }
+
+    fn profile_manifest_record() -> ProfileManifestRecord {
+        ProfileManifestRecord {
+            profile_id: "school-event-jp".to_string(),
+            display_name: "School Event JP".to_string(),
+            schema_version: 2,
+            manifest_kind: "profile_pack".to_string(),
+            manifest_version: 1,
+            compatibility_level: "reference".to_string(),
+            default_locale: Some("ja-JP".to_string()),
+            description: None,
+            manifest_path: "configs/profiles/school-event-jp/profile.yaml".to_string(),
+            manifest_checksum_sha256:
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            manifest_payload: serde_json::json!({ "profile_id": "school-event-jp" }),
+            ranking_config_dir: "configs/ranking".to_string(),
+            reason_catalog_path: "configs/profiles/school-event-jp/reasons/ja-JP.yaml".to_string(),
+            content_kind_registry: vec!["school".to_string(), "event".to_string()],
+            supported_content_kinds: vec!["school".to_string(), "event".to_string()],
+            context_inputs: vec!["station".to_string(), "line".to_string()],
+            placements: vec!["home".to_string(), "search".to_string()],
+            fallback_policy: "school_event_jp_default".to_string(),
+            fixture_count: 1,
+            connector_count: 1,
+            evaluation_reference_count: 1,
+        }
+    }
+
+    fn evaluation_run_record() -> EvaluationRunRecord {
+        EvaluationRunRecord {
+            profile_id: Some("school-event-jp".to_string()),
+            profile_manifest_lineage_id: Some(7),
+            run_kind: EvaluationRunKind::Golden,
+            scenario_source_kind: "profile_evaluation".to_string(),
+            scenario_path: "configs/profiles/school-event-jp/evaluation".to_string(),
+            pairwise_pack_path: None,
+            algorithm_version: "test-algorithm".to_string(),
+            status: EvaluationRunStatus::Passed,
+            scenarios: 1,
+            passed: 1,
+            blocked: 0,
+            blockers: 0,
+            warnings: 0,
+            summary_payload: serde_json::json!({ "scenarios": 1 }),
+            cases: vec![EvaluationRunCaseRecord {
+                case_id: "S01".to_string(),
+                title: "Scenario".to_string(),
+                path: "scenario.yaml".to_string(),
+                status: EvaluationRunCaseStatus::Passed,
+                expected_fallback_stage: "strict_station".to_string(),
+                actual_fallback_stage: Some("strict_station".to_string()),
+                expected_order: vec!["school:school_a".to_string()],
+                actual_order: vec!["school:school_a".to_string()],
+                checks_payload: serde_json::json!([]),
+            }],
         }
     }
 }

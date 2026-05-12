@@ -26,8 +26,9 @@ use serde::{de, Deserialize, Deserializer};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use storage::{
-    ClaimedJob, JobType, NewJob, RecommendationRepository, RecommendationTrace,
-    SnapshotRefreshStats, SnapshotTuning,
+    ClaimedJob, EvaluationRunRecord, JobType, NewJob, ProfileCompatibilityStatusRecord,
+    ProfileManifestRecord, ProfileRegistryRepository, RecommendationRepository,
+    RecommendationTrace, SnapshotRefreshStats, SnapshotTuning,
 };
 use tokio::sync::OnceCell;
 use tokio_postgres::Row;
@@ -35,9 +36,11 @@ use uuid::Uuid;
 
 use crate::pool::{build_pool_config, load_postgres_pool_max_size};
 
-const REQUIRED_READY_TABLES: [&str; 14] = [
+const REQUIRED_READY_TABLES: [&str; 19] = [
     "areas",
     "context_resolution_traces",
+    "evaluation_run_cases",
+    "evaluation_runs",
     "lines",
     "schools",
     "events",
@@ -48,6 +51,9 @@ const REQUIRED_READY_TABLES: [&str; 14] = [
     "area_affinity_snapshots",
     "user_events",
     "user_profile_contexts",
+    "profile_compatibility_status",
+    "profile_pack_manifest_lineage",
+    "profile_registry",
     "recommendation_traces",
     "job_queue",
 ];
@@ -2259,6 +2265,238 @@ pub struct CandidateProjectionRow {
     pub hop_distance: u8,
     pub open_day_count: i64,
     pub popularity_score: f64,
+}
+
+#[async_trait]
+impl ProfileRegistryRepository for PgRepository {
+    async fn upsert_profile_manifest(&self, manifest: &ProfileManifestRecord) -> Result<i64> {
+        manifest.validate()?;
+        let mut client = self.connect().await?;
+        let transaction = client.transaction().await?;
+        transaction
+            .execute(
+                "INSERT INTO profile_registry (
+                    profile_id,
+                    display_name,
+                    compatibility_level
+                 )
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (profile_id) DO UPDATE
+                 SET display_name = EXCLUDED.display_name,
+                     compatibility_level = EXCLUDED.compatibility_level,
+                     updated_at = NOW()",
+                &[
+                    &manifest.profile_id,
+                    &manifest.display_name,
+                    &manifest.compatibility_level,
+                ],
+            )
+            .await?;
+
+        let content_kind_registry = serde_json::to_value(&manifest.content_kind_registry)?;
+        let supported_content_kinds = serde_json::to_value(&manifest.supported_content_kinds)?;
+        let context_inputs = serde_json::to_value(&manifest.context_inputs)?;
+        let placements = serde_json::to_value(&manifest.placements)?;
+        let row = transaction
+            .query_one(
+                "INSERT INTO profile_pack_manifest_lineage (
+                    profile_id,
+                    manifest_path,
+                    manifest_checksum_sha256,
+                    schema_version,
+                    manifest_kind,
+                    manifest_version,
+                    compatibility_level,
+                    default_locale,
+                    description,
+                    ranking_config_dir,
+                    reason_catalog_path,
+                    content_kind_registry,
+                    supported_content_kinds,
+                    context_inputs,
+                    placements,
+                    fallback_policy,
+                    fixture_count,
+                    connector_count,
+                    evaluation_reference_count,
+                    manifest_payload
+                 )
+                 VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+                 )
+                 ON CONFLICT (profile_id, manifest_checksum_sha256) DO UPDATE
+                 SET manifest_path = EXCLUDED.manifest_path,
+                     schema_version = EXCLUDED.schema_version,
+                     manifest_kind = EXCLUDED.manifest_kind,
+                     manifest_version = EXCLUDED.manifest_version,
+                     compatibility_level = EXCLUDED.compatibility_level,
+                     default_locale = EXCLUDED.default_locale,
+                     description = EXCLUDED.description,
+                     ranking_config_dir = EXCLUDED.ranking_config_dir,
+                     reason_catalog_path = EXCLUDED.reason_catalog_path,
+                     content_kind_registry = EXCLUDED.content_kind_registry,
+                     supported_content_kinds = EXCLUDED.supported_content_kinds,
+                     context_inputs = EXCLUDED.context_inputs,
+                     placements = EXCLUDED.placements,
+                     fallback_policy = EXCLUDED.fallback_policy,
+                     fixture_count = EXCLUDED.fixture_count,
+                     connector_count = EXCLUDED.connector_count,
+                     evaluation_reference_count = EXCLUDED.evaluation_reference_count,
+                     manifest_payload = EXCLUDED.manifest_payload
+                 RETURNING id",
+                &[
+                    &manifest.profile_id,
+                    &manifest.manifest_path,
+                    &manifest.manifest_checksum_sha256,
+                    &manifest.schema_version,
+                    &manifest.manifest_kind,
+                    &manifest.manifest_version,
+                    &manifest.compatibility_level,
+                    &manifest.default_locale,
+                    &manifest.description,
+                    &manifest.ranking_config_dir,
+                    &manifest.reason_catalog_path,
+                    &content_kind_registry,
+                    &supported_content_kinds,
+                    &context_inputs,
+                    &placements,
+                    &manifest.fallback_policy,
+                    &manifest.fixture_count,
+                    &manifest.connector_count,
+                    &manifest.evaluation_reference_count,
+                    &manifest.manifest_payload,
+                ],
+            )
+            .await?;
+        let lineage_id = row.get::<_, i64>("id");
+        transaction
+            .execute(
+                "UPDATE profile_registry
+                 SET active_manifest_lineage_id = $2,
+                     updated_at = NOW()
+                 WHERE profile_id = $1",
+                &[&manifest.profile_id, &lineage_id],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(lineage_id)
+    }
+
+    async fn record_profile_compatibility_status(
+        &self,
+        status: &ProfileCompatibilityStatusRecord,
+    ) -> Result<()> {
+        status.validate()?;
+        let client = self.connect().await?;
+        client
+            .execute(
+                "INSERT INTO profile_compatibility_status (
+                    profile_id,
+                    compatibility_level,
+                    status,
+                    evidence,
+                    checked_at
+                 )
+                 VALUES ($1, $2, $3, $4, NOW())
+                 ON CONFLICT (profile_id) DO UPDATE
+                 SET compatibility_level = EXCLUDED.compatibility_level,
+                     status = EXCLUDED.status,
+                     evidence = EXCLUDED.evidence,
+                     checked_at = EXCLUDED.checked_at",
+                &[
+                    &status.profile_id,
+                    &status.compatibility_level,
+                    &status.status.as_str(),
+                    &status.evidence,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn record_evaluation_run(&self, run: &EvaluationRunRecord) -> Result<i64> {
+        run.validate()?;
+        let mut client = self.connect().await?;
+        let transaction = client.transaction().await?;
+        let row = transaction
+            .query_one(
+                "INSERT INTO evaluation_runs (
+                    profile_id,
+                    profile_manifest_lineage_id,
+                    run_kind,
+                    scenario_source_kind,
+                    scenario_path,
+                    pairwise_pack_path,
+                    algorithm_version,
+                    status,
+                    scenarios,
+                    passed,
+                    blocked,
+                    blockers,
+                    warnings,
+                    summary_payload
+                 )
+                 VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8,
+                    $9, $10, $11, $12, $13, $14
+                 )
+                 RETURNING id",
+                &[
+                    &run.profile_id,
+                    &run.profile_manifest_lineage_id,
+                    &run.run_kind.as_str(),
+                    &run.scenario_source_kind,
+                    &run.scenario_path,
+                    &run.pairwise_pack_path,
+                    &run.algorithm_version,
+                    &run.status.as_str(),
+                    &run.scenarios,
+                    &run.passed,
+                    &run.blocked,
+                    &run.blockers,
+                    &run.warnings,
+                    &run.summary_payload,
+                ],
+            )
+            .await?;
+        let evaluation_run_id = row.get::<_, i64>("id");
+        for case in &run.cases {
+            let expected_order = serde_json::to_value(&case.expected_order)?;
+            let actual_order = serde_json::to_value(&case.actual_order)?;
+            transaction
+                .execute(
+                    "INSERT INTO evaluation_run_cases (
+                        evaluation_run_id,
+                        case_id,
+                        title,
+                        path,
+                        status,
+                        expected_fallback_stage,
+                        actual_fallback_stage,
+                        expected_order,
+                        actual_order,
+                        checks_payload
+                     )
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                    &[
+                        &evaluation_run_id,
+                        &case.case_id,
+                        &case.title,
+                        &case.path,
+                        &case.status.as_str(),
+                        &case.expected_fallback_stage,
+                        &case.actual_fallback_stage,
+                        &expected_order,
+                        &actual_order,
+                        &case.checks_payload,
+                    ],
+                )
+                .await?;
+        }
+        transaction.commit().await?;
+        Ok(evaluation_run_id)
+    }
 }
 
 #[async_trait]
