@@ -779,13 +779,35 @@ impl ProfilePackRegistry {
         &self,
         profile_id: &str,
     ) -> Result<ProfileEvaluationRuntimeSelection> {
+        self.evaluation_selection_with_ranking_config_dir(profile_id, None)
+    }
+
+    pub fn evaluation_selection_with_ranking_config_dir(
+        &self,
+        profile_id: &str,
+        ranking_config_dir_override: Option<&Path>,
+    ) -> Result<ProfileEvaluationRuntimeSelection> {
         let profile_pack_manifest = self.manifest_path_for_profile_id(profile_id)?;
-        resolve_profile_pack_evaluation_selection_from_manifest(profile_pack_manifest)
+        resolve_profile_pack_evaluation_selection_from_manifest(
+            profile_pack_manifest,
+            ranking_config_dir_override,
+        )
     }
 
     pub fn ranking_selection(&self, profile_id: &str) -> Result<ProfileRankingRuntimeSelection> {
+        self.ranking_selection_with_ranking_config_dir(profile_id, None)
+    }
+
+    pub fn ranking_selection_with_ranking_config_dir(
+        &self,
+        profile_id: &str,
+        ranking_config_dir_override: Option<&Path>,
+    ) -> Result<ProfileRankingRuntimeSelection> {
         let profile_pack_manifest = self.manifest_path_for_profile_id(profile_id)?;
-        resolve_profile_pack_ranking_selection_from_manifest(profile_pack_manifest)
+        resolve_profile_pack_ranking_selection_from_manifest(
+            profile_pack_manifest,
+            ranking_config_dir_override,
+        )
     }
 
     fn ensure_manifest_profile_id(&self, path: &Path, profile_id: &str) -> Result<()> {
@@ -1107,7 +1129,8 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
     let reason_catalog_path =
         resolve_runtime_reason_catalog_path(&profile_pack_manifest, &manifest)?;
 
-    let ranking_config_dir = resolve_runtime_ranking_config_dir(&profile_pack_manifest, &manifest)?;
+    let ranking_config_dir =
+        resolve_runtime_ranking_config_dir(&profile_pack_manifest, &manifest, None)?;
 
     build_profile_pack_runtime_selection(
         profile_pack_manifest,
@@ -1120,6 +1143,7 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
 
 fn resolve_profile_pack_evaluation_selection_from_manifest(
     profile_pack_manifest: impl AsRef<Path>,
+    ranking_config_dir_override: Option<&Path>,
 ) -> Result<ProfileEvaluationRuntimeSelection> {
     let profile_pack_manifest = profile_pack_manifest.as_ref();
     let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
@@ -1136,7 +1160,11 @@ fn resolve_profile_pack_evaluation_selection_from_manifest(
         )
     })?;
 
-    let ranking_config_dir = resolve_runtime_ranking_config_dir(&profile_pack_manifest, &manifest)?;
+    let ranking_config_dir = resolve_runtime_ranking_config_dir(
+        &profile_pack_manifest,
+        &manifest,
+        ranking_config_dir_override,
+    )?;
 
     let scenario_pack = resolve_existing_evaluation_ref(
         &profile_pack_manifest,
@@ -1166,6 +1194,7 @@ fn resolve_profile_pack_evaluation_selection_from_manifest(
 
 fn resolve_profile_pack_ranking_selection_from_manifest(
     profile_pack_manifest: impl AsRef<Path>,
+    ranking_config_dir_override: Option<&Path>,
 ) -> Result<ProfileRankingRuntimeSelection> {
     let profile_pack_manifest = profile_pack_manifest.as_ref();
     let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
@@ -1175,7 +1204,11 @@ fn resolve_profile_pack_ranking_selection_from_manifest(
         )
     })?;
     let manifest = load_profile_pack_manifest(&profile_pack_manifest)?;
-    let ranking_config_dir = resolve_runtime_ranking_config_dir(&profile_pack_manifest, &manifest)?;
+    let ranking_config_dir = resolve_runtime_ranking_config_dir(
+        &profile_pack_manifest,
+        &manifest,
+        ranking_config_dir_override,
+    )?;
 
     Ok(ProfileRankingRuntimeSelection {
         profile_id: manifest.profile_id,
@@ -1277,12 +1310,16 @@ fn resolve_runtime_reason_catalog_path(
 fn resolve_runtime_ranking_config_dir(
     profile_pack_manifest: &Path,
     manifest: &ProfilePackManifest,
+    ranking_config_dir_override: Option<&Path>,
 ) -> Result<PathBuf> {
-    let ranking_config_dir = resolve_profile_ref(
-        profile_pack_manifest,
-        "ranking_config_dir",
-        &manifest.ranking_config_dir,
-    )?;
+    let ranking_config_dir = match ranking_config_dir_override {
+        Some(path) => resolve_runtime_path(path),
+        None => resolve_profile_ref(
+            profile_pack_manifest,
+            "ranking_config_dir",
+            &manifest.ranking_config_dir,
+        )?,
+    };
     ensure!(
         ranking_config_dir.is_dir(),
         "profile pack {} ranking_config_dir {} is missing or not a directory",

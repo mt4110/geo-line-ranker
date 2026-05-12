@@ -1015,23 +1015,21 @@ fn resolve_eval_golden_scenario_selection(
         profiles_path.as_deref(),
         requested_profile_id.as_deref(),
     )?;
+    let ranking_config_override = resolve_eval_ranking_config_override(ranking_config_dir)?;
     if let (Some(profile_id), Some(scenario_path)) =
         (requested_profile_id.as_deref(), scenario_path.as_ref())
     {
         let profiles_path = resolve_eval_profiles_path(profiles_path.clone())?;
         let registry = ProfilePackRegistry::new(&profiles_path);
         let profile_id = registry.selected_profile_id(Some(profile_id), DEFAULT_PROFILE_ID)?;
-        let ranking_config_dir = match resolve_eval_ranking_config_override(ranking_config_dir)? {
-            Some(ranking_config_dir) => {
-                registry.manifest_path_for_profile_id(&profile_id)?;
-                ranking_config_dir
-            }
-            None => registry.ranking_selection(&profile_id)?.ranking_config_dir,
-        };
+        let profile_selection = registry.ranking_selection_with_ranking_config_dir(
+            &profile_id,
+            ranking_config_override.as_deref(),
+        )?;
 
         return Ok(EvalGoldenScenarioSelection {
             profile_id: Some(profile_id),
-            ranking_config_dir,
+            ranking_config_dir: profile_selection.ranking_config_dir,
             scenario_source: ReplayScenarioSource::explicit_path(scenario_path.clone()),
         });
     }
@@ -1042,27 +1040,21 @@ fn resolve_eval_golden_scenario_selection(
             let profiles_path = resolve_eval_profiles_path(profiles_path.clone())?;
             let registry = ProfilePackRegistry::new(&profiles_path);
             let profile_id = registry.selected_profile_id(Some(profile_id), DEFAULT_PROFILE_ID)?;
-            registry.evaluation_selection(&profile_id)
+            registry.evaluation_selection_with_ranking_config_dir(
+                &profile_id,
+                ranking_config_override.as_deref(),
+            )
         })
         .transpose()?;
 
-    let ranking_config_dir = resolve_eval_ranking_config_dir(
-        ranking_config_dir,
-        profile_selection
-            .as_ref()
-            .map(|selection| selection.ranking_config_dir.as_path()),
-    )?;
+    let ranking_config_dir = profile_selection
+        .as_ref()
+        .map(|selection| selection.ranking_config_dir.clone())
+        .or(ranking_config_override)
+        .unwrap_or_else(|| resolve_runtime_path(DEFAULT_RANKING_CONFIG_DIR));
 
     if let Some(profile_selection) = profile_selection {
         let profile_id = Some(profile_selection.profile_id.clone());
-        if let Some(scenario_path) = scenario_path {
-            return Ok(EvalGoldenScenarioSelection {
-                profile_id,
-                scenario_source: ReplayScenarioSource::explicit_path(scenario_path.clone()),
-                ranking_config_dir,
-            });
-        }
-
         return Ok(EvalGoldenScenarioSelection {
             profile_id,
             ranking_config_dir,
@@ -1107,19 +1099,6 @@ fn resolve_eval_profiles_path(profiles_path: Option<PathBuf>) -> anyhow::Result<
             PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
         )
     })
-}
-
-fn resolve_eval_ranking_config_dir(
-    ranking_config_dir: Option<PathBuf>,
-    profile_ranking_config_dir: Option<&Path>,
-) -> anyhow::Result<PathBuf> {
-    if let Some(path) = resolve_eval_ranking_config_override(ranking_config_dir)? {
-        return Ok(path);
-    }
-    if let Some(path) = profile_ranking_config_dir {
-        return Ok(path.to_path_buf());
-    }
-    Ok(resolve_runtime_path(DEFAULT_RANKING_CONFIG_DIR))
 }
 
 fn resolve_eval_ranking_config_override(
@@ -1816,7 +1795,74 @@ article_support: reserved
             selection.scenario_source.kind,
             ReplayScenarioSourceKind::ExplicitPath
         );
-        assert_eq!(selection.ranking_config_dir, ranking_dir);
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn eval_golden_profile_pack_uses_ranking_override_for_manifest_scenario() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let profile_dir = temp.path().join("profiles").join("override-profile");
+        let scenario_dir = profile_dir.join("eval");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&scenario_dir).expect("scenario dir");
+        copy_default_ranking_configs(&ranking_dir);
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"
+schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: override-profile
+display_name: Override Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: override_default
+ranking_config_dir: ../../missing-ranking
+reason_catalog: missing-reasons.yaml
+article_support: reserved
+evaluation:
+  scenario_pack: eval
+"#,
+        )
+        .expect("profile manifest");
+
+        let selection = resolve_eval_golden_scenario_selection(
+            None,
+            Some("override-profile".to_string()),
+            Some(temp.path().join("profiles")),
+            Some(ranking_dir.clone()),
+        )
+        .expect("profile evaluation with ranking override selection");
+
+        assert_eq!(selection.profile_id.as_deref(), Some("override-profile"));
+        assert_eq!(
+            selection.scenario_source.kind,
+            ReplayScenarioSourceKind::ProfileEvaluation
+        );
+        assert_eq!(
+            selection.scenario_source.path,
+            scenario_dir.canonicalize().unwrap()
+        );
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().unwrap()
+        );
     }
 
     #[test]
