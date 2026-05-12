@@ -1312,18 +1312,22 @@ fn resolve_runtime_ranking_config_dir(
     manifest: &ProfilePackManifest,
     ranking_config_dir_override: Option<&Path>,
 ) -> Result<PathBuf> {
-    let ranking_config_dir = match ranking_config_dir_override {
-        Some(path) => resolve_runtime_path(path),
-        None => resolve_profile_ref(
-            profile_pack_manifest,
+    let (ranking_config_label, ranking_config_dir) = match ranking_config_dir_override {
+        Some(path) => ("ranking_config_dir override", resolve_runtime_path(path)),
+        None => (
             "ranking_config_dir",
-            &manifest.ranking_config_dir,
-        )?,
+            resolve_profile_ref(
+                profile_pack_manifest,
+                "ranking_config_dir",
+                &manifest.ranking_config_dir,
+            )?,
+        ),
     };
     ensure!(
         ranking_config_dir.is_dir(),
-        "profile pack {} ranking_config_dir {} is missing or not a directory",
+        "profile pack {} {} {} is missing or not a directory",
         profile_pack_manifest.display(),
+        ranking_config_label,
         ranking_config_dir.display()
     );
     let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
@@ -2636,6 +2640,29 @@ files: []
             selection.ranking_config_dir,
             ranking_dir.canonicalize().unwrap()
         );
+    }
+
+    #[test]
+    fn ranking_selection_names_missing_override_path() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+
+        let registry = ProfilePackRegistry::new(temp.path().join("profiles"));
+        let missing_ranking_dir = temp.path().join("missing-ranking");
+        let error = registry
+            .ranking_selection_with_ranking_config_dir(
+                "example-profile",
+                Some(missing_ranking_dir.as_path()),
+            )
+            .expect_err("missing ranking override should fail");
+
+        assert!(error.to_string().contains("ranking_config_dir override"));
     }
 
     #[test]
