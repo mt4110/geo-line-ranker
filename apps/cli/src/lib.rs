@@ -50,9 +50,10 @@ pub use jobs::{
     run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, JobEnqueueSummary,
 };
 pub use replay::{
-    run_replay_evaluate, run_replay_scenarios, PairwiseExpectation, ReplayEvaluationCase,
-    ReplayEvaluationStatus, ReplayEvaluationSummary, ReplayScenario, ReplayScenarioCase,
-    ReplayScenarioCheck, ReplayScenarioExpectations, ReplayScenarioKind, ReplayScenarioStatus,
+    run_replay_evaluate, run_replay_scenarios, run_replay_scenarios_with_source,
+    PairwiseExpectation, ReplayEvaluationCase, ReplayEvaluationStatus, ReplayEvaluationSummary,
+    ReplayScenario, ReplayScenarioCase, ReplayScenarioCheck, ReplayScenarioExpectations,
+    ReplayScenarioKind, ReplayScenarioSource, ReplayScenarioSourceKind, ReplayScenarioStatus,
     ReplayScenarioSummary, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 pub use snapshot::{run_snapshot_refresh, SnapshotRefreshSummary};

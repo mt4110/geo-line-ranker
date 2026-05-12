@@ -704,6 +704,22 @@ pub struct ProfilePackRuntimeSelection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileRankingRuntimeSelection {
+    pub profile_id: String,
+    pub profile_pack_manifest: PathBuf,
+    pub ranking_config_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileEvaluationRuntimeSelection {
+    pub profile_id: String,
+    pub profile_pack_manifest: PathBuf,
+    pub ranking_config_dir: PathBuf,
+    pub scenario_pack: PathBuf,
+    pub pairwise_pack: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfilePackRegistry {
     root: PathBuf,
 }
@@ -757,6 +773,41 @@ impl ProfilePackRegistry {
     ) -> Result<ProfilePackRuntimeSelection> {
         let profile_pack_manifest = self.manifest_path_for_profile_id(profile_id)?;
         resolve_profile_pack_runtime_selection_from_manifest(profile_pack_manifest, fixture_set_id)
+    }
+
+    pub fn evaluation_selection(
+        &self,
+        profile_id: &str,
+    ) -> Result<ProfileEvaluationRuntimeSelection> {
+        self.evaluation_selection_with_ranking_config_dir(profile_id, None)
+    }
+
+    pub fn evaluation_selection_with_ranking_config_dir(
+        &self,
+        profile_id: &str,
+        ranking_config_dir_override: Option<&Path>,
+    ) -> Result<ProfileEvaluationRuntimeSelection> {
+        let profile_pack_manifest = self.manifest_path_for_profile_id(profile_id)?;
+        resolve_profile_pack_evaluation_selection_from_manifest(
+            profile_pack_manifest,
+            ranking_config_dir_override,
+        )
+    }
+
+    pub fn ranking_selection(&self, profile_id: &str) -> Result<ProfileRankingRuntimeSelection> {
+        self.ranking_selection_with_ranking_config_dir(profile_id, None)
+    }
+
+    pub fn ranking_selection_with_ranking_config_dir(
+        &self,
+        profile_id: &str,
+        ranking_config_dir_override: Option<&Path>,
+    ) -> Result<ProfileRankingRuntimeSelection> {
+        let profile_pack_manifest = self.manifest_path_for_profile_id(profile_id)?;
+        resolve_profile_pack_ranking_selection_from_manifest(
+            profile_pack_manifest,
+            ranking_config_dir_override,
+        )
     }
 
     fn ensure_manifest_profile_id(&self, path: &Path, profile_id: &str) -> Result<()> {
@@ -1048,6 +1099,20 @@ pub fn resolve_profile_pack_runtime_selection(
     ProfilePackRegistry::new(profile_packs_dir).runtime_selection(profile_id, fixture_set_id)
 }
 
+pub fn resolve_profile_pack_evaluation_selection(
+    profile_packs_dir: impl AsRef<Path>,
+    profile_id: &str,
+) -> Result<ProfileEvaluationRuntimeSelection> {
+    ProfilePackRegistry::new(profile_packs_dir).evaluation_selection(profile_id)
+}
+
+pub fn resolve_profile_pack_ranking_selection(
+    profile_packs_dir: impl AsRef<Path>,
+    profile_id: &str,
+) -> Result<ProfileRankingRuntimeSelection> {
+    ProfilePackRegistry::new(profile_packs_dir).ranking_selection(profile_id)
+}
+
 fn resolve_profile_pack_runtime_selection_from_manifest(
     profile_pack_manifest: impl AsRef<Path>,
     fixture_set_id: Option<&str>,
@@ -1064,25 +1129,8 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
     let reason_catalog_path =
         resolve_runtime_reason_catalog_path(&profile_pack_manifest, &manifest)?;
 
-    let ranking_config_dir = resolve_profile_ref(
-        &profile_pack_manifest,
-        "ranking_config_dir",
-        &manifest.ranking_config_dir,
-    )?;
-    ensure!(
-        ranking_config_dir.is_dir(),
-        "profile pack {} ranking_config_dir {} is missing or not a directory",
-        profile_pack_manifest.display(),
-        ranking_config_dir.display()
-    );
-    let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
-        format!(
-            "failed to canonicalize ranking config dir {}",
-            ranking_config_dir.display()
-        )
-    })?;
-    let ranking_profiles = RankingProfiles::load_from_dir(&ranking_config_dir)?;
-    validate_profile_ranking_content_kinds(&profile_pack_manifest, &manifest, &ranking_profiles)?;
+    let ranking_config_dir =
+        resolve_runtime_ranking_config_dir(&profile_pack_manifest, &manifest, None)?;
 
     build_profile_pack_runtime_selection(
         profile_pack_manifest,
@@ -1091,6 +1139,82 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
         ranking_config_dir,
         fixture_set_id,
     )
+}
+
+fn resolve_profile_pack_evaluation_selection_from_manifest(
+    profile_pack_manifest: impl AsRef<Path>,
+    ranking_config_dir_override: Option<&Path>,
+) -> Result<ProfileEvaluationRuntimeSelection> {
+    let profile_pack_manifest = profile_pack_manifest.as_ref();
+    let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize profile pack manifest {}",
+            profile_pack_manifest.display()
+        )
+    })?;
+    let manifest = load_profile_pack_manifest(&profile_pack_manifest)?;
+    let evaluation = manifest.evaluation.as_ref().with_context(|| {
+        format!(
+            "profile pack {} does not declare evaluation.scenario_pack",
+            profile_pack_manifest.display()
+        )
+    })?;
+
+    let ranking_config_dir = resolve_runtime_ranking_config_dir(
+        &profile_pack_manifest,
+        &manifest,
+        ranking_config_dir_override,
+    )?;
+
+    let scenario_pack = resolve_existing_evaluation_ref(
+        &profile_pack_manifest,
+        "evaluation.scenario_pack",
+        &evaluation.scenario_pack,
+    )?;
+    let pairwise_pack = evaluation
+        .pairwise_pack
+        .as_deref()
+        .map(|pairwise_pack| {
+            resolve_existing_evaluation_ref(
+                &profile_pack_manifest,
+                "evaluation.pairwise_pack",
+                pairwise_pack,
+            )
+        })
+        .transpose()?;
+
+    Ok(ProfileEvaluationRuntimeSelection {
+        profile_id: manifest.profile_id,
+        profile_pack_manifest,
+        ranking_config_dir,
+        scenario_pack,
+        pairwise_pack,
+    })
+}
+
+fn resolve_profile_pack_ranking_selection_from_manifest(
+    profile_pack_manifest: impl AsRef<Path>,
+    ranking_config_dir_override: Option<&Path>,
+) -> Result<ProfileRankingRuntimeSelection> {
+    let profile_pack_manifest = profile_pack_manifest.as_ref();
+    let profile_pack_manifest = profile_pack_manifest.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize profile pack manifest {}",
+            profile_pack_manifest.display()
+        )
+    })?;
+    let manifest = load_profile_pack_manifest(&profile_pack_manifest)?;
+    let ranking_config_dir = resolve_runtime_ranking_config_dir(
+        &profile_pack_manifest,
+        &manifest,
+        ranking_config_dir_override,
+    )?;
+
+    Ok(ProfileRankingRuntimeSelection {
+        profile_id: manifest.profile_id,
+        profile_pack_manifest,
+        ranking_config_dir,
+    })
 }
 
 pub fn resolve_linted_profile_pack_runtime_selection(
@@ -1181,6 +1305,40 @@ fn resolve_runtime_reason_catalog_path(
         )
     })?;
     Ok(reason_catalog_path)
+}
+
+fn resolve_runtime_ranking_config_dir(
+    profile_pack_manifest: &Path,
+    manifest: &ProfilePackManifest,
+    ranking_config_dir_override: Option<&Path>,
+) -> Result<PathBuf> {
+    let (ranking_config_label, ranking_config_dir) = match ranking_config_dir_override {
+        Some(path) => ("ranking_config_dir override", resolve_runtime_path(path)),
+        None => (
+            "ranking_config_dir",
+            resolve_profile_ref(
+                profile_pack_manifest,
+                "ranking_config_dir",
+                &manifest.ranking_config_dir,
+            )?,
+        ),
+    };
+    ensure!(
+        ranking_config_dir.is_dir(),
+        "profile pack {} {} {} is missing or not a directory",
+        profile_pack_manifest.display(),
+        ranking_config_label,
+        ranking_config_dir.display()
+    );
+    let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize ranking config dir {}",
+            ranking_config_dir.display()
+        )
+    })?;
+    let ranking_profiles = RankingProfiles::load_from_dir(&ranking_config_dir)?;
+    validate_profile_ranking_content_kinds(profile_pack_manifest, manifest, &ranking_profiles)?;
+    Ok(ranking_config_dir)
 }
 
 fn ensure_valid_profile_id(profile_id: &str) -> Result<()> {
@@ -2011,6 +2169,28 @@ fn resolve_profile_ref(manifest_path: &Path, label: &str, raw_path: &str) -> Res
     )?))
 }
 
+fn resolve_existing_evaluation_ref(
+    manifest_path: &Path,
+    label: &str,
+    raw_path: &str,
+) -> Result<PathBuf> {
+    let resolved = resolve_profile_ref(manifest_path, label, raw_path)?;
+    ensure!(
+        resolved.is_file() || resolved.is_dir(),
+        "profile pack {} {} {} is missing",
+        manifest_path.display(),
+        label,
+        resolved.display()
+    );
+    resolved.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize profile pack {} {}",
+            label,
+            resolved.display()
+        )
+    })
+}
+
 fn validate_portable_relative_path(
     manifest_path: &Path,
     label: &str,
@@ -2243,7 +2423,8 @@ mod tests {
     use super::{
         is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
         load_profile_pack_manifest, load_profile_reason_catalog, parse_candidate_retrieval_mode,
-        parse_postgres_pool_max_size, resolve_profile_pack_runtime_selection,
+        parse_postgres_pool_max_size, resolve_profile_pack_evaluation_selection,
+        resolve_profile_pack_ranking_selection, resolve_profile_pack_runtime_selection,
         validate_portable_relative_path, validate_profile_pack_contract,
         validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
         ProfileCompatibilityLevel, ProfileContextInput, ProfilePackKind, ProfilePackManifest,
@@ -2417,6 +2598,71 @@ files: []
         assert_eq!(compatibility_levels, vec!["stable", "reference"]);
         assert!(summary.files.iter().all(|file| file.reason_count > 0));
         assert_eq!(summary.ranking_configs.len(), 1);
+    }
+
+    #[test]
+    fn resolves_default_profile_evaluation_pack() {
+        let selection =
+            resolve_profile_pack_evaluation_selection(repo_profile_root(), "school-event-jp")
+                .expect("profile evaluation selection");
+
+        assert_eq!(selection.profile_id, "school-event-jp");
+        assert!(selection
+            .profile_pack_manifest
+            .ends_with("configs/profiles/school-event-jp/profile.yaml"));
+        assert!(selection.ranking_config_dir.ends_with("configs/ranking"));
+        assert!(selection
+            .scenario_pack
+            .ends_with("configs/evaluation/scenarios"));
+        assert_eq!(selection.pairwise_pack, None);
+    }
+
+    #[test]
+    fn ranking_selection_does_not_require_evaluation_pack() {
+        let temp = tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+
+        let selection =
+            resolve_profile_pack_ranking_selection(temp.path().join("profiles"), "example-profile")
+                .expect("ranking selection");
+
+        assert_eq!(selection.profile_id, "example-profile");
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn ranking_selection_names_missing_override_path() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        write_minimal_profile_manifest(
+            &profile_dir.join("profile.yaml"),
+            "example-profile",
+            "minimal",
+        );
+
+        let registry = ProfilePackRegistry::new(temp.path().join("profiles"));
+        let missing_ranking_dir = temp.path().join("missing-ranking");
+        let error = registry
+            .ranking_selection_with_ranking_config_dir(
+                "example-profile",
+                Some(missing_ranking_dir.as_path()),
+            )
+            .expect_err("missing ranking override should fail");
+
+        assert!(error.to_string().contains("ranking_config_dir override"));
     }
 
     #[test]

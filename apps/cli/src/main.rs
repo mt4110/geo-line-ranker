@@ -18,9 +18,9 @@ use cli::{
     run_context_inspect, run_derive_school_station_links, run_event_csv_import, run_explain_trace,
     run_explanation_integrity_doctor, run_fixture_doctor, run_import_command, run_job_due,
     run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, run_profile_pack_doctor,
-    run_replay_evaluate, run_replay_scenarios, run_retrieval_parity_doctor, run_snapshot_refresh,
-    run_storage_compatibility_doctor, ContextInspectInput, ImportTarget,
-    DEFAULT_REPLAY_SCENARIO_PATH,
+    run_replay_evaluate, run_replay_scenarios, run_replay_scenarios_with_source,
+    run_retrieval_parity_doctor, run_snapshot_refresh, run_storage_compatibility_doctor,
+    ContextInspectInput, ImportTarget, ReplayScenarioSource, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -224,16 +224,25 @@ enum ReplayCommand {
 enum EvalCommand {
     #[command(
         about = "Run the committed golden scenario evaluation",
-        long_about = "Run the committed golden scenario evaluation without requiring persisted PostgreSQL traces. This is an operator-facing alias for `replay scenarios`; both commands use the same deterministic scenario runner, checks, and JSON report shape.\n\nExamples:\n  geo-line-ranker-cli eval golden\n  geo-line-ranker-cli eval golden --json\n  geo-line-ranker-cli eval golden --scenario-path configs/evaluation/scenarios"
+        long_about = "Run the committed golden scenario evaluation without requiring persisted PostgreSQL traces. This is an operator-facing alias for `replay scenarios`; both commands use the same deterministic scenario runner, checks, and JSON report shape. When --profile-id or PROFILE_ID is set, the default scenario path comes from the selected profile manifest's evaluation.scenario_pack.\n\nExamples:\n  geo-line-ranker-cli eval golden\n  geo-line-ranker-cli eval golden --json\n  geo-line-ranker-cli eval golden --profile-id school-event-jp\n  geo-line-ranker-cli eval golden --scenario-path configs/evaluation/scenarios"
     )]
     Golden {
         #[arg(
             long = "scenario-path",
             visible_alias = "path",
-            default_value = DEFAULT_REPLAY_SCENARIO_PATH,
-            help = "Scenario YAML file or directory to replay"
+            help = "Scenario YAML file or directory to replay. Overrides profile evaluation.scenario_pack and skips profile evaluation.pairwise_pack when set."
         )]
-        scenario_path: PathBuf,
+        scenario_path: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Profile id whose evaluation.scenario_pack should be replayed. Defaults to PROFILE_ID when set."
+        )]
+        profile_id: Option<String>,
+        #[arg(
+            long = "profiles-path",
+            help = "Profile pack root directory or explicit profile.yaml file. Used only with --profile-id or PROFILE_ID."
+        )]
+        profiles_path: Option<PathBuf>,
         #[arg(
             long,
             help = "Ranking config directory. Defaults to RANKING_CONFIG_DIR or configs/ranking."
@@ -633,18 +642,20 @@ async fn main() -> anyhow::Result<()> {
         Command::Eval { target } => match target {
             EvalCommand::Golden {
                 scenario_path,
+                profile_id,
+                profiles_path,
                 ranking_config_dir,
                 algorithm_version,
                 json,
                 allow_blockers,
-            } => run_replay_scenarios_command(
+            } => run_eval_golden_command(
                 scenario_path,
+                profile_id,
+                profiles_path,
                 ranking_config_dir,
                 algorithm_version,
                 json,
                 allow_blockers,
-                format_eval_golden_summary,
-                "eval golden",
             )?,
             EvalCommand::Replay {
                 limit,
@@ -952,6 +963,159 @@ async fn run_replay_evaluate_command(
     Ok(())
 }
 
+struct EvalGoldenScenarioSelection {
+    profile_id: Option<String>,
+    ranking_config_dir: PathBuf,
+    scenario_source: ReplayScenarioSource,
+}
+
+fn run_eval_golden_command(
+    scenario_path: Option<PathBuf>,
+    profile_id: Option<String>,
+    profiles_path: Option<PathBuf>,
+    ranking_config_dir: Option<PathBuf>,
+    algorithm_version: Option<String>,
+    json: bool,
+    allow_blockers: bool,
+) -> anyhow::Result<()> {
+    let algorithm_version = resolve_algorithm_version(algorithm_version)?;
+    let selection = resolve_eval_golden_scenario_selection(
+        scenario_path,
+        profile_id,
+        profiles_path,
+        ranking_config_dir,
+    )?;
+    let summary = run_replay_scenarios_with_source(
+        &selection.ranking_config_dir,
+        &algorithm_version,
+        selection.profile_id,
+        selection.scenario_source,
+    )?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!("{}", format_eval_golden_summary(&summary));
+    }
+    if summary.has_blockers() && !allow_blockers {
+        anyhow::bail!("eval golden had blocker checks={}", summary.blockers);
+    }
+    Ok(())
+}
+
+fn resolve_eval_golden_scenario_selection(
+    scenario_path: Option<PathBuf>,
+    profile_id: Option<String>,
+    profiles_path: Option<PathBuf>,
+    ranking_config_dir: Option<PathBuf>,
+) -> anyhow::Result<EvalGoldenScenarioSelection> {
+    let scenario_path = scenario_path.map(resolve_runtime_path);
+    let profiles_path = profiles_path.map(resolve_runtime_path);
+    let requested_profile_id = profile_id.or(config::env_optional_non_empty("PROFILE_ID")?);
+    ensure_profiles_path_has_profile_selector(
+        profiles_path.as_deref(),
+        requested_profile_id.as_deref(),
+    )?;
+    let ranking_config_override = resolve_eval_ranking_config_override(ranking_config_dir)?;
+    if let (Some(profile_id), Some(scenario_path)) =
+        (requested_profile_id.as_deref(), scenario_path.as_ref())
+    {
+        let profiles_path = resolve_eval_profiles_path(profiles_path.clone())?;
+        let registry = ProfilePackRegistry::new(&profiles_path);
+        let profile_id = registry.selected_profile_id(Some(profile_id), DEFAULT_PROFILE_ID)?;
+        let profile_selection = registry.ranking_selection_with_ranking_config_dir(
+            &profile_id,
+            ranking_config_override.as_deref(),
+        )?;
+
+        return Ok(EvalGoldenScenarioSelection {
+            profile_id: Some(profile_id),
+            ranking_config_dir: profile_selection.ranking_config_dir,
+            scenario_source: ReplayScenarioSource::explicit_path(scenario_path.clone()),
+        });
+    }
+
+    let profile_selection = requested_profile_id
+        .as_deref()
+        .map(|profile_id| {
+            let profiles_path = resolve_eval_profiles_path(profiles_path.clone())?;
+            let registry = ProfilePackRegistry::new(&profiles_path);
+            let profile_id = registry.selected_profile_id(Some(profile_id), DEFAULT_PROFILE_ID)?;
+            registry.evaluation_selection_with_ranking_config_dir(
+                &profile_id,
+                ranking_config_override.as_deref(),
+            )
+        })
+        .transpose()?;
+
+    let ranking_config_dir = profile_selection
+        .as_ref()
+        .map(|selection| selection.ranking_config_dir.clone())
+        .or(ranking_config_override)
+        .unwrap_or_else(|| resolve_runtime_path(DEFAULT_RANKING_CONFIG_DIR));
+
+    if let Some(profile_selection) = profile_selection {
+        let profile_id = Some(profile_selection.profile_id.clone());
+        return Ok(EvalGoldenScenarioSelection {
+            profile_id,
+            ranking_config_dir,
+            scenario_source: ReplayScenarioSource::profile_evaluation(
+                profile_selection.scenario_pack,
+                profile_selection.profile_pack_manifest,
+                profile_selection.pairwise_pack,
+            ),
+        });
+    }
+
+    let scenario_source = match scenario_path {
+        Some(path) => ReplayScenarioSource::explicit_path(path),
+        None => {
+            let path = resolve_runtime_path(DEFAULT_REPLAY_SCENARIO_PATH);
+            ReplayScenarioSource::default_path(path)
+        }
+    };
+
+    Ok(EvalGoldenScenarioSelection {
+        profile_id: None,
+        ranking_config_dir,
+        scenario_source,
+    })
+}
+
+fn ensure_profiles_path_has_profile_selector(
+    profiles_path: Option<&Path>,
+    requested_profile_id: Option<&str>,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        requested_profile_id.is_some() || profiles_path.is_none(),
+        "--profiles-path requires --profile-id or PROFILE_ID"
+    );
+    Ok(())
+}
+
+fn resolve_eval_profiles_path(profiles_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    profiles_path.map(Ok).unwrap_or_else(|| {
+        env_path_or_default(
+            "PROFILE_PACKS_DIR",
+            PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+        )
+    })
+}
+
+fn resolve_eval_ranking_config_override(
+    ranking_config_dir: Option<PathBuf>,
+) -> anyhow::Result<Option<PathBuf>> {
+    if let Some(path) = ranking_config_dir {
+        return Ok(Some(resolve_runtime_path(path)));
+    }
+    config::env_path_optional("RANKING_CONFIG_DIR")
+}
+
+fn resolve_algorithm_version(algorithm_version: Option<String>) -> anyhow::Result<String> {
+    Ok(algorithm_version
+        .or(config::env_optional_non_empty("ALGORITHM_VERSION")?)
+        .unwrap_or_else(|| DEFAULT_ALGORITHM_VERSION.to_string()))
+}
+
 fn run_replay_scenarios_command(
     path: PathBuf,
     ranking_config_dir: Option<PathBuf>,
@@ -968,9 +1132,7 @@ fn run_replay_scenarios_command(
             PathBuf::from(DEFAULT_RANKING_CONFIG_DIR),
         )?,
     };
-    let algorithm_version = algorithm_version
-        .or(config::env_optional_non_empty("ALGORITHM_VERSION")?)
-        .unwrap_or_else(|| DEFAULT_ALGORITHM_VERSION.to_string());
+    let algorithm_version = resolve_algorithm_version(algorithm_version)?;
     let path = resolve_runtime_path(path);
     let summary = run_replay_scenarios(path, ranking_config_dir, &algorithm_version)?;
     if json {
@@ -1323,12 +1485,33 @@ fn format_source_manifest_lint_summary(summary: &SourceManifestLintSummary) -> S
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use cli::ReplayScenarioSourceKind;
     use config::{
         ProfileCompatibilityLevel, ProfilePackKind, ProfilePackLintFile, ProfilePackLintSummary,
         RankingConfigKind, RankingConfigLintFile, RankingConfigLintSummary,
     };
     use domain::PlacementKind;
     use std::{collections::BTreeMap, fs};
+
+    fn repo_ranking_config_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
+    }
+
+    fn copy_default_ranking_configs(target: &Path) {
+        for name in [
+            "schools.default.yaml",
+            "events.default.yaml",
+            "fallback.default.yaml",
+            "tracking.default.yaml",
+            "placement.home.yaml",
+            "placement.search.yaml",
+            "placement.detail.yaml",
+            "placement.mypage.yaml",
+        ] {
+            fs::copy(repo_ranking_config_root().join(name), target.join(name))
+                .expect("copy ranking config");
+        }
+    }
 
     #[test]
     fn context_inspect_help_explains_read_only_evidence_flow() {
@@ -1408,6 +1591,8 @@ mod tests {
         assert!(help.contains("eval golden --json"));
         assert!(help.contains("--scenario-path"));
         assert!(help.contains("--path"));
+        assert!(help.contains("--profile-id"));
+        assert!(help.contains("--profiles-path"));
         assert!(help.contains("--ranking-config-dir"));
         assert!(help.contains("--allow-blockers"));
     }
@@ -1452,13 +1637,241 @@ mod tests {
             panic!("expected eval golden command");
         };
 
-        assert_eq!(scenario_path, PathBuf::from("configs/evaluation/scenarios"));
+        assert_eq!(
+            scenario_path,
+            Some(PathBuf::from("configs/evaluation/scenarios"))
+        );
         assert!(allow_blockers);
+    }
+
+    #[test]
+    fn eval_golden_accepts_profile_selection_options() {
+        let cli = Cli::parse_from([
+            "cli",
+            "eval",
+            "golden",
+            "--profile-id",
+            "school-event-jp",
+            "--profiles-path",
+            "configs/profiles",
+        ]);
+
+        let Command::Eval {
+            target:
+                EvalCommand::Golden {
+                    scenario_path,
+                    profile_id,
+                    profiles_path,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected eval golden command");
+        };
+
+        assert_eq!(scenario_path, None);
+        assert_eq!(profile_id.as_deref(), Some("school-event-jp"));
+        assert_eq!(profiles_path, Some(PathBuf::from("configs/profiles")));
+    }
+
+    #[test]
+    fn eval_golden_rejects_profiles_path_without_profile_selector() {
+        let error =
+            ensure_profiles_path_has_profile_selector(Some(Path::new("configs/profiles")), None)
+                .expect_err("profiles-path without profile selector should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "--profiles-path requires --profile-id or PROFILE_ID"
+        );
+    }
+
+    #[test]
+    fn eval_golden_scenario_path_profile_override_skips_evaluation_refs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let profile_dir = temp.path().join("profiles").join("override-profile");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        copy_default_ranking_configs(&ranking_dir);
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"
+schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: override-profile
+display_name: Override Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: override_default
+ranking_config_dir: ../../ranking
+reason_catalog: missing-reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile manifest");
+
+        let selection = resolve_eval_golden_scenario_selection(
+            Some(PathBuf::from(DEFAULT_REPLAY_SCENARIO_PATH)),
+            Some("override-profile".to_string()),
+            Some(temp.path().join("profiles")),
+            None,
+        )
+        .expect("scenario override selection");
+
+        assert_eq!(selection.profile_id.as_deref(), Some("override-profile"));
+        assert_eq!(
+            selection.scenario_source.kind,
+            ReplayScenarioSourceKind::ExplicitPath
+        );
+        assert_eq!(selection.scenario_source.pairwise_pack, None);
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn eval_golden_scenario_path_ranking_override_skips_profile_ranking_ref() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let profile_dir = temp.path().join("profiles").join("override-profile");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        copy_default_ranking_configs(&ranking_dir);
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"
+schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: override-profile
+display_name: Override Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: override_default
+ranking_config_dir: ../../missing-ranking
+reason_catalog: missing-reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile manifest");
+
+        let selection = resolve_eval_golden_scenario_selection(
+            Some(PathBuf::from(DEFAULT_REPLAY_SCENARIO_PATH)),
+            Some("override-profile".to_string()),
+            Some(temp.path().join("profiles")),
+            Some(ranking_dir.clone()),
+        )
+        .expect("scenario and ranking override selection");
+
+        assert_eq!(selection.profile_id.as_deref(), Some("override-profile"));
+        assert_eq!(
+            selection.scenario_source.kind,
+            ReplayScenarioSourceKind::ExplicitPath
+        );
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn eval_golden_profile_pack_uses_ranking_override_for_manifest_scenario() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let profile_dir = temp.path().join("profiles").join("override-profile");
+        let scenario_dir = profile_dir.join("eval");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&scenario_dir).expect("scenario dir");
+        copy_default_ranking_configs(&ranking_dir);
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"
+schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: override-profile
+display_name: Override Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: override_default
+ranking_config_dir: ../../missing-ranking
+reason_catalog: missing-reasons.yaml
+article_support: reserved
+evaluation:
+  scenario_pack: eval
+"#,
+        )
+        .expect("profile manifest");
+
+        let selection = resolve_eval_golden_scenario_selection(
+            None,
+            Some("override-profile".to_string()),
+            Some(temp.path().join("profiles")),
+            Some(ranking_dir.clone()),
+        )
+        .expect("profile evaluation with ranking override selection");
+
+        assert_eq!(selection.profile_id.as_deref(), Some("override-profile"));
+        assert_eq!(
+            selection.scenario_source.kind,
+            ReplayScenarioSourceKind::ProfileEvaluation
+        );
+        assert_eq!(
+            selection.scenario_source.path,
+            scenario_dir.canonicalize().unwrap()
+        );
+        assert_eq!(
+            selection.ranking_config_dir,
+            ranking_dir.canonicalize().unwrap()
+        );
     }
 
     #[test]
     fn eval_text_formatters_use_operator_facing_command_names() {
         let scenario_summary = cli::ReplayScenarioSummary {
+            profile_id: None,
+            scenario_source: ReplayScenarioSource::default_path(PathBuf::from(
+                DEFAULT_REPLAY_SCENARIO_PATH,
+            )),
             scenarios: 0,
             passed: 0,
             blocked: 0,

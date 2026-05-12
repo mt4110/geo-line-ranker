@@ -1134,8 +1134,8 @@ mod tests {
     use crate::{
         explanation_integrity::{QualityCheckStatus, QualitySeverity},
         replay::{
-            ReplayScenarioCase, ReplayScenarioCheck, ReplayScenarioStatus, ReplayScenarioSummary,
-            DEFAULT_REPLAY_SCENARIO_PATH,
+            ReplayScenarioCase, ReplayScenarioCheck, ReplayScenarioSource, ReplayScenarioStatus,
+            ReplayScenarioSummary, DEFAULT_REPLAY_SCENARIO_PATH,
         },
     };
 
@@ -1824,6 +1824,8 @@ expectations:
 
     fn replay_summary_with_checks(checks: Vec<ReplayScenarioCheck>) -> ReplayScenarioSummary {
         ReplayScenarioSummary {
+            profile_id: None,
+            scenario_source: ReplayScenarioSource::explicit_path(PathBuf::from("self_review.yaml")),
             scenarios: 1,
             passed: 0,
             blocked: 1,

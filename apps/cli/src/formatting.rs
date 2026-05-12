@@ -305,7 +305,10 @@ fn format_replay_scenario_summary_with_label(
     summary: &ReplayScenarioSummary,
 ) -> String {
     let mut lines = vec![format!(
-        "{label} completed: scenarios={}, passed={}, blocked={}, blockers={}, warnings={}, pairwise={}/{}, explanation_integrity={}/{}",
+        "{label} completed: profile_id={}, scenario_source={}, scenario_path={}, scenarios={}, passed={}, blocked={}, blockers={}, warnings={}, pairwise={}/{}, explanation_integrity={}/{}",
+        summary.profile_id.as_deref().unwrap_or("-"),
+        summary.scenario_source.kind.as_str(),
+        summary.scenario_source.path.display(),
         summary.scenarios,
         summary.passed,
         summary.blocked,
@@ -316,6 +319,9 @@ fn format_replay_scenario_summary_with_label(
         summary.explanation_integrity_passed,
         summary.explanation_integrity_total
     )];
+    if let Some(pairwise_pack) = summary.scenario_source.pairwise_pack.as_deref() {
+        lines.push(format!("  pairwise_pack={}", pairwise_pack.display()));
+    }
 
     for case in &summary.cases {
         lines.push(format!(
