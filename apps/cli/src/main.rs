@@ -36,9 +36,17 @@ use config::{
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 #[cfg(feature = "storage-backends")]
+use sha2::{Digest, Sha256};
+#[cfg(feature = "storage-backends")]
+use storage::{
+    EvaluationRunCaseRecord, EvaluationRunCaseStatus, EvaluationRunKind, EvaluationRunRecord,
+    EvaluationRunStatus, ProfileCompatibilityStatus, ProfileCompatibilityStatusRecord,
+    ProfileManifestRecord, ProfileRegistryRepository,
+};
+#[cfg(feature = "storage-backends")]
 use storage_opensearch::ProjectionSyncService;
 #[cfg(feature = "storage-backends")]
-use storage_postgres::{run_migrations, seed_fixture};
+use storage_postgres::{run_migrations, seed_fixture, PgRepository};
 
 #[derive(Debug, Parser)]
 #[command(name = "geo-line-ranker-cli")]
@@ -283,6 +291,11 @@ enum EvalCommand {
         json: bool,
         #[arg(long, help = "Exit zero even when blocker checks fail")]
         allow_blockers: bool,
+        #[arg(
+            long,
+            help = "Persist the evaluation run to PostgreSQL without changing ranking behavior"
+        )]
+        persist: bool,
     },
     #[cfg(feature = "storage-backends")]
     #[command(
@@ -376,6 +389,11 @@ enum DoctorCommand {
         profiles_path: Option<PathBuf>,
         #[arg(long, help = "Print the doctor report as JSON")]
         json: bool,
+        #[arg(
+            long,
+            help = "Persist validated profile registry and compatibility status to PostgreSQL"
+        )]
+        persist: bool,
     },
     #[command(
         name = "context-coverage",
@@ -429,6 +447,11 @@ enum ProfileCommand {
             help = "Profile pack root directory or explicit profile.yaml file to validate. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Persist validated profile registry and compatibility status to PostgreSQL"
+        )]
+        persist: bool,
     },
     #[command(about = "Inspect one profile pack manifest")]
     Inspect {
@@ -686,15 +709,20 @@ async fn main() -> anyhow::Result<()> {
                 algorithm_version,
                 json,
                 allow_blockers,
-            } => run_eval_golden_command(
-                scenario_path,
-                profile_id,
-                profiles_path,
-                ranking_config_dir,
-                algorithm_version,
-                json,
-                allow_blockers,
-            )?,
+                persist,
+            } => {
+                run_eval_golden_command(EvalGoldenCommandInput {
+                    scenario_path,
+                    profile_id,
+                    profiles_path,
+                    ranking_config_dir,
+                    algorithm_version,
+                    json,
+                    allow_blockers,
+                    persist,
+                })
+                .await?
+            }
             #[cfg(feature = "storage-backends")]
             EvalCommand::Replay {
                 limit,
@@ -775,16 +803,23 @@ async fn main() -> anyhow::Result<()> {
             DoctorCommand::ProfilePack {
                 profiles_path,
                 json,
+                persist,
             } => {
                 let profiles_path = profiles_path.unwrap_or(env_path_or_default(
                     "PROFILE_PACKS_DIR",
                     PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
                 )?);
-                let summary = run_profile_pack_doctor(profiles_path)?;
+                let summary = run_profile_pack_doctor(&profiles_path)?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&summary)?);
                 } else {
                     println!("{}", format_profile_pack_doctor_summary(&summary));
+                }
+                if persist {
+                    let lint_summary = lint_profile_pack_dir(profiles_path)?;
+                    let persisted =
+                        persist_profile_lint_summary(&lint_summary, "doctor profile-pack").await?;
+                    print_profile_registry_persisted(persisted.len(), &persisted, json);
                 }
             }
             DoctorCommand::ContextCoverage { path, json } => {
@@ -836,13 +871,25 @@ async fn main() -> anyhow::Result<()> {
                 let summary = lint_profile_pack_dir(profiles_path)?;
                 println!("{}", format_profile_list_summary(&summary));
             }
-            ProfileCommand::Validate { profiles_path } => {
+            ProfileCommand::Validate {
+                profiles_path,
+                persist,
+            } => {
                 let profiles_path = profiles_path.unwrap_or(env_path_or_default(
                     "PROFILE_PACKS_DIR",
                     PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
                 )?);
                 let summary = lint_profile_pack_dir(profiles_path)?;
                 println!("{}", format_profile_validate_summary(&summary));
+                if persist {
+                    let persisted =
+                        persist_profile_lint_summary(&summary, "profile validate").await?;
+                    println!(
+                        "profile registry persisted: profile_packs={}, manifest_lineage_ids={}",
+                        persisted.len(),
+                        format_i64_order(&persisted)
+                    );
+                }
             }
             ProfileCommand::Inspect {
                 profile_id,
@@ -1009,11 +1056,12 @@ async fn run_replay_evaluate_command(
 
 struct EvalGoldenScenarioSelection {
     profile_id: Option<String>,
+    profile_manifest: Option<PathBuf>,
     ranking_config_dir: PathBuf,
     scenario_source: ReplayScenarioSource,
 }
 
-fn run_eval_golden_command(
+struct EvalGoldenCommandInput {
     scenario_path: Option<PathBuf>,
     profile_id: Option<String>,
     profiles_path: Option<PathBuf>,
@@ -1021,26 +1069,36 @@ fn run_eval_golden_command(
     algorithm_version: Option<String>,
     json: bool,
     allow_blockers: bool,
-) -> anyhow::Result<()> {
-    let algorithm_version = resolve_algorithm_version(algorithm_version)?;
+    persist: bool,
+}
+
+async fn run_eval_golden_command(input: EvalGoldenCommandInput) -> anyhow::Result<()> {
+    let algorithm_version = resolve_algorithm_version(input.algorithm_version)?;
     let selection = resolve_eval_golden_scenario_selection(
-        scenario_path,
-        profile_id,
-        profiles_path,
-        ranking_config_dir,
+        input.scenario_path,
+        input.profile_id,
+        input.profiles_path,
+        input.ranking_config_dir,
     )?;
+    let profile_manifest = selection.profile_manifest.clone();
     let summary = run_replay_scenarios_with_source(
         &selection.ranking_config_dir,
         &algorithm_version,
         selection.profile_id,
         selection.scenario_source,
     )?;
-    if json {
+    if input.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else {
         println!("{}", format_eval_golden_summary(&summary));
     }
-    if summary.has_blockers() && !allow_blockers {
+    if input.persist {
+        let evaluation_run_id =
+            persist_eval_golden_summary(&summary, &algorithm_version, profile_manifest.as_deref())
+                .await?;
+        print_evaluation_run_persisted(evaluation_run_id, input.json);
+    }
+    if summary.has_blockers() && !input.allow_blockers {
         anyhow::bail!("eval golden had blocker checks={}", summary.blockers);
     }
     Ok(())
@@ -1073,6 +1131,7 @@ fn resolve_eval_golden_scenario_selection(
 
         return Ok(EvalGoldenScenarioSelection {
             profile_id: Some(profile_id),
+            profile_manifest: Some(profile_selection.profile_pack_manifest),
             ranking_config_dir: profile_selection.ranking_config_dir,
             scenario_source: ReplayScenarioSource::explicit_path(scenario_path.clone()),
         });
@@ -1101,6 +1160,7 @@ fn resolve_eval_golden_scenario_selection(
         let profile_id = Some(profile_selection.profile_id.clone());
         return Ok(EvalGoldenScenarioSelection {
             profile_id,
+            profile_manifest: Some(profile_selection.profile_pack_manifest.clone()),
             ranking_config_dir,
             scenario_source: ReplayScenarioSource::profile_evaluation(
                 profile_selection.scenario_pack,
@@ -1120,9 +1180,237 @@ fn resolve_eval_golden_scenario_selection(
 
     Ok(EvalGoldenScenarioSelection {
         profile_id: None,
+        profile_manifest: None,
         ranking_config_dir,
         scenario_source,
     })
+}
+
+#[cfg(feature = "storage-backends")]
+async fn persist_profile_lint_summary(
+    summary: &ProfilePackLintSummary,
+    command_name: &str,
+) -> anyhow::Result<Vec<i64>> {
+    let settings = AppSettings::from_env_without_profile_pack()?;
+    let repository = PgRepository::new(&settings.database_url);
+    let mut lineage_ids = Vec::new();
+    for lint_file in &summary.files {
+        let (manifest, loaded_lint_file) = load_and_lint_profile_pack_file(&lint_file.path)?;
+        let record = profile_manifest_record(&manifest, &loaded_lint_file)?;
+        let lineage_id = repository.upsert_profile_manifest(&record).await?;
+        repository
+            .record_profile_compatibility_status(&ProfileCompatibilityStatusRecord {
+                profile_id: record.profile_id.clone(),
+                compatibility_level: record.compatibility_level.clone(),
+                status: ProfileCompatibilityStatus::Valid,
+                evidence: serde_json::json!({
+                    "command": command_name,
+                    "manifest_lineage_id": lineage_id,
+                    "ranking_config_dir": record.ranking_config_dir,
+                    "reason_catalog_path": record.reason_catalog_path,
+                    "fixture_count": record.fixture_count,
+                    "connector_count": record.connector_count,
+                    "evaluation_reference_count": record.evaluation_reference_count
+                }),
+            })
+            .await?;
+        lineage_ids.push(lineage_id);
+    }
+    Ok(lineage_ids)
+}
+
+#[cfg(not(feature = "storage-backends"))]
+async fn persist_profile_lint_summary(
+    _summary: &ProfilePackLintSummary,
+    _command_name: &str,
+) -> anyhow::Result<Vec<i64>> {
+    anyhow::bail!("profile registry persistence requires the storage-backends feature")
+}
+
+#[cfg(feature = "storage-backends")]
+async fn persist_eval_golden_summary(
+    summary: &cli::ReplayScenarioSummary,
+    algorithm_version: &str,
+    profile_manifest: Option<&Path>,
+) -> anyhow::Result<i64> {
+    let settings = AppSettings::from_env_without_profile_pack()?;
+    let repository = PgRepository::new(&settings.database_url);
+    let profile_manifest_lineage_id = match profile_manifest {
+        Some(profile_manifest) => {
+            let (manifest, lint_file) = load_and_lint_profile_pack_file(profile_manifest)?;
+            let record = profile_manifest_record(&manifest, &lint_file)?;
+            let lineage_id = repository.upsert_profile_manifest(&record).await?;
+            repository
+                .record_profile_compatibility_status(&ProfileCompatibilityStatusRecord {
+                    profile_id: record.profile_id.clone(),
+                    compatibility_level: record.compatibility_level.clone(),
+                    status: ProfileCompatibilityStatus::Valid,
+                    evidence: serde_json::json!({
+                        "command": "eval golden",
+                        "manifest_lineage_id": lineage_id,
+                        "scenario_source": summary.scenario_source.kind.as_str(),
+                        "scenario_path": summary.scenario_source.path.display().to_string()
+                    }),
+                })
+                .await?;
+            Some(lineage_id)
+        }
+        None => None,
+    };
+    let status = if summary.blockers > 0 {
+        EvaluationRunStatus::Blocked
+    } else {
+        EvaluationRunStatus::Passed
+    };
+    let run = EvaluationRunRecord {
+        profile_id: summary.profile_id.clone(),
+        profile_manifest_lineage_id,
+        run_kind: EvaluationRunKind::Golden,
+        scenario_source_kind: summary.scenario_source.kind.as_str().to_string(),
+        scenario_path: summary.scenario_source.path.display().to_string(),
+        pairwise_pack_path: summary
+            .scenario_source
+            .pairwise_pack
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        algorithm_version: algorithm_version.to_string(),
+        status,
+        scenarios: usize_to_i32("scenarios", summary.scenarios)?,
+        passed: usize_to_i32("passed", summary.passed)?,
+        blocked: usize_to_i32("blocked", summary.blocked)?,
+        blockers: usize_to_i32("blockers", summary.blockers)?,
+        warnings: usize_to_i32("warnings", summary.warnings)?,
+        summary_payload: serde_json::to_value(summary)?,
+        cases: summary
+            .cases
+            .iter()
+            .map(evaluation_run_case_record)
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    };
+    repository.record_evaluation_run(&run).await
+}
+
+#[cfg(not(feature = "storage-backends"))]
+async fn persist_eval_golden_summary(
+    _summary: &cli::ReplayScenarioSummary,
+    _algorithm_version: &str,
+    _profile_manifest: Option<&Path>,
+) -> anyhow::Result<i64> {
+    anyhow::bail!("evaluation run persistence requires the storage-backends feature")
+}
+
+#[cfg(feature = "storage-backends")]
+fn profile_manifest_record(
+    manifest: &ProfilePackManifest,
+    lint_file: &ProfilePackLintFile,
+) -> anyhow::Result<ProfileManifestRecord> {
+    let raw = std::fs::read(&lint_file.path)
+        .with_context(|| format!("failed to read profile pack {}", lint_file.path.display()))?;
+    let checksum = format!("{:x}", Sha256::digest(&raw));
+    Ok(ProfileManifestRecord {
+        profile_id: manifest.profile_id.clone(),
+        display_name: manifest.display_name.clone(),
+        schema_version: manifest.schema_version.try_into()?,
+        manifest_kind: manifest.kind.as_str().to_string(),
+        manifest_version: manifest.manifest_version.try_into()?,
+        compatibility_level: manifest.compatibility_level.as_str().to_string(),
+        default_locale: manifest.default_locale.clone(),
+        description: manifest.description.clone(),
+        manifest_path: lint_file
+            .path
+            .canonicalize()
+            .with_context(|| {
+                format!(
+                    "failed to canonicalize profile pack {}",
+                    lint_file.path.display()
+                )
+            })?
+            .display()
+            .to_string(),
+        manifest_checksum_sha256: checksum,
+        manifest_payload: serde_json::to_value(manifest)?,
+        ranking_config_dir: canonicalize_profile_registry_path(
+            "ranking config dir",
+            &lint_file.ranking_config_dir,
+        )?,
+        reason_catalog_path: canonicalize_profile_registry_path(
+            "reason catalog",
+            &lint_file.reason_catalog_path,
+        )?,
+        content_kind_registry: lint_file
+            .content_kind_registry
+            .iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
+        supported_content_kinds: lint_file
+            .supported_content_kinds
+            .iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
+        context_inputs: manifest
+            .context_inputs
+            .iter()
+            .map(|input| input.as_str().to_string())
+            .collect(),
+        placements: lint_file
+            .placements
+            .iter()
+            .map(|placement| placement.as_str().to_string())
+            .collect(),
+        fallback_policy: manifest.fallback_policy.clone(),
+        fixture_count: usize_to_i32("fixture_count", lint_file.fixture_count)?,
+        connector_count: usize_to_i32("connector_count", lint_file.connector_count)?,
+        evaluation_reference_count: usize_to_i32(
+            "evaluation_reference_count",
+            lint_file.evaluation_reference_count,
+        )?,
+    })
+}
+
+#[cfg(feature = "storage-backends")]
+fn canonicalize_profile_registry_path(field: &str, path: &Path) -> anyhow::Result<String> {
+    Ok(path
+        .canonicalize()
+        .with_context(|| {
+            format!(
+                "failed to canonicalize profile registry {field} {}",
+                path.display()
+            )
+        })?
+        .display()
+        .to_string())
+}
+
+#[cfg(feature = "storage-backends")]
+fn evaluation_run_case_record(
+    case: &cli::ReplayScenarioCase,
+) -> anyhow::Result<EvaluationRunCaseRecord> {
+    Ok(EvaluationRunCaseRecord {
+        case_id: case.id.clone(),
+        title: case.title.clone(),
+        path: case.path.display().to_string(),
+        status: evaluation_run_case_status(case.status),
+        expected_fallback_stage: case.expected_fallback_stage.clone(),
+        actual_fallback_stage: case.actual_fallback_stage.clone(),
+        expected_order: case.expected_order.clone(),
+        actual_order: case.actual_order.clone(),
+        checks_payload: serde_json::to_value(&case.checks)?,
+    })
+}
+
+#[cfg(feature = "storage-backends")]
+fn evaluation_run_case_status(status: cli::ReplayScenarioStatus) -> EvaluationRunCaseStatus {
+    match status {
+        cli::ReplayScenarioStatus::Passed => EvaluationRunCaseStatus::Passed,
+        cli::ReplayScenarioStatus::Blocked => EvaluationRunCaseStatus::Blocked,
+    }
+}
+
+#[cfg(feature = "storage-backends")]
+fn usize_to_i32(field: &str, value: usize) -> anyhow::Result<i32> {
+    value
+        .try_into()
+        .with_context(|| format!("{field} is too large for storage"))
 }
 
 fn ensure_profiles_path_has_profile_selector(
@@ -1375,6 +1663,48 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         file.event_csv_example_count,
         file.optional_crawler_manifest_count
     )
+}
+
+fn format_i64_order(values: &[i64]) -> String {
+    if values.is_empty() {
+        "-".to_string()
+    } else {
+        values
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn print_profile_registry_persisted(profile_packs: usize, lineage_ids: &[i64], json: bool) {
+    let message = profile_registry_persisted_message(profile_packs, lineage_ids);
+    if json {
+        eprintln!("{message}");
+    } else {
+        println!("{message}");
+    }
+}
+
+fn profile_registry_persisted_message(profile_packs: usize, lineage_ids: &[i64]) -> String {
+    format!(
+        "profile registry persisted: profile_packs={}, manifest_lineage_ids={}",
+        profile_packs,
+        format_i64_order(lineage_ids)
+    )
+}
+
+fn print_evaluation_run_persisted(evaluation_run_id: i64, json: bool) {
+    let message = evaluation_run_persisted_message(evaluation_run_id);
+    if json {
+        eprintln!("{message}");
+    } else {
+        println!("{message}");
+    }
+}
+
+fn evaluation_run_persisted_message(evaluation_run_id: i64) -> String {
+    format!("evaluation run persisted: id={evaluation_run_id}")
 }
 
 fn format_profile_inspect_summary(
@@ -1667,6 +1997,7 @@ mod tests {
         assert!(help.contains("--profiles-path"));
         assert!(help.contains("--ranking-config-dir"));
         assert!(help.contains("--allow-blockers"));
+        assert!(help.contains("--persist"));
     }
 
     #[cfg(feature = "storage-backends")]
@@ -1745,6 +2076,48 @@ mod tests {
         assert_eq!(scenario_path, None);
         assert_eq!(profile_id.as_deref(), Some("school-event-jp"));
         assert_eq!(profiles_path, Some(PathBuf::from("configs/profiles")));
+    }
+
+    #[test]
+    fn persist_options_are_available_on_profile_and_eval_commands() {
+        let eval = Cli::parse_from(["cli", "eval", "golden", "--persist"]);
+        let Command::Eval {
+            target: EvalCommand::Golden { persist, .. },
+        } = eval.command
+        else {
+            panic!("expected eval golden command");
+        };
+        assert!(persist);
+
+        let profile = Cli::parse_from(["cli", "profile", "validate", "--persist"]);
+        let Command::Profile {
+            target: ProfileCommand::Validate { persist, .. },
+        } = profile.command
+        else {
+            panic!("expected profile validate command");
+        };
+        assert!(persist);
+
+        let doctor = Cli::parse_from(["cli", "doctor", "profile-pack", "--persist"]);
+        let Command::Doctor {
+            target: DoctorCommand::ProfilePack { persist, .. },
+        } = doctor.command
+        else {
+            panic!("expected doctor profile-pack command");
+        };
+        assert!(persist);
+    }
+
+    #[test]
+    fn persistence_messages_are_stable_for_stdout_or_stderr_routing() {
+        assert_eq!(
+            profile_registry_persisted_message(2, &[7, 11]),
+            "profile registry persisted: profile_packs=2, manifest_lineage_ids=7,11"
+        );
+        assert_eq!(
+            evaluation_run_persisted_message(42),
+            "evaluation run persisted: id=42"
+        );
     }
 
     #[test]

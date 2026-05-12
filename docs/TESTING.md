@@ -123,6 +123,11 @@ logic, then summarizes profile count, reason count, fixture references, source
 manifest references, event CSV example references, optional crawler manifest
 references, and each profile's compatibility level.
 
+When PostgreSQL is migrated and you want durable profile evidence, add
+`--persist` to `profile validate` or `doctor profile-pack`. That opt-in path
+writes profile registry rows, manifest checksum lineage, and compatibility
+status without changing the DB-free validation contract.
+
 Config, profile, source, crawler, or fixture manifest contract changes should
 run the relevant lint, profile, or doctor command. Those commands verify
 `schema_version`, `kind`, `manifest_version` where applicable, strict parsers
@@ -303,7 +308,11 @@ Use `--profiles-path` with one of those profile selectors when evaluating a
 non-default profile pack root or explicit `profile.yaml` file.
 The summary includes `profile_id`, `scenario_source`, and `scenario_path`; if
 the profile declares `evaluation.pairwise_pack`, that pack is loaded into the
-same deterministic run and reported as `pairwise_pack`. Passing
+same deterministic run and reported as `pairwise_pack`. With a migrated
+PostgreSQL database, add `--persist` to store the summary and per-scenario cases
+in `evaluation_runs` and `evaluation_run_cases`. Profile-selected runs also
+record the tested profile manifest lineage. This is release evidence storage,
+not a different evaluation algorithm. Passing
 `--scenario-path` with a selected profile is an explicit what-if override: it
 keeps profile id and ranking config resolution, but it bypasses the manifest
 scenario and pairwise packs.
