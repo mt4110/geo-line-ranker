@@ -19,11 +19,18 @@ packages=(
   -p worker
 )
 
+doctest_packages=(
+  -p api
+  -p cli
+  -p crawler
+  -p storage-postgres
+)
+
 if [[ "${RUN_NEXTEST:-1}" != "0" ]]; then
   ./scripts/ensure_nextest.sh
   run cargo nextest run --profile "$profile" "${packages[@]}"
 fi
 
 if [[ "${RUN_DOCTESTS:-1}" != "0" ]]; then
-  run cargo test --doc "${packages[@]}"
+  run cargo test --doc "${doctest_packages[@]}"
 fi

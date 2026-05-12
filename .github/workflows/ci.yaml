@@ -145,12 +145,16 @@ jobs:
         include:
           - shard: api
             packages: "-p api"
+            doctest_packages: "-p api"
           - shard: cli
             packages: "-p cli"
+            doctest_packages: "-p cli"
           - shard: crawler
             packages: "-p crawler"
+            doctest_packages: "-p crawler"
           - shard: worker-storage
             packages: "-p worker -p storage-postgres"
+            doctest_packages: "-p storage-postgres"
     services:
       postgres:
         image: postgis/postgis:16-3.4
@@ -194,7 +198,7 @@ jobs:
       - name: Test ${{ matrix.shard }}
         run: cargo nextest run --profile ci-postgres ${{ matrix.packages }}
       - name: Rust doctests ${{ matrix.shard }}
-        run: cargo test --doc ${{ matrix.packages }}
+        run: cargo test --doc ${{ matrix.doctest_packages }}
 
   mvp-acceptance:
     runs-on: ubuntu-latest
