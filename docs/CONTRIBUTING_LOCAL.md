@@ -52,7 +52,7 @@ Run these from the repository root:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
+just test
 cargo run -p cli -- config lint
 cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
@@ -74,6 +74,8 @@ Convenience commands are also available:
 just fmt
 just lint
 just test
+just check-cli-core
+just test-cli-core
 just smoke
 just docs
 just ts-sdk-check
@@ -81,6 +83,44 @@ just frontend-smoke
 just openapi-drift
 just ci-local
 ```
+
+`just test` is the default fast Rust lane. It runs the lightweight DB-free
+package set that does not pull `reqwest`, Redis, `storage-opensearch`, or
+`storage-postgres`, and avoids OpenAPI/observability dependencies. It runs
+those doctests separately. Install
+cargo-nextest first:
+
+```bash
+cargo install cargo-nextest --locked
+```
+
+For CLI/profile/config/source-manifest changes that should stay independent of
+PostgreSQL, OpenSearch, Redis/cache, and OpenAPI generation, run:
+
+```bash
+just check-cli-core
+just test-cli-core
+```
+
+When PostgreSQL/Redis-backed behavior changes, start the local services and run
+the serialized DB lane:
+
+```bash
+docker compose -f .docker/docker-compose.yaml up -d postgres redis
+just test-db
+```
+
+When API contract/OpenAPI, observability, crawler parsing, HTTP connector,
+Redis/cache, worker-core, mock OpenSearch compatibility, or
+`storage-opensearch` behavior changes, run the heavier DB-free lane separately:
+
+```bash
+just test-heavy
+```
+
+The heavy lane keeps `storage-opensearch` pure query/retrieval checks separate
+from its PostgreSQL-backed projection sync feature, so OpenSearch contract work
+does not pay the storage-postgres compile cost unless the sync path changed.
 
 `just ci-local` is intentionally heavier than the first-pass contributor
 commands. It mirrors selected separated local and CI concerns without changing

@@ -1,29 +1,23 @@
 use std::{collections::HashSet, time::Duration};
 
 use anyhow::{bail, Context, Result};
+#[cfg(feature = "postgres-sync")]
 use async_trait::async_trait;
 use config::OpenSearchSettings;
 use domain::{School, SchoolStationLink, Station};
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use storage::{CandidateProjectionSync, ProjectionSyncStats};
+#[cfg(feature = "postgres-sync")]
+use storage::CandidateProjectionSync;
+use storage::ProjectionSyncStats;
+pub use storage::{
+    candidate_retrieval_opensearch_sort_contract, candidate_retrieval_ordering_contract,
+    sort_candidate_links_for_retrieval,
+};
+#[cfg(feature = "postgres-sync")]
 use storage_postgres::{load_candidate_projection_rows, CandidateProjectionRow};
 
-const CANDIDATE_RETRIEVAL_ORDERING_CONTRACT: [&str; 5] = [
-    "direct_station",
-    "distance_meters",
-    "walking_minutes",
-    "school_id",
-    "station_id",
-];
-const CANDIDATE_RETRIEVAL_OPENSEARCH_SORT_CONTRACT: [(&str, &str); 5] = [
-    ("_score", "desc"),
-    ("distance_meters", "asc"),
-    ("walking_minutes", "asc"),
-    ("school_id", "asc"),
-    ("station_id", "asc"),
-];
 const DIRECT_STATION_CANDIDATE_BOOST: f64 = 3.0;
 const SAME_LINE_CANDIDATE_BOOST: f64 = 1.0;
 const NEARBY_OFF_LINE_CANDIDATE_BOOST: f64 = 0.5;
@@ -81,6 +75,7 @@ impl ProjectionDocument {
         }
     }
 
+    #[cfg(feature = "postgres-sync")]
     pub fn from_projection_row(row: &CandidateProjectionRow) -> Self {
         Self {
             document_id: format!("{}:{}", row.school_id, row.station_id),
@@ -144,33 +139,9 @@ impl ProjectionDocument {
     }
 }
 
-pub fn candidate_retrieval_ordering_contract() -> &'static [&'static str] {
-    &CANDIDATE_RETRIEVAL_ORDERING_CONTRACT
-}
-
-pub fn candidate_retrieval_opensearch_sort_contract() -> &'static [(&'static str, &'static str)] {
-    &CANDIDATE_RETRIEVAL_OPENSEARCH_SORT_CONTRACT
-}
-
-pub fn sort_candidate_links_for_retrieval(
-    links: &mut [SchoolStationLink],
-    target_station_id: &str,
-) {
-    links.sort_by(|left, right| {
-        let left_is_not_direct = left.station_id != target_station_id;
-        let right_is_not_direct = right.station_id != target_station_id;
-        left_is_not_direct
-            .cmp(&right_is_not_direct)
-            .then_with(|| left.distance_meters.cmp(&right.distance_meters))
-            .then_with(|| left.walking_minutes.cmp(&right.walking_minutes))
-            .then_with(|| left.school_id.cmp(&right.school_id))
-            .then_with(|| left.station_id.cmp(&right.station_id))
-    });
-}
-
 fn candidate_retrieval_opensearch_sort() -> Value {
     Value::Array(
-        CANDIDATE_RETRIEVAL_OPENSEARCH_SORT_CONTRACT
+        candidate_retrieval_opensearch_sort_contract()
             .iter()
             .map(|(field, order)| {
                 let mut sort_entry = serde_json::Map::new();
@@ -710,12 +681,14 @@ impl OpenSearchStore {
     }
 }
 
+#[cfg(feature = "postgres-sync")]
 #[derive(Debug, Clone)]
 pub struct ProjectionSyncService {
     database_url: String,
     store: OpenSearchStore,
 }
 
+#[cfg(feature = "postgres-sync")]
 impl ProjectionSyncService {
     pub fn new(database_url: impl Into<String>, settings: &OpenSearchSettings) -> Result<Self> {
         Ok(Self {
@@ -747,6 +720,7 @@ impl ProjectionSyncService {
     }
 }
 
+#[cfg(feature = "postgres-sync")]
 #[async_trait]
 impl CandidateProjectionSync for ProjectionSyncService {
     async fn sync_projection(&self) -> Result<ProjectionSyncStats> {

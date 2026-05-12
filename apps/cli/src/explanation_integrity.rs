@@ -1,3 +1,4 @@
+#[cfg(feature = "storage-backends")]
 use api_contracts::{FallbackStageDto, RecommendationResponse, ScoreComponentDto};
 use domain::{FallbackStage, RecommendationItem, RecommendationResult, ScoreComponent};
 use serde::Serialize;
@@ -83,6 +84,7 @@ pub fn check_recommendation_result_integrity(
     })
 }
 
+#[cfg(feature = "storage-backends")]
 pub fn check_recommendation_response_integrity(
     response: &RecommendationResponse,
 ) -> Vec<ExplanationIntegrityCheck> {
@@ -339,6 +341,7 @@ fn component_ref(component: &ScoreComponent) -> ComponentRef<'_> {
     }
 }
 
+#[cfg(feature = "storage-backends")]
 fn component_dto_ref(component: &ScoreComponentDto) -> ComponentRef<'_> {
     ComponentRef {
         feature: &component.feature,

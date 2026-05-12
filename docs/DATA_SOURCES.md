@@ -52,6 +52,20 @@ Crawler model:
 4. Record checksum, fetch status, parse reports, and dedupe reports.
 5. Import deduped event rows into the same core `events` path used by operational CSV.
 
+Profile connector registry model:
+
+1. A profile declares local `connectors` entries.
+2. `profile validate`, `profile inspect`, and `doctor profile-pack` resolve
+   each entry without loading connector code dynamically.
+3. `source_manifest` entries must point to `kind: import_source` YAML and are
+   classified as `csv_import`.
+4. `csv_import` entries point directly to CSV files, declare their profile
+   source id, and are classified as `csv_import`.
+5. `crawler_manifest` entries must point to `kind: crawler_source` YAML and
+   are classified as `html_crawl`; registry metadata marks them as
+   allowlist-required and live-fetch disabled by default at the profile
+   boundary.
+
 ## Notes
 
 - The committed demo fixtures mimic the adapter shape and stay small on purpose.

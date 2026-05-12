@@ -13,6 +13,6 @@ geo = { path = "../../crates/geo" }
 ranking = { path = "../../crates/ranking" }
 reqwest.workspace = true
 serde_json.workspace = true
-storage-opensearch = { path = "../../crates/storage-opensearch" }
+storage-opensearch = { path = "../../crates/storage-opensearch", default-features = false }
 test-support = { path = "../../crates/test-support" }
 tokio.workspace = true

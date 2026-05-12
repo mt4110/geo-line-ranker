@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct ContextInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub station_id: Option<String>,
@@ -40,7 +40,8 @@ impl ContextInput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct AreaContextInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub country: Option<String>,
@@ -74,7 +75,8 @@ impl AreaContextInput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct RankingContext {
     pub context_source: ContextSource,
     pub confidence: f64,
@@ -133,7 +135,8 @@ impl RankingContext {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct AreaContext {
     #[serde(default = "default_country")]
     pub country: String,
@@ -159,7 +162,8 @@ impl From<AreaContextInput> for AreaContext {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct LineContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_id: Option<String>,
@@ -168,13 +172,15 @@ pub struct LineContext {
     pub operator_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct StationContext {
     pub station_id: String,
     pub station_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ContextSource {
     RequestStation,
@@ -200,7 +206,8 @@ impl ContextSource {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PrivacyLevel {
     CoarseArea,
@@ -214,7 +221,8 @@ impl PrivacyLevel {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ContextEvidenceKind {
     RequestStation,
@@ -252,7 +260,8 @@ impl ContextEvidenceKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct ContextEvidenceSummary {
     pub primary_kind: ContextEvidenceKind,
     pub evidence_count: usize,
@@ -286,7 +295,8 @@ impl Default for ContextEvidenceSummary {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct ContextWarning {
     pub code: String,
     pub message: String,

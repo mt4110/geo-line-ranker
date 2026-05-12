@@ -7,7 +7,7 @@ Run the full Rust validation set from the repository root:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
+just test
 cargo run -p cli -- config lint
 cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
@@ -22,6 +22,75 @@ cargo run -p cli -- doctor storage-compatibility
 
 `config lint` covers both active ranking config and committed profile pack
 manifests under `configs/profiles`.
+
+`just test` is the default fast Rust test lane. It uses `cargo nextest` for the
+lightweight DB-free package set that does not pull `reqwest`, Redis,
+OpenAPI/observability dependencies, `storage-opensearch`, or
+`storage-postgres`, then runs doctests for that same package set separately
+because cargo-nextest does not currently run doctests. Install nextest locally
+before using it:
+
+```bash
+cargo install cargo-nextest --locked
+```
+
+For CLI command-surface, profile, config, source-manifest, or fixture workflow
+changes that should not need database/index backends, run the core CLI feature
+check:
+
+```bash
+just check-cli-core
+just test-cli-core
+```
+
+Those build and test `cli` with `--no-default-features`, keeping API docs,
+`storage-postgres`, `storage-opensearch`, Redis/cache, and API contracts out of
+the edit loop. Full CLI behavior is still covered by the default feature set
+and the DB-backed lanes.
+
+When a change needs PostgreSQL/Redis-backed integration tests, start the local
+services and run the serialized DB lane:
+
+```bash
+docker compose -f .docker/docker-compose.yaml up -d postgres redis
+just test-db
+```
+
+`just test-heavy` runs DB-free packages that are still expensive to compile
+because they pull HTTP, Redis, OpenAPI/observability dependencies, service
+adapters, and mock compatibility coverage. It runs `storage-opensearch` with
+default features disabled so pure OpenSearch query/retrieval contract tests do
+not compile the PostgreSQL projection sync path. `just test-db` runs the serialized
+PostgreSQL/Redis lane. `just test-all` runs `just test`, `just test-heavy`,
+and `just test-db`.
+`just test-cargo` keeps the legacy `cargo test --workspace` path available for
+one-off parity checks, but it is no longer the default development loop.
+
+Nextest reduces test execution latency and improves per-test isolation, but it
+does not remove the first compilation cost. During active work, prefer the
+smallest relevant package set or `just test` with a warm `target/` directory;
+avoid `cargo clean` unless you are diagnosing a build cache issue.
+
+For CI or large local machines, the fast and heavy lanes can be partitioned without
+changing the command surface. The repository nextest config requires a version
+new enough for sliced partitioning:
+
+```bash
+NEXTEST_PARTITION=slice:1/3 RUN_DOCTESTS=0 ./scripts/rust_test_fast.sh
+NEXTEST_PARTITION=slice:1/2 RUN_DOCTESTS=0 ./scripts/rust_test_heavy.sh
+```
+
+Run doctests once in a separate job or shell after all partitions complete.
+Do not partition the PostgreSQL lane unless each shard has isolated database
+services; use `just test-db` for the serialized local DB lane. In CI, each
+PostgreSQL shard gets its own service container.
+
+Compilation is a separate bottleneck from test execution. CI Rust jobs use
+`sccache` with GitHub Actions cache plus `Swatinem/rust-cache` so repeated
+dependency builds are reused across jobs and PR updates. CI also disables Cargo
+incremental compilation to reduce throwaway cache churn. This helps warm CI
+runs; it does not replace dependency graph work such as keeping
+`storage-postgres` out of the default fast lane.
 
 Use `config lint` for authoring and review of config/profile contract changes:
 it gives the direct lint view over strict parsers, schema versions, kinds, and
@@ -113,17 +182,15 @@ tooling; public API changes still require an intentional OpenAPI and
 `API_SPEC.md` update in the same change.
 
 `just ci-local` is a selected local mirror for separated CI concerns: Rust
-formatting, clippy, workspace tests, SQL-only contributor smoke, OpenAPI drift,
-docs links, TypeScript SDK build, and frontend smoke. It is not the fixed
-public-MVP gate and it is not a replacement for every GitHub Actions job; keep
-using `just mvp-acceptance` for the six-case gate.
+formatting, clippy, the nextest fast lane, SQL-only contributor smoke, OpenAPI
+drift, docs links, TypeScript SDK build, and frontend smoke. It is not the
+fixed public-MVP gate and it is not a replacement for every GitHub Actions job;
+keep using `just mvp-acceptance` for the six-case gate.
 
-When the local PostgreSQL container is memory constrained, the workspace test
-can also be run with serialized Rust test execution:
-
-```bash
-RUST_TEST_THREADS=1 cargo test --workspace
-```
+When the local PostgreSQL container is memory constrained, use `just test-db`.
+The nextest `postgres` profile runs the DB-backed Rust test lane with
+`test-threads = 1`, avoiding the full workspace hammering one PostgreSQL
+instance concurrently.
 
 ## CI test matrix
 
@@ -131,10 +198,19 @@ Pull request CI keeps the static checks and test execution separate:
 
 - `rust-quality`: formatting, clippy, config lint, manifest lint, fixture
   doctor checks, and the `eval golden` scenario gate for the full workspace.
-- `rust-unit-tests`: DB-free packages and the mock OpenSearch compatibility
-  tests.
+- `rust-unit-tests`: lightweight DB-free packages that do not pull HTTP, Redis,
+  OpenAPI/observability, OpenSearch, or PostgreSQL adapters, split into two
+  nextest sliced partitions.
+- `rust-fast-doctests`: doctests for the same lightweight DB-free package set,
+  plus the `cli --no-default-features` core feature check and core CLI nextest
+  run.
+- `rust-heavy-tests`: expensive DB-free packages such as API contract/OpenAPI,
+  observability, crawler parsing, the HTTP connector, Redis/cache,
+  `worker-core`, `storage-opensearch` without PostgreSQL sync defaults, and
+  mock compatibility coverage through `cargo nextest`.
 - `rust-postgres-tests`: PostgreSQL/Redis-backed shards for `api`, `cli`,
-  `crawler`, and `worker` plus `storage-postgres`.
+  `crawler`, and `worker` plus `storage-postgres`, with doctests scoped to the
+  same shard packages.
 - `openapi-drift`: generated OpenAPI contract drift check.
 - `node-and-frontend`: TypeScript SDK build and example frontend
   production-build smoke.
@@ -146,10 +222,11 @@ checks. The separate `spellcheck` workflow runs cspell. These checks are
 contributor and CI tooling; they do not add docs links, frontend builds, or
 OpenAPI drift to the fixed public-MVP gate.
 
-Each `rust-postgres-tests` shard gets its own GitHub Actions PostgreSQL and
-Redis services, and runs with `RUST_TEST_THREADS=1` inside the shard. This keeps
-PR validation deterministic while avoiding one shared PostgreSQL instance being
-hit by the entire workspace at once.
+Each Rust job also enables `sccache`; each `rust-postgres-tests` shard gets its
+own GitHub Actions PostgreSQL and Redis services, and runs with the nextest
+`ci-postgres` profile. That profile inherits the serialized `postgres` profile,
+keeping PR validation deterministic while avoiding one shared PostgreSQL
+instance being hit by the entire workspace at once.
 
 ## Integration prerequisites
 
@@ -179,7 +256,8 @@ Then run the local release candidate validation set:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
+docker compose -f .docker/docker-compose.yaml up -d postgres redis
+just test-all
 cargo run -p cli -- config lint
 cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
@@ -378,7 +456,8 @@ validation set visible:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
+docker compose -f .docker/docker-compose.yaml up -d postgres redis
+just test-all
 cargo run -p cli -- config lint
 cargo run -p cli -- source-manifest lint
 cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal

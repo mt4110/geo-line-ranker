@@ -42,6 +42,7 @@ connectors:
     manifest: ../../../storage/sources/jp_school_geo/example.yaml
   - type: csv_import
     manifest: ../../../examples/import/events.sample.csv
+    source_id: event-csv
   - type: crawler_manifest
     manifest: ../../../configs/crawler/sources/custom_example.yaml
 evaluation:

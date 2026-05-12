@@ -38,6 +38,26 @@ lint:
   cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 test:
+  ./scripts/rust_test_fast.sh
+
+check-cli-core:
+  cargo check -p cli --no-default-features
+
+test-cli-core:
+  cargo check -p cli --no-default-features
+  ./scripts/ensure_nextest.sh
+  cargo nextest run --profile default -p cli --no-default-features
+
+test-heavy:
+  ./scripts/rust_test_heavy.sh
+
+test-db:
+  ./scripts/rust_test_postgres.sh
+
+test-all:
+  ./scripts/rust_test_all.sh
+
+test-cargo:
   cargo test --workspace
 
 up:

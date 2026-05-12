@@ -44,7 +44,8 @@ Public references:
 Local validation and evidence:
   cargo fmt --all --check
   cargo clippy --workspace --all-targets --all-features -- -D warnings
-  cargo test --workspace
+  docker compose -f .docker/docker-compose.yaml up -d postgres redis
+  just test-all
   cargo run -p cli -- config lint
   cargo run -p cli -- source-manifest lint
   cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
@@ -55,6 +56,7 @@ Local validation and evidence:
   git diff --check
 
 If just is unavailable:
+  ./scripts/rust_test_all.sh
   ./scripts/mvp_acceptance.sh
   DATA_QUALITY_FAIL_ON_WARNING=true ./scripts/data_quality_doctor.sh
 
