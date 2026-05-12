@@ -76,7 +76,7 @@ Each `profile.yaml` declares:
 - `connectors`: optional normalized local connector manifest references. These
   are validated local references, not dynamic runtime connector loading.
 - `evaluation`: optional committed evaluation references such as the golden
-  scenario pack.
+  scenario pack and an optional pairwise pack.
 - `source_manifests`, `event_csv_examples`, and `optional_crawler_manifests`:
   source mapping references owned by the profile. These remain readable for
   current reference-profile docs and can coexist with `connectors`.
@@ -102,11 +102,16 @@ declare `content_kinds` explicitly.
 
 The manifest spec draft also sketches a nested fallback config object, richer
 connector types, and per-profile evaluation packs. This repository has adopted
-only the local-reference contract above for now. It has adopted
-profile-defined content-kind identifiers in manifests, while the current
-ranking runtime still emits the implemented school/event response shape. It
-has not adopted dynamic connector loading, locale-specific explanation
-rendering, or a replacement ranking engine.
+the local-reference contract above and the `eval golden --profile-id <id>`
+execution path for `evaluation.scenario_pack`. When a profile declares
+`evaluation.pairwise_pack`, the same golden runner loads those pairwise
+expectations into the selected scenario run and reports the pack path in the
+summary metadata. Pairwise packs use `schema_version: 1`,
+`kind: replay_pairwise_pack`, and `expectations` entries keyed by
+`scenario_id`. It has adopted profile-defined content-kind identifiers in
+manifests, while the current ranking runtime still emits the implemented
+school/event response shape. It has not adopted dynamic connector loading,
+locale-specific explanation rendering, or a replacement ranking engine.
 
 Compatibility levels are profile-pack contract labels, not storage parity
 claims:
@@ -175,6 +180,26 @@ The selected manifest then provides the runtime defaults for
 catalog as a local file so later runtime code can use the selected profile's
 local references without re-parsing the manifest. It does not change ranking
 explanation semantics.
+
+`eval golden` has a narrower profile-aware evaluation boundary. Without
+`--profile-id` or `PROFILE_ID`, it keeps the historical
+`configs/evaluation/scenarios` default. With a selected profile, it replays the
+manifest's `evaluation.scenario_pack`, uses the profile's `ranking_config_dir`
+unless `RANKING_CONFIG_DIR` or `--ranking-config-dir` overrides it, and includes
+`profile_id`, `scenario_source`, and `scenario_path` in text and JSON summaries:
+
+```bash
+cargo run -p cli -- eval golden --profile-id school-event-jp
+```
+
+`--profiles-path` only chooses where the selected profile is loaded from; pair
+it with `--profile-id` or `PROFILE_ID`.
+
+`--scenario-path` is an explicit what-if override. It still keeps the selected
+profile id and ranking config resolution, but it bypasses the manifest
+`evaluation.scenario_pack` and does not load the manifest
+`evaluation.pairwise_pack`. Use the profile manifest path for the complete
+profile-owned evaluation contract.
 
 Setting either `RANKING_CONFIG_DIR` or `FIXTURE_DIR` keeps legacy path mode:
 the explicit directory is used, the other directory falls back to its built-in

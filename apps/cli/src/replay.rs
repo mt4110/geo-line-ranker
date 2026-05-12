@@ -24,6 +24,7 @@ use crate::{
 
 pub const DEFAULT_REPLAY_SCENARIO_PATH: &str = "configs/evaluation/scenarios";
 const REPLAY_SCENARIO_SCHEMA_VERSION: u32 = 1;
+const REPLAY_PAIRWISE_PACK_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayEvaluationSummary {
@@ -116,8 +117,93 @@ pub struct PairwiseExpectation {
     pub note: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ReplayPairwisePack {
+    pub schema_version: u32,
+    pub kind: ReplayPairwisePackKind,
+    pub expectations: Vec<ReplayPairwiseScenarioExpectation>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ReplayPairwisePackKind {
+    ReplayPairwisePack,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ReplayPairwiseScenarioExpectation {
+    pub scenario_id: String,
+    pub pairwise: Vec<PairwiseExpectation>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ReplayScenarioSource {
+    pub kind: ReplayScenarioSourceKind,
+    pub path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_manifest: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairwise_pack: Option<PathBuf>,
+}
+
+impl ReplayScenarioSource {
+    pub fn default_path(path: PathBuf) -> Self {
+        Self {
+            kind: ReplayScenarioSourceKind::DefaultPath,
+            path,
+            profile_manifest: None,
+            pairwise_pack: None,
+        }
+    }
+
+    pub fn explicit_path(path: PathBuf) -> Self {
+        Self {
+            kind: ReplayScenarioSourceKind::ExplicitPath,
+            path,
+            profile_manifest: None,
+            pairwise_pack: None,
+        }
+    }
+
+    pub fn profile_evaluation(
+        path: PathBuf,
+        profile_manifest: PathBuf,
+        pairwise_pack: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            kind: ReplayScenarioSourceKind::ProfileEvaluation,
+            path,
+            profile_manifest: Some(profile_manifest),
+            pairwise_pack,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayScenarioSourceKind {
+    DefaultPath,
+    ExplicitPath,
+    ProfileEvaluation,
+}
+
+impl ReplayScenarioSourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DefaultPath => "default_path",
+            Self::ExplicitPath => "explicit_path",
+            Self::ProfileEvaluation => "profile_evaluation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ReplayScenarioSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    pub scenario_source: ReplayScenarioSource,
     pub scenarios: usize,
     pub passed: usize,
     pub blocked: usize,
@@ -178,7 +264,20 @@ pub fn run_replay_scenarios(
     ranking_config_dir: impl AsRef<Path>,
     algorithm_version: &str,
 ) -> Result<ReplayScenarioSummary> {
-    let scenarios = load_replay_scenarios(scenario_path)?;
+    let source = ReplayScenarioSource::explicit_path(scenario_path.as_ref().to_path_buf());
+    run_replay_scenarios_with_source(ranking_config_dir, algorithm_version, None, source)
+}
+
+pub fn run_replay_scenarios_with_source(
+    ranking_config_dir: impl AsRef<Path>,
+    algorithm_version: &str,
+    profile_id: Option<String>,
+    scenario_source: ReplayScenarioSource,
+) -> Result<ReplayScenarioSummary> {
+    let mut scenarios = load_replay_scenarios(&scenario_source.path)?;
+    if let Some(pairwise_pack) = scenario_source.pairwise_pack.as_deref() {
+        apply_replay_pairwise_pack(&mut scenarios, pairwise_pack)?;
+    }
     let profiles = RankingProfiles::load_from_dir(ranking_config_dir)?;
     let engine = RankingEngine::new(profiles, algorithm_version.to_string());
     let cases = scenarios
@@ -220,6 +319,8 @@ pub fn run_replay_scenarios(
     );
 
     Ok(ReplayScenarioSummary {
+        profile_id,
+        scenario_source,
         scenarios,
         passed,
         blocked,
@@ -286,6 +387,118 @@ pub(crate) fn load_replay_scenarios(
     Ok(scenarios)
 }
 
+fn apply_replay_pairwise_pack(
+    scenarios: &mut [(PathBuf, ReplayScenario)],
+    path: &Path,
+) -> Result<()> {
+    let expectations = load_replay_pairwise_expectations(path)?;
+    let mut scenario_index_by_id = BTreeMap::new();
+    for (index, (_, scenario)) in scenarios.iter().enumerate() {
+        scenario_index_by_id.insert(scenario.id.clone(), index);
+    }
+
+    for expectation in expectations {
+        let index = scenario_index_by_id
+            .get(&expectation.scenario_id)
+            .with_context(|| {
+                format!(
+                    "pairwise pack {} references unknown scenario_id {}",
+                    path.display(),
+                    expectation.scenario_id
+                )
+            })?;
+        scenarios[*index]
+            .1
+            .expectations
+            .pairwise
+            .extend(expectation.pairwise);
+    }
+
+    Ok(())
+}
+
+fn load_replay_pairwise_expectations(
+    path: &Path,
+) -> Result<Vec<ReplayPairwiseScenarioExpectation>> {
+    let mut pack_paths = Vec::new();
+    if path.is_dir() {
+        for entry in fs::read_dir(path)
+            .with_context(|| format!("failed to read pairwise pack directory {}", path.display()))?
+        {
+            let entry = entry.with_context(|| {
+                format!(
+                    "failed to read pairwise pack directory entry {}",
+                    path.display()
+                )
+            })?;
+            let entry_path = entry.path();
+            if is_yaml_path(&entry_path) {
+                pack_paths.push(entry_path);
+            }
+        }
+        pack_paths.sort();
+    } else {
+        ensure!(
+            path.is_file(),
+            "pairwise pack path {} must be a YAML file or directory",
+            path.display()
+        );
+        pack_paths.push(path.to_path_buf());
+    }
+
+    ensure!(
+        !pack_paths.is_empty(),
+        "pairwise pack path {} did not contain any YAML packs",
+        path.display()
+    );
+
+    let mut expectations = Vec::new();
+    for pack_path in pack_paths {
+        let raw = fs::read_to_string(&pack_path)
+            .with_context(|| format!("failed to read pairwise pack {}", pack_path.display()))?;
+        let pack = serde_yaml::from_str::<ReplayPairwisePack>(&raw)
+            .with_context(|| format!("failed to parse pairwise pack {}", pack_path.display()))?;
+        validate_replay_pairwise_pack(&pack_path, &pack)?;
+        expectations.extend(pack.expectations);
+    }
+
+    Ok(expectations)
+}
+
+fn validate_replay_pairwise_pack(path: &Path, pack: &ReplayPairwisePack) -> Result<()> {
+    ensure!(
+        pack.schema_version == REPLAY_PAIRWISE_PACK_SCHEMA_VERSION,
+        "pairwise pack {} has schema_version={}, expected {}",
+        path.display(),
+        pack.schema_version,
+        REPLAY_PAIRWISE_PACK_SCHEMA_VERSION
+    );
+    ensure!(
+        !pack.expectations.is_empty(),
+        "pairwise pack {} must declare expectations",
+        path.display()
+    );
+
+    for expectation in &pack.expectations {
+        ensure!(
+            !expectation.scenario_id.trim().is_empty(),
+            "pairwise pack {} must not contain an empty scenario_id",
+            path.display()
+        );
+        ensure!(
+            !expectation.pairwise.is_empty(),
+            "pairwise pack {} scenario_id {} must declare pairwise expectations",
+            path.display(),
+            expectation.scenario_id
+        );
+        for pairwise in &expectation.pairwise {
+            validate_pairwise_expectation(&expectation.scenario_id, pairwise)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn is_yaml_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|extension| extension.to_str()),
@@ -328,23 +541,7 @@ fn validate_replay_scenario(path: &Path, scenario: &ReplayScenario) -> Result<()
     )?;
 
     for pairwise in &scenario.expectations.pairwise {
-        ensure!(
-            !pairwise.higher.trim().is_empty() && !pairwise.lower.trim().is_empty(),
-            "scenario {} pairwise expectations must name both higher and lower items",
-            scenario.id
-        );
-        ensure!(
-            pairwise.higher != pairwise.lower,
-            "scenario {} pairwise expectation cannot compare {} to itself",
-            scenario.id,
-            pairwise.higher
-        );
-        validate_item_key(
-            &scenario.id,
-            "expectations.pairwise.higher",
-            &pairwise.higher,
-        )?;
-        validate_item_key(&scenario.id, "expectations.pairwise.lower", &pairwise.lower)?;
+        validate_pairwise_expectation(&scenario.id, pairwise)?;
     }
 
     for stage in scenario.expectations.candidate_counts.keys() {
@@ -401,6 +598,27 @@ fn validate_replay_scenario(path: &Path, scenario: &ReplayScenario) -> Result<()
         );
     }
 
+    Ok(())
+}
+
+fn validate_pairwise_expectation(scenario_id: &str, pairwise: &PairwiseExpectation) -> Result<()> {
+    ensure!(
+        !pairwise.higher.trim().is_empty() && !pairwise.lower.trim().is_empty(),
+        "scenario {} pairwise expectations must name both higher and lower items",
+        scenario_id
+    );
+    ensure!(
+        pairwise.higher != pairwise.lower,
+        "scenario {} pairwise expectation cannot compare {} to itself",
+        scenario_id,
+        pairwise.higher
+    );
+    validate_item_key(
+        scenario_id,
+        "expectations.pairwise.higher",
+        &pairwise.higher,
+    )?;
+    validate_item_key(scenario_id, "expectations.pairwise.lower", &pairwise.lower)?;
     Ok(())
 }
 
@@ -1114,8 +1332,9 @@ mod tests {
 
     use super::{
         check_max_items_per_school, normalize_fallback_stage, run_replay_scenarios,
-        stored_response_order, validate_replay_scenario, ReplayScenario, ReplayScenarioCase,
-        ReplayScenarioStatus, DEFAULT_REPLAY_SCENARIO_PATH,
+        run_replay_scenarios_with_source, stored_response_order, validate_replay_scenario,
+        ReplayScenario, ReplayScenarioCase, ReplayScenarioSource, ReplayScenarioStatus,
+        DEFAULT_REPLAY_SCENARIO_PATH,
     };
     use domain::{ContentKind, FallbackStage, RecommendationItem, RecommendationResult};
 
@@ -1314,6 +1533,104 @@ mod tests {
         assert!(summary.cases[0].checks.iter().any(|check| {
             check.name == "absent_content_kind.school" && check.status.as_str() == "failed"
         }));
+    }
+
+    #[test]
+    fn replay_scenario_applies_profile_pairwise_pack() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scenario_path = temp.path().join("pairwise_pack_scenario.yaml");
+        let pairwise_pack_path = temp.path().join("pairwise_pack.yaml");
+        std::fs::write(
+            &scenario_path,
+            replay_scenario_yaml(
+                "S00_PAIRWISE_PACK",
+                r#"
+  schools:
+    - id: school_a
+      name: School A
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_a
+    - id: school_b
+      name: School B
+      area: Minato
+      prefecture_name: Tokyo
+      school_type: high_school
+      group_id: group_b
+  events: []
+  stations:
+    - id: st_target
+      name: Target
+      line_name: Test Line
+      latitude: 35.6500
+      longitude: 139.7500
+  school_station_links:
+    - school_id: school_a
+      station_id: st_target
+      walking_minutes: 5
+      distance_meters: 400
+      hop_distance: 0
+      line_name: Test Line
+    - school_id: school_b
+      station_id: st_target
+      walking_minutes: 6
+      distance_meters: 500
+      hop_distance: 0
+      line_name: Test Line
+  popularity_snapshots: []
+  user_affinity_snapshots: []
+  area_affinity_snapshots: []
+"#,
+                r#"
+  fallback_stage: strict_station
+  ordered:
+    - "school:school_a"
+    - "school:school_b"
+"#,
+            ),
+        )
+        .expect("write scenario");
+        std::fs::write(
+            &pairwise_pack_path,
+            r#"
+schema_version: 1
+kind: replay_pairwise_pack
+expectations:
+  - scenario_id: S00_PAIRWISE_PACK
+    pairwise:
+      - higher: "school:school_b"
+        lower: "school:school_a"
+        note: external pairwise pack should be executed
+"#,
+        )
+        .expect("write pairwise pack");
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source = ReplayScenarioSource::profile_evaluation(
+            scenario_path.clone(),
+            temp.path().join("profile.yaml"),
+            Some(pairwise_pack_path.clone()),
+        );
+
+        let summary = run_replay_scenarios_with_source(
+            repo_root.join("configs/ranking"),
+            "replay-scenario-test",
+            Some("school-event-jp".to_string()),
+            source,
+        )
+        .expect("scenario summary");
+
+        assert_eq!(summary.profile_id.as_deref(), Some("school-event-jp"));
+        assert_eq!(
+            summary.scenario_source.pairwise_pack,
+            Some(pairwise_pack_path)
+        );
+        assert_eq!(summary.pairwise_total, 1);
+        assert_eq!(summary.blockers, 1);
+        assert!(summary.cases[0]
+            .checks
+            .iter()
+            .any(|check| { check.name == "pairwise.1" && check.status.as_str() == "failed" }));
     }
 
     #[test]

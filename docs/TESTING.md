@@ -14,6 +14,7 @@ cargo run -p cli -- fixtures doctor --path storage/fixtures/minimal
 cargo run -p cli -- fixtures doctor --path storage/fixtures/demo_jp
 cargo run -p crawler -- manifest lint
 cargo run -p cli -- eval golden
+cargo run -p cli -- eval golden --profile-id school-event-jp
 cargo run -p cli -- doctor ranking-config
 cargo run -p cli -- doctor context-coverage
 cargo run -p cli -- doctor storage-compatibility
@@ -218,8 +219,32 @@ and exits non-zero when any blocker fails. Use `--json` when capturing a release
 candidate artifact, and `--allow-blockers` only for report-only investigation.
 Use `--scenario-path`, `--ranking-config-dir`, and `--algorithm-version` for
 explicit local what-if checks without changing environment variables.
+Use `--profile-id <profile_id>` or `PROFILE_ID=<profile_id>` to run the selected
+profile manifest's `evaluation.scenario_pack` instead of the built-in default.
+Use `--profiles-path` with one of those profile selectors when evaluating a
+non-default profile pack root or explicit `profile.yaml` file.
+The summary includes `profile_id`, `scenario_source`, and `scenario_path`; if
+the profile declares `evaluation.pairwise_pack`, that pack is loaded into the
+same deterministic run and reported as `pairwise_pack`. Passing
+`--scenario-path` with a selected profile is an explicit what-if override: it
+keeps profile id and ranking config resolution, but it bypasses the manifest
+scenario and pairwise packs.
 `cargo run -p cli -- replay scenarios` remains supported and uses the same
 runner; its scenario path flag is `--path`.
+
+External pairwise packs use a small YAML contract and attach expectations to
+scenario IDs already present in the selected scenario pack:
+
+```yaml
+schema_version: 1
+kind: replay_pairwise_pack
+expectations:
+  - scenario_id: S02_LINE_INTENT
+    pairwise:
+      - higher: "school:school_yamanote_near"
+        lower: "school:school_yamanote_far"
+        note: closer same-line candidate should sort first
+```
 
 `cargo run -p cli -- doctor ranking-config` is the Quality doctor v2 slice for
 ranking config contract health. It is DB-free and reuses `config lint` loading
