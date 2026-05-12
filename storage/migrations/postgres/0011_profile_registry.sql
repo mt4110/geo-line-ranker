@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS profile_pack_manifest_lineage (
     evaluation_reference_count INTEGER NOT NULL DEFAULT 0 CHECK (evaluation_reference_count >= 0),
     manifest_payload JSONB NOT NULL CHECK (jsonb_typeof(manifest_payload) = 'object'),
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (profile_id, id),
     UNIQUE (profile_id, manifest_checksum_sha256)
 );
 
@@ -92,7 +93,7 @@ CREATE TABLE IF NOT EXISTS profile_compatibility_status (
 CREATE TABLE IF NOT EXISTS evaluation_runs (
     id BIGSERIAL PRIMARY KEY,
     profile_id TEXT REFERENCES profile_registry (profile_id) ON DELETE SET NULL,
-    profile_manifest_lineage_id BIGINT REFERENCES profile_pack_manifest_lineage (id) ON DELETE SET NULL,
+    profile_manifest_lineage_id BIGINT,
     run_kind TEXT NOT NULL CHECK (run_kind IN ('golden')),
     scenario_source_kind TEXT NOT NULL CHECK (btrim(scenario_source_kind) <> ''),
     scenario_path TEXT NOT NULL CHECK (btrim(scenario_path) <> ''),
@@ -110,7 +111,10 @@ CREATE TABLE IF NOT EXISTS evaluation_runs (
     CHECK (status <> 'blocked' OR (blocked > 0 OR blockers > 0)),
     summary_payload JSONB NOT NULL CHECK (jsonb_typeof(summary_payload) = 'object'),
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (profile_id, profile_manifest_lineage_id)
+        REFERENCES profile_pack_manifest_lineage (profile_id, id)
+        ON DELETE SET NULL (profile_manifest_lineage_id)
 );
 
 CREATE INDEX IF NOT EXISTS evaluation_runs_profile_created_idx

@@ -45,34 +45,28 @@ async fn profile_registry_persists_manifest_status_and_evaluation_runs() -> anyh
             })
             .await?;
         let evaluation_run_id = repository
-            .record_evaluation_run(&EvaluationRunRecord {
-                profile_id: Some(manifest.profile_id.clone()),
-                profile_manifest_lineage_id: Some(lineage_id),
-                run_kind: EvaluationRunKind::Golden,
-                scenario_source_kind: "profile_evaluation".to_string(),
-                scenario_path: "configs/evaluation/scenarios".to_string(),
-                pairwise_pack_path: None,
-                algorithm_version: "test-algorithm".to_string(),
-                status: EvaluationRunStatus::Passed,
-                scenarios: 1,
-                passed: 1,
-                blocked: 0,
-                blockers: 0,
-                warnings: 0,
-                summary_payload: json!({ "scenarios": 1, "passed": 1 }),
-                cases: vec![EvaluationRunCaseRecord {
-                    case_id: "S01".to_string(),
-                    title: "Scenario".to_string(),
-                    path: "S01.yaml".to_string(),
-                    status: EvaluationRunCaseStatus::Passed,
-                    expected_fallback_stage: "strict_station".to_string(),
-                    actual_fallback_stage: Some("strict_station".to_string()),
-                    expected_order: vec!["school:school_a".to_string()],
-                    actual_order: vec!["school:school_a".to_string()],
-                    checks_payload: json!([]),
-                }],
-            })
+            .record_evaluation_run(&evaluation_run_record(&manifest.profile_id, lineage_id))
             .await?;
+        let mut other_manifest = profile_manifest_record();
+        other_manifest.profile_id = "local-discovery-generic".to_string();
+        other_manifest.display_name = "Local Discovery Generic".to_string();
+        other_manifest.manifest_path =
+            "configs/profiles/local-discovery-generic/profile.yaml".to_string();
+        other_manifest.manifest_checksum_sha256 =
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string();
+        other_manifest.manifest_payload = json!({ "profile_id": "local-discovery-generic" });
+        other_manifest.reason_catalog_path =
+            "configs/profiles/local-discovery-generic/reasons.yaml".to_string();
+        let other_lineage_id = repository.upsert_profile_manifest(&other_manifest).await?;
+        let mismatched_run = evaluation_run_record(&manifest.profile_id, other_lineage_id);
+
+        assert!(
+            repository
+                .record_evaluation_run(&mismatched_run)
+                .await
+                .is_err(),
+            "evaluation run lineage must belong to the same profile_id"
+        );
 
         let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
         tokio::spawn(async move {
@@ -128,6 +122,36 @@ async fn profile_registry_persists_manifest_status_and_evaluation_runs() -> anyh
 
     drop_database(&admin_database_url, &database_name).await?;
     test_result
+}
+
+fn evaluation_run_record(profile_id: &str, lineage_id: i64) -> EvaluationRunRecord {
+    EvaluationRunRecord {
+        profile_id: Some(profile_id.to_string()),
+        profile_manifest_lineage_id: Some(lineage_id),
+        run_kind: EvaluationRunKind::Golden,
+        scenario_source_kind: "profile_evaluation".to_string(),
+        scenario_path: "configs/evaluation/scenarios".to_string(),
+        pairwise_pack_path: None,
+        algorithm_version: "test-algorithm".to_string(),
+        status: EvaluationRunStatus::Passed,
+        scenarios: 1,
+        passed: 1,
+        blocked: 0,
+        blockers: 0,
+        warnings: 0,
+        summary_payload: json!({ "scenarios": 1, "passed": 1 }),
+        cases: vec![EvaluationRunCaseRecord {
+            case_id: "S01".to_string(),
+            title: "Scenario".to_string(),
+            path: "S01.yaml".to_string(),
+            status: EvaluationRunCaseStatus::Passed,
+            expected_fallback_stage: "strict_station".to_string(),
+            actual_fallback_stage: Some("strict_station".to_string()),
+            expected_order: vec!["school:school_a".to_string()],
+            actual_order: vec!["school:school_a".to_string()],
+            checks_payload: json!([]),
+        }],
+    }
 }
 
 fn profile_manifest_record() -> ProfileManifestRecord {
