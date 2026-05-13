@@ -6,6 +6,13 @@ use domain::{RankingDataset, RankingQuery, SchoolStationLink, UserEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod graph;
+
+pub use graph::{
+    AreaClusterDiagnostic, GeoGraph, GeoGraphEdge, InterchangeDiagnostic, LineGraph, LineGraphEdge,
+    StationHopDiagnostic,
+};
+
 const CANDIDATE_RETRIEVAL_ORDERING_CONTRACT: [&str; 5] = [
     "direct_station",
     "distance_meters",
@@ -592,6 +599,14 @@ pub trait CandidateProjectionSync: Send + Sync {
 pub trait GraphAdjacencyRepository: Send + Sync {
     async fn load_area_adjacencies(&self, area_id: &str) -> Result<Vec<AreaAdjacency>>;
     async fn load_line_adjacencies(&self, line_id: &str) -> Result<Vec<LineAdjacency>>;
+
+    async fn load_geo_graph(&self, area_id: &str) -> Result<GeoGraph> {
+        GeoGraph::from_area_adjacencies(area_id, self.load_area_adjacencies(area_id).await?)
+    }
+
+    async fn load_line_graph(&self, line_id: &str) -> Result<LineGraph> {
+        LineGraph::from_line_adjacencies(line_id, self.load_line_adjacencies(line_id).await?)
+    }
 }
 
 #[async_trait]
@@ -901,6 +916,119 @@ mod tests {
         assert!(decoded.requires_transfer);
         assert_eq!(decoded.attributes, serde_json::json!({}));
         assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn graph_components_normalize_reference_adjacencies_for_diagnostic_reads() {
+        let mut first_area = area_adjacency();
+        first_area.to_area_id = "area_tokyo_chuo".to_string();
+        first_area.distance_meters = Some(800.0);
+
+        let second_area = area_adjacency();
+
+        let mut third_area = area_adjacency();
+        third_area.to_area_id = "area_tokyo_ota".to_string();
+        third_area.adjacency_kind = "prefecture_neighbor".to_string();
+        third_area.distance_meters = None;
+        third_area.area_cluster_id = None;
+
+        let geo_graph = GeoGraph::from_area_adjacencies(
+            "area_tokyo_minato",
+            vec![third_area, second_area, first_area],
+        )
+        .expect("geo graph component");
+
+        assert_eq!(
+            geo_graph
+                .edges()
+                .iter()
+                .map(|edge| edge.to_area_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["area_tokyo_chuo", "area_tokyo_shinagawa", "area_tokyo_ota"]
+        );
+        assert_eq!(
+            geo_graph.adjacent_area_ids(),
+            vec![
+                "area_tokyo_chuo".to_string(),
+                "area_tokyo_ota".to_string(),
+                "area_tokyo_shinagawa".to_string()
+            ]
+        );
+        assert_eq!(
+            geo_graph.area_cluster_diagnostics(),
+            vec![AreaClusterDiagnostic {
+                area_cluster_id: "cluster_tokyo_bay".to_string(),
+                observed_area_ids: vec![
+                    "area_tokyo_chuo".to_string(),
+                    "area_tokyo_minato".to_string(),
+                    "area_tokyo_shinagawa".to_string()
+                ],
+            }]
+        );
+
+        let first_line = line_adjacency();
+
+        let mut second_line = line_adjacency();
+        second_line.to_line_id = "line_asakusa".to_string();
+        second_line.station_hop_count = Some(1);
+        second_line.requires_transfer = false;
+
+        let mut third_line = line_adjacency();
+        third_line.to_line_id = "line_yamanote_branch".to_string();
+        third_line.adjacency_kind = "operator_relation".to_string();
+        third_line.interchange_station_id = None;
+        third_line.station_hop_count = None;
+        third_line.requires_transfer = false;
+
+        let line_graph = LineGraph::from_line_adjacencies(
+            "line_yamanote",
+            vec![third_line, second_line, first_line],
+        )
+        .expect("line graph component");
+
+        assert_eq!(
+            line_graph
+                .edges()
+                .iter()
+                .map(|edge| edge.to_line_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["line_keihin_tohoku", "line_asakusa", "line_yamanote_branch"]
+        );
+        assert_eq!(
+            line_graph
+                .station_hop_diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.station_hop_count)
+                .collect::<Vec<_>>(),
+            vec![Some(0), Some(1), None]
+        );
+        assert_eq!(
+            line_graph.interchange_diagnostics(),
+            vec![InterchangeDiagnostic {
+                interchange_station_id: "st_shinagawa".to_string(),
+                from_line_id: "line_yamanote".to_string(),
+                to_line_ids: vec!["line_asakusa".to_string(), "line_keihin_tohoku".to_string()],
+                adjacency_kinds: vec!["interchange".to_string()],
+                requires_transfer: true,
+                minimum_station_hop_count: Some(0),
+            }]
+        );
+    }
+
+    #[test]
+    fn graph_components_reject_edges_loaded_for_different_origin() {
+        let area_error =
+            GeoGraph::from_area_adjacencies("area_tokyo_other", vec![area_adjacency()])
+                .expect_err("area graph origin mismatch should fail");
+        assert!(area_error
+            .to_string()
+            .contains("geo graph edge must start from origin_area_id"));
+
+        let line_error = LineGraph::from_line_adjacencies("line_other", vec![line_adjacency()])
+            .expect_err("line graph origin mismatch should fail");
+        assert!(line_error
+            .to_string()
+            .contains("line graph edge must start from origin_line_id"));
     }
 
     #[test]

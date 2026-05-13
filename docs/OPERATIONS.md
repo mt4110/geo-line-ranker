@@ -25,6 +25,12 @@ dynamic connector loading. Current recommendation behavior remains driven by
 the existing candidate retrieval and ranking path until a reviewed graph-aware
 candidate plan explicitly consumes these reference reads.
 
+The storage crate also exposes `GeoGraph` and `LineGraph` read models built
+from these rows. They are diagnostic/reference components only: use them to
+inspect deterministic area edge ordering, observed area cluster membership,
+station hop metadata, and interchange groups without changing candidate
+expansion or score math.
+
 ## Session context summaries
 
 PostgreSQL owns `session_context_summaries` as diagnostic/reference data for
