@@ -18,6 +18,9 @@
   `GeoGraph` / `LineGraph` expansion. They are read through the storage
   contract and do not change ranking weights, crawler behavior, or dynamic
   connector loading by themselves.
+- Session context summaries are PostgreSQL diagnostic/reference data keyed by a
+  hashed session identifier. They are read through the storage contract and do
+  not change ranking, crawler, or connector runtime behavior by themselves.
 
 ## Runtime view
 
@@ -139,7 +142,7 @@ The ranker may return fewer than the requested limit when the hard caps would ot
   Mixed school/event scoring, explanation synthesis, and diversity selection.
 - `crates/storage`
   Storage contracts for recommendation reads/writes, traces, profile registry
-  records, and reference graph adjacency reads.
+  records, reference graph adjacency reads, and session context summary reads.
 - `crates/connectors/generic-csv`
   Checksum staging plus direct CSV staging for operational event import.
 - `crates/connectors/generic-http`

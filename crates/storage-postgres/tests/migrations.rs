@@ -1,7 +1,9 @@
 use std::{fs, path::Path};
 
 use serde_json::json;
-use storage::{GraphAdjacencyRepository, RecommendationRepository};
+use storage::{
+    GraphAdjacencyRepository, RecommendationRepository, SessionContextSummaryRepository,
+};
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
 use tokio_postgres::{error::SqlState, NoTls};
 mod common;
@@ -257,6 +259,203 @@ async fn graph_adjacency_tables_support_reference_reads() -> anyhow::Result<()> 
             .await
             .expect_err("blank line_id should be rejected");
         assert!(error.to_string().contains("line_id must not be empty"));
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn session_context_summary_table_supports_reference_reads() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_session_context").await
+    else {
+        eprintln!(
+            "skipping storage-postgres session context summary test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client
+            .batch_execute(
+                "INSERT INTO session_context_summaries (
+                    session_id_hash,
+                    context_source,
+                    confidence,
+                    privacy_level,
+                    primary_kind,
+                    evidence_count,
+                    search_execute_count,
+                    warning_count,
+                    area_id,
+                    line_id,
+                    station_id,
+                    summary_payload,
+                    first_seen_at,
+                    last_seen_at,
+                    updated_at
+                 )
+                 VALUES
+                    (
+                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                        'recent_search_context',
+                        0.75,
+                        'coarse_area',
+                        'search_execute',
+                        2,
+                        1,
+                        0,
+                        'area_tokyo_minato',
+                        'line_yamanote',
+                        'st_tamachi',
+                        '{\"evidence_age_bucket\": \"recent\"}'::jsonb,
+                        TIMESTAMPTZ '2026-05-13 00:00:00+00',
+                        TIMESTAMPTZ '2026-05-13 00:05:00+00',
+                        TIMESTAMPTZ '2026-05-13 00:05:01+00'
+                    ),
+                    (
+                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                        'request_area',
+                        0.90,
+                        'coarse_area',
+                        'request_area',
+                        1,
+                        0,
+                        0,
+                        'area_tokyo_shinagawa',
+                        NULL,
+                        NULL,
+                        '{\"evidence_age_bucket\": \"fresh\"}'::jsonb,
+                        TIMESTAMPTZ '2026-05-13 00:10:00+00',
+                        TIMESTAMPTZ '2026-05-13 00:12:00+00',
+                        TIMESTAMPTZ '2026-05-13 00:12:01+00'
+                    );",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        repo.ready_check().await?;
+
+        let summary = repo
+            .load_session_context_summary(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .await?
+            .expect("inserted session context summary");
+        assert_eq!(summary.context_source, "recent_search_context");
+        assert_eq!(summary.primary_kind, "search_execute");
+        assert_eq!(summary.search_execute_count, 1);
+        assert_eq!(summary.station_id.as_deref(), Some("st_tamachi"));
+        assert_eq!(
+            summary.summary_payload,
+            json!({ "evidence_age_bucket": "recent" })
+        );
+        assert_eq!(summary.last_seen_at, "2026-05-13T00:05:00.000000Z");
+
+        let recent = repo.list_recent_session_context_summaries(1).await?;
+        assert_eq!(recent.len(), 1);
+        assert_eq!(
+            recent[0].session_id_hash,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+
+        let missing = repo
+            .load_session_context_summary(
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            )
+            .await?;
+        assert!(missing.is_none());
+
+        let error = repo
+            .load_session_context_summary(" ")
+            .await
+            .expect_err("blank session id hash should be rejected");
+        assert!(error
+            .to_string()
+            .contains("session_id_hash must not be empty"));
+
+        let error = repo
+            .load_session_context_summary("not-a-hash")
+            .await
+            .expect_err("malformed session id hash should be rejected");
+        assert!(error
+            .to_string()
+            .contains("session_id_hash must be a 64-character hex digest"));
+
+        let error = client
+            .execute(
+                "INSERT INTO session_context_summaries (
+                    session_id_hash,
+                    context_source,
+                    confidence,
+                    privacy_level,
+                    primary_kind,
+                    summary_payload,
+                    first_seen_at,
+                    last_seen_at
+                 )
+                 VALUES (
+                    'not-a-hash',
+                    'request_area',
+                    0.50,
+                    'coarse_area',
+                    'request_area',
+                    '{}'::jsonb,
+                    NOW(),
+                    NOW()
+                 )",
+                &[],
+            )
+            .await
+            .expect_err("raw or malformed session ids should be rejected");
+        let db_error = error
+            .as_db_error()
+            .unwrap_or_else(|| panic!("unexpected non-DB error for malformed session id: {error}"));
+        assert_eq!(db_error.code(), &SqlState::CHECK_VIOLATION);
+
+        for invalid_confidence in ["'Infinity'::double precision", "'NaN'::double precision"] {
+            let statement = format!(
+                "INSERT INTO session_context_summaries (
+                    session_id_hash,
+                    context_source,
+                    confidence,
+                    privacy_level,
+                    primary_kind,
+                    summary_payload,
+                    first_seen_at,
+                    last_seen_at
+                 )
+                 VALUES (
+                    'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                    'request_area',
+                    {invalid_confidence},
+                    'coarse_area',
+                    'request_area',
+                    '{{}}'::jsonb,
+                    NOW(),
+                    NOW()
+                 )"
+            );
+            let error = client
+                .execute(statement.as_str(), &[])
+                .await
+                .expect_err("non-finite session context confidence should be rejected");
+            let db_error = error.as_db_error().unwrap_or_else(|| {
+                panic!("unexpected non-DB error for {invalid_confidence}: {error}")
+            });
+            assert_eq!(db_error.code(), &SqlState::CHECK_VIOLATION);
+        }
 
         Ok(())
     }

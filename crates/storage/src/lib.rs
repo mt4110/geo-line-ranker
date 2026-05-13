@@ -208,6 +208,47 @@ impl LineAdjacency {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionContextSummary {
+    pub session_id_hash: String,
+    pub context_source: String,
+    pub confidence: f64,
+    pub privacy_level: String,
+    pub primary_kind: String,
+    pub evidence_count: i64,
+    pub search_execute_count: i64,
+    pub warning_count: i64,
+    pub area_id: Option<String>,
+    pub line_id: Option<String>,
+    pub station_id: Option<String>,
+    #[serde(default = "default_json_object")]
+    pub summary_payload: Value,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+    pub updated_at: String,
+}
+
+impl SessionContextSummary {
+    pub fn validate(&self) -> Result<()> {
+        ensure_sha256_hex("session_id_hash", &self.session_id_hash)?;
+        ensure_non_empty("context_source", &self.context_source)?;
+        ensure_non_negative_f64("confidence", self.confidence)?;
+        ensure_non_empty("privacy_level", &self.privacy_level)?;
+        ensure_non_empty("primary_kind", &self.primary_kind)?;
+        ensure_non_negative_i64("evidence_count", self.evidence_count)?;
+        ensure_non_negative_i64("search_execute_count", self.search_execute_count)?;
+        ensure_non_negative_i64("warning_count", self.warning_count)?;
+        ensure_optional_non_empty("area_id", self.area_id.as_deref())?;
+        ensure_optional_non_empty("line_id", self.line_id.as_deref())?;
+        ensure_optional_non_empty("station_id", self.station_id.as_deref())?;
+        ensure_json_object("summary_payload", &self.summary_payload)?;
+        ensure_non_empty("first_seen_at", &self.first_seen_at)?;
+        ensure_non_empty("last_seen_at", &self.last_seen_at)?;
+        ensure_non_empty("updated_at", &self.updated_at)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ProfileManifestRecord {
     pub profile_id: String,
@@ -554,6 +595,18 @@ pub trait GraphAdjacencyRepository: Send + Sync {
 }
 
 #[async_trait]
+pub trait SessionContextSummaryRepository: Send + Sync {
+    async fn load_session_context_summary(
+        &self,
+        session_id_hash: &str,
+    ) -> Result<Option<SessionContextSummary>>;
+    async fn list_recent_session_context_summaries(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<SessionContextSummary>>;
+}
+
+#[async_trait]
 pub trait RecommendationRepository: Send + Sync {
     async fn health_check(&self) -> Result<()>;
     async fn ready_check(&self) -> Result<()>;
@@ -592,6 +645,14 @@ pub trait ProfileRegistryRepository: Send + Sync {
 
 fn ensure_non_empty(field: &str, value: &str) -> Result<()> {
     anyhow::ensure!(!value.trim().is_empty(), "{field} must not be empty");
+    Ok(())
+}
+
+fn ensure_sha256_hex(field: &str, value: &str) -> Result<()> {
+    anyhow::ensure!(
+        value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit()),
+        "{field} must be a 64-character hex digest"
+    );
     Ok(())
 }
 
@@ -843,6 +904,38 @@ mod tests {
     }
 
     #[test]
+    fn session_context_summary_validation_keeps_diagnostic_shape_tight() {
+        let mut summary = session_context_summary();
+        assert!(summary.validate().is_ok());
+
+        summary.session_id_hash = "not-a-hash".to_string();
+        let error = summary
+            .validate()
+            .expect_err("session id hash should be a digest");
+        assert!(error
+            .to_string()
+            .contains("session_id_hash must be a 64-character hex digest"));
+
+        let mut summary = session_context_summary();
+        summary.search_execute_count = -1;
+        let error = summary
+            .validate()
+            .expect_err("negative search execute count should fail");
+        assert!(error
+            .to_string()
+            .contains("search_execute_count must not be negative"));
+
+        let mut summary = session_context_summary();
+        summary.summary_payload = serde_json::json!([]);
+        let error = summary
+            .validate()
+            .expect_err("summary payload must be an object");
+        assert!(error
+            .to_string()
+            .contains("summary_payload must be a JSON object"));
+    }
+
+    #[test]
     fn evaluation_run_record_validation_requires_complete_case_counts() {
         let mut run = evaluation_run_record();
         run.scenarios = 2;
@@ -942,6 +1035,27 @@ mod tests {
             source_id: Some("fixture".to_string()),
             source_version: Some("2026-05-13".to_string()),
             attributes: serde_json::json!({ "platform_hint": "same_station" }),
+        }
+    }
+
+    fn session_context_summary() -> SessionContextSummary {
+        SessionContextSummary {
+            session_id_hash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            context_source: "recent_search_context".to_string(),
+            confidence: 0.75,
+            privacy_level: "coarse_area".to_string(),
+            primary_kind: "search_execute".to_string(),
+            evidence_count: 2,
+            search_execute_count: 1,
+            warning_count: 0,
+            area_id: Some("area_tokyo_minato".to_string()),
+            line_id: Some("line_yamanote".to_string()),
+            station_id: Some("st_tamachi".to_string()),
+            summary_payload: serde_json::json!({ "evidence_age_bucket": "recent" }),
+            first_seen_at: "2026-05-13T00:00:00.000000Z".to_string(),
+            last_seen_at: "2026-05-13T00:05:00.000000Z".to_string(),
+            updated_at: "2026-05-13T00:05:00.000000Z".to_string(),
         }
     }
 
