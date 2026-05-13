@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use domain::{RankingDataset, RankingQuery, SchoolStationLink, UserEvent};
@@ -18,6 +20,7 @@ const CANDIDATE_RETRIEVAL_OPENSEARCH_SORT_CONTRACT: [(&str, &str); 5] = [
     ("school_id", "asc"),
     ("station_id", "asc"),
 ];
+const CANDIDATE_PLAN_STAGE_STATUSES: [&str; 3] = ["selected", "insufficient", "skipped"];
 
 pub fn candidate_retrieval_ordering_contract() -> &'static [&'static str] {
     &CANDIDATE_RETRIEVAL_ORDERING_CONTRACT
@@ -97,8 +100,14 @@ impl RecommendationTraceCandidatePlanTrace {
         ensure_non_empty("selected_stage", &self.selected_stage)?;
         ensure_non_empty("stop_reason", &self.stop_reason)?;
         ensure_json_object("plan_payload", &self.plan_payload)?;
+        let mut stage_orders = BTreeSet::new();
         for stage in &self.stages {
             stage.validate()?;
+            anyhow::ensure!(
+                stage_orders.insert(stage.stage_order),
+                "stage_order must be unique within candidate plan trace: {}",
+                stage.stage_order
+            );
         }
         Ok(())
     }
@@ -122,6 +131,10 @@ impl RecommendationTraceCandidatePlanStage {
         ensure_non_negative_i64("candidate_count", self.candidate_count)?;
         ensure_non_negative_i64("required_min_candidates", self.required_min_candidates)?;
         ensure_non_empty("status", &self.status)?;
+        anyhow::ensure!(
+            CANDIDATE_PLAN_STAGE_STATUSES.contains(&self.status.as_str()),
+            "status must be one of selected, insufficient, skipped"
+        );
         ensure_non_empty("reason_code", &self.reason_code)?;
         ensure_json_object("stage_payload", &self.stage_payload)?;
         Ok(())
@@ -656,6 +669,31 @@ mod tests {
         plan.stages[0].status = " ".to_string();
         let error = plan.validate().expect_err("blank stage status should fail");
         assert!(error.to_string().contains("status must not be empty"));
+
+        plan.stages[0].status = "deferred".to_string();
+        let error = plan
+            .validate()
+            .expect_err("unexpected stage status should fail");
+        assert!(error
+            .to_string()
+            .contains("status must be one of selected, insufficient, skipped"));
+
+        plan.stages[0].status = "selected".to_string();
+        plan.stages.push(RecommendationTraceCandidatePlanStage {
+            stage_order: 0,
+            stage: "same_station".to_string(),
+            candidate_count: 1,
+            required_min_candidates: 3,
+            status: "insufficient".to_string(),
+            reason_code: "insufficient_scoped_candidates".to_string(),
+            stage_payload: serde_json::json!({ "stage": "same_station" }),
+        });
+        let error = plan
+            .validate()
+            .expect_err("duplicate stage order should fail");
+        assert!(error
+            .to_string()
+            .contains("stage_order must be unique within candidate plan trace: 0"));
     }
 
     #[test]

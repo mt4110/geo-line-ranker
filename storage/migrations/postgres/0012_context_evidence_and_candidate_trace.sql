@@ -46,6 +46,3 @@ CREATE TABLE IF NOT EXISTS recommendation_trace_candidate_plan_stages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (recommendation_trace_id, stage_order)
 );
-
-CREATE INDEX IF NOT EXISTS recommendation_trace_candidate_plan_stages_lookup_idx
-    ON recommendation_trace_candidate_plan_stages (recommendation_trace_id, stage_order);

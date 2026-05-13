@@ -38,7 +38,7 @@ use uuid::Uuid;
 
 use crate::pool::{build_pool_config, load_postgres_pool_max_size};
 
-const REQUIRED_READY_TABLES: [&str; 22] = [
+const REQUIRED_READY_TABLES: [&str; 19] = [
     "areas",
     "context_resolution_traces",
     "evaluation_run_cases",
@@ -56,9 +56,6 @@ const REQUIRED_READY_TABLES: [&str; 22] = [
     "profile_compatibility_status",
     "profile_pack_manifest_lineage",
     "profile_registry",
-    "recommendation_trace_candidate_plan_stages",
-    "recommendation_trace_candidate_plans",
-    "recommendation_trace_context_evidence",
     "recommendation_traces",
     "job_queue",
 ];
@@ -1987,6 +1984,14 @@ fn is_undefined_table_error(error: &tokio_postgres::Error) -> bool {
         .is_some_and(|code| *code == tokio_postgres::error::SqlState::UNDEFINED_TABLE)
 }
 
+fn error_chain_contains_undefined_table(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<tokio_postgres::Error>()
+            .is_some_and(is_undefined_table_error)
+    })
+}
+
 async fn insert_trace_context_evidence_summary(
     client: &impl GenericClient,
     trace_id: i64,
@@ -2990,11 +2995,18 @@ impl RecommendationRepository for PgRepository {
         let trace_id = row.get::<_, i64>("id");
 
         if let Err(error) = record_trace_detail_rows(&mut client, trace_id, trace).await {
-            tracing::warn!(
-                trace_id,
-                %error,
-                "failed to persist recommendation trace detail rows"
-            );
+            if error_chain_contains_undefined_table(&error) {
+                tracing::debug!(
+                    trace_id,
+                    "skipping recommendation trace detail rows because trace detail tables are unavailable"
+                );
+            } else {
+                tracing::warn!(
+                    trace_id,
+                    %error,
+                    "failed to persist recommendation trace detail rows"
+                );
+            }
         }
         Ok(())
     }
