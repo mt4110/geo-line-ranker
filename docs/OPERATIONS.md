@@ -12,6 +12,19 @@
 - Redis: optional cache for recommendation responses
 - OpenSearch: optional full-mode candidate projection and retrieval
 
+## Graph adjacency reference data
+
+PostgreSQL owns `area_adjacencies` and `line_adjacencies` as reference tables
+for graph expansion and audit queries. They describe directed area-to-area and
+line-to-line edges with source metadata and JSON attributes. A bidirectional
+neighbor or interchange should be materialized as two directed rows when both
+directions are valid.
+
+These tables are not cache state, ranking weights, crawler configuration, or
+dynamic connector loading. Current recommendation behavior remains driven by
+the existing candidate retrieval and ranking path until a reviewed graph-aware
+candidate plan explicitly consumes these reference reads.
+
 ## Public MVP profile
 
 The initial public-MVP operating profile is intentionally narrow:

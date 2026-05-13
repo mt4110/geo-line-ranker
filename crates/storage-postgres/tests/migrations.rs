@@ -1,6 +1,8 @@
 use std::{fs, path::Path};
 
-use storage_postgres::{run_migrations, seed_fixture};
+use serde_json::json;
+use storage::{GraphAdjacencyRepository, RecommendationRepository};
+use storage_postgres::{run_migrations, seed_fixture, PgRepository};
 use tokio_postgres::NoTls;
 mod common;
 
@@ -90,6 +92,146 @@ async fn run_migrations_is_safe_when_called_concurrently() -> anyhow::Result<()>
             .query_one("SELECT COUNT(*) AS count FROM schema_migrations", &[])
             .await?;
         assert_eq!(row.get::<_, i64>("count"), expected_count);
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn graph_adjacency_tables_support_reference_reads() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_graph_adjacencies").await
+    else {
+        eprintln!(
+            "skipping storage-postgres graph adjacency test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client
+            .batch_execute(
+                "INSERT INTO areas (area_id, country_code, prefecture_name, city_name, area_level)
+                 VALUES
+                    ('area_tokyo_minato', 'JP', 'Tokyo', 'Minato', 'city'),
+                    ('area_tokyo_shinagawa', 'JP', 'Tokyo', 'Shinagawa', 'city');
+
+                 INSERT INTO lines (line_id, line_name, country_code, source_id, source_version)
+                 VALUES
+                    ('line_yamanote', 'JR Yamanote Line', 'JP', 'fixture', '2026-05-13'),
+                    ('line_keihin_tohoku', 'JR Keihin-Tohoku Line', 'JP', 'fixture', '2026-05-13');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id)
+                 VALUES
+                    ('st_shinagawa_yamanote', 'Shinagawa', 'JR Yamanote Line', 35.6285, 139.7388, 'line_yamanote');
+
+                 INSERT INTO area_adjacencies (
+                    from_area_id,
+                    to_area_id,
+                    adjacency_kind,
+                    distance_meters,
+                    area_cluster_id,
+                    source_id,
+                    source_version,
+                    attributes
+                 )
+                 VALUES (
+                    'area_tokyo_minato',
+                    'area_tokyo_shinagawa',
+                    'city_neighbor',
+                    1250.0,
+                    'cluster_tokyo_bay',
+                    'fixture',
+                    '2026-05-13',
+                    '{\"rank\": 1}'::jsonb
+                 );
+
+                 INSERT INTO line_adjacencies (
+                    from_line_id,
+                    to_line_id,
+                    adjacency_kind,
+                    interchange_station_id,
+                    station_hop_count,
+                    requires_transfer,
+                    source_id,
+                    source_version,
+                    attributes
+                 )
+                 VALUES (
+                    'line_yamanote',
+                    'line_keihin_tohoku',
+                    'interchange',
+                    'st_shinagawa_yamanote',
+                    0,
+                    TRUE,
+                    'fixture',
+                    '2026-05-13',
+                    '{\"interchange_name\": \"Shinagawa\"}'::jsonb
+                 );",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        repo.ready_check().await?;
+
+        let area_edges = repo.load_area_adjacencies("area_tokyo_minato").await?;
+        assert_eq!(area_edges.len(), 1);
+        assert_eq!(area_edges[0].to_area_id, "area_tokyo_shinagawa");
+        assert_eq!(area_edges[0].adjacency_kind, "city_neighbor");
+        assert_eq!(
+            area_edges[0].area_cluster_id.as_deref(),
+            Some("cluster_tokyo_bay")
+        );
+        assert_eq!(area_edges[0].attributes, json!({ "rank": 1 }));
+
+        let line_edges = repo.load_line_adjacencies("line_yamanote").await?;
+        assert_eq!(line_edges.len(), 1);
+        assert_eq!(line_edges[0].to_line_id, "line_keihin_tohoku");
+        assert_eq!(line_edges[0].adjacency_kind, "interchange");
+        assert_eq!(
+            line_edges[0].interchange_station_id.as_deref(),
+            Some("st_shinagawa_yamanote")
+        );
+        assert!(line_edges[0].requires_transfer);
+        assert_eq!(
+            line_edges[0].attributes,
+            json!({ "interchange_name": "Shinagawa" })
+        );
+
+        client
+            .execute(
+                "DELETE FROM stations WHERE id = 'st_shinagawa_yamanote'",
+                &[],
+            )
+            .await?;
+        assert!(
+            repo.load_line_adjacencies("line_yamanote")
+                .await?
+                .is_empty()
+        );
+
+        let error = repo
+            .load_area_adjacencies(" ")
+            .await
+            .expect_err("blank area_id should be rejected");
+        assert!(error.to_string().contains("area_id must not be empty"));
+
+        let error = repo
+            .load_line_adjacencies(" ")
+            .await
+            .expect_err("blank line_id should be rejected");
+        assert!(error.to_string().contains("line_id must not be empty"));
 
         Ok(())
     }

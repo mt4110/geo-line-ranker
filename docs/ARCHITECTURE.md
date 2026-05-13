@@ -14,6 +14,10 @@
 - Operational event CSV is staged under `.storage/raw/` and imported idempotently into PostgreSQL.
 - Crawl fetches stage raw HTML under `.storage/raw/`, keep parser choice in a registry, and write fetch / parse / dedupe audit tables in PostgreSQL.
 - `search_execute` now feeds popularity and area snapshot weights through `target_station_id` to station-link expansion, with calibration owned by `configs/ranking/tracking.default.yaml`.
+- Area and line adjacency tables are PostgreSQL reference data for future
+  `GeoGraph` / `LineGraph` expansion. They are read through the storage
+  contract and do not change ranking weights, crawler behavior, or dynamic
+  connector loading by themselves.
 
 ## Runtime view
 
@@ -133,6 +137,9 @@ The ranker may return fewer than the requested limit when the hard caps would ot
   Placement profile loading, strict config parsing, and startup validation.
 - `crates/ranking`
   Mixed school/event scoring, explanation synthesis, and diversity selection.
+- `crates/storage`
+  Storage contracts for recommendation reads/writes, traces, profile registry
+  records, and reference graph adjacency reads.
 - `crates/connectors/generic-csv`
   Checksum staging plus direct CSV staging for operational event import.
 - `crates/connectors/generic-http`

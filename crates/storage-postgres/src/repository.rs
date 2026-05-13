@@ -26,11 +26,11 @@ use serde::{de, Deserialize, Deserializer};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use storage::{
-    ClaimedJob, EvaluationRunRecord, JobType, NewJob, ProfileCompatibilityStatusRecord,
-    ProfileManifestRecord, ProfileRegistryRepository, RecommendationRepository,
-    RecommendationTrace, RecommendationTraceCandidatePlanStage,
-    RecommendationTraceCandidatePlanTrace, RecommendationTraceContextEvidenceSummary,
-    SnapshotRefreshStats, SnapshotTuning,
+    AreaAdjacency, ClaimedJob, EvaluationRunRecord, GraphAdjacencyRepository, JobType,
+    LineAdjacency, NewJob, ProfileCompatibilityStatusRecord, ProfileManifestRecord,
+    ProfileRegistryRepository, RecommendationRepository, RecommendationTrace,
+    RecommendationTraceCandidatePlanStage, RecommendationTraceCandidatePlanTrace,
+    RecommendationTraceContextEvidenceSummary, SnapshotRefreshStats, SnapshotTuning,
 };
 use tokio::sync::OnceCell;
 use tokio_postgres::Row;
@@ -38,11 +38,13 @@ use uuid::Uuid;
 
 use crate::pool::{build_pool_config, load_postgres_pool_max_size};
 
-const REQUIRED_READY_TABLES: [&str; 19] = [
+const REQUIRED_READY_TABLES: [&str; 21] = [
+    "area_adjacencies",
     "areas",
     "context_resolution_traces",
     "evaluation_run_cases",
     "evaluation_runs",
+    "line_adjacencies",
     "lines",
     "schools",
     "events",
@@ -2297,6 +2299,37 @@ fn station_from_row(row: Row) -> Station {
     }
 }
 
+fn area_adjacency_from_row(row: Row) -> Result<AreaAdjacency> {
+    let adjacency = AreaAdjacency {
+        from_area_id: row.get("from_area_id"),
+        to_area_id: row.get("to_area_id"),
+        adjacency_kind: row.get("adjacency_kind"),
+        distance_meters: row.get("distance_meters"),
+        area_cluster_id: row.get("area_cluster_id"),
+        source_id: row.get("source_id"),
+        source_version: row.get("source_version"),
+        attributes: row.get("attributes"),
+    };
+    adjacency.validate()?;
+    Ok(adjacency)
+}
+
+fn line_adjacency_from_row(row: Row) -> Result<LineAdjacency> {
+    let adjacency = LineAdjacency {
+        from_line_id: row.get("from_line_id"),
+        to_line_id: row.get("to_line_id"),
+        adjacency_kind: row.get("adjacency_kind"),
+        interchange_station_id: row.get("interchange_station_id"),
+        station_hop_count: row.get("station_hop_count"),
+        requires_transfer: row.get("requires_transfer"),
+        source_id: row.get("source_id"),
+        source_version: row.get("source_version"),
+        attributes: row.get("attributes"),
+    };
+    adjacency.validate()?;
+    Ok(adjacency)
+}
+
 fn stable_id(prefix: &str, value: &str) -> String {
     let normalized = value
         .chars()
@@ -2755,6 +2788,67 @@ impl ProfileRegistryRepository for PgRepository {
         }
         transaction.commit().await?;
         Ok(evaluation_run_id)
+    }
+}
+
+#[async_trait]
+impl GraphAdjacencyRepository for PgRepository {
+    async fn load_area_adjacencies(&self, area_id: &str) -> Result<Vec<AreaAdjacency>> {
+        ensure!(!area_id.trim().is_empty(), "area_id must not be empty");
+        let client = self.connect().await?;
+        client
+            .query(
+                "SELECT
+                    from_area_id,
+                    to_area_id,
+                    adjacency_kind,
+                    distance_meters,
+                    area_cluster_id,
+                    source_id,
+                    source_version,
+                    attributes
+                 FROM area_adjacencies
+                 WHERE from_area_id = $1
+                 ORDER BY
+                    adjacency_kind ASC,
+                    distance_meters ASC NULLS LAST,
+                    to_area_id ASC",
+                &[&area_id],
+            )
+            .await?
+            .into_iter()
+            .map(area_adjacency_from_row)
+            .collect()
+    }
+
+    async fn load_line_adjacencies(&self, line_id: &str) -> Result<Vec<LineAdjacency>> {
+        ensure!(!line_id.trim().is_empty(), "line_id must not be empty");
+        let client = self.connect().await?;
+        client
+            .query(
+                "SELECT
+                    from_line_id,
+                    to_line_id,
+                    adjacency_kind,
+                    interchange_station_id,
+                    station_hop_count,
+                    requires_transfer,
+                    source_id,
+                    source_version,
+                    attributes
+                 FROM line_adjacencies
+                 WHERE from_line_id = $1
+                 ORDER BY
+                    adjacency_kind ASC,
+                    station_hop_count ASC NULLS LAST,
+                    interchange_station_id ASC NULLS LAST,
+                    to_line_id ASC",
+                &[&line_id],
+            )
+            .await?
+            .into_iter()
+            .map(line_adjacency_from_row)
+            .collect()
     }
 }
 
