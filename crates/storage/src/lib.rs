@@ -141,6 +141,73 @@ impl RecommendationTraceCandidatePlanStage {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AreaAdjacency {
+    pub from_area_id: String,
+    pub to_area_id: String,
+    pub adjacency_kind: String,
+    pub distance_meters: Option<f64>,
+    pub area_cluster_id: Option<String>,
+    pub source_id: Option<String>,
+    pub source_version: Option<String>,
+    #[serde(default = "default_json_object")]
+    pub attributes: Value,
+}
+
+impl AreaAdjacency {
+    pub fn validate(&self) -> Result<()> {
+        ensure_non_empty("from_area_id", &self.from_area_id)?;
+        ensure_non_empty("to_area_id", &self.to_area_id)?;
+        anyhow::ensure!(
+            self.from_area_id.trim() != self.to_area_id.trim(),
+            "area adjacency must connect different areas"
+        );
+        ensure_non_empty("adjacency_kind", &self.adjacency_kind)?;
+        ensure_optional_non_negative_f64("distance_meters", self.distance_meters)?;
+        ensure_optional_non_empty("area_cluster_id", self.area_cluster_id.as_deref())?;
+        ensure_optional_non_empty("source_id", self.source_id.as_deref())?;
+        ensure_optional_non_empty("source_version", self.source_version.as_deref())?;
+        ensure_json_object("attributes", &self.attributes)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LineAdjacency {
+    pub from_line_id: String,
+    pub to_line_id: String,
+    pub adjacency_kind: String,
+    pub interchange_station_id: Option<String>,
+    pub station_hop_count: Option<i32>,
+    #[serde(default = "default_true")]
+    pub requires_transfer: bool,
+    pub source_id: Option<String>,
+    pub source_version: Option<String>,
+    #[serde(default = "default_json_object")]
+    pub attributes: Value,
+}
+
+impl LineAdjacency {
+    pub fn validate(&self) -> Result<()> {
+        ensure_non_empty("from_line_id", &self.from_line_id)?;
+        ensure_non_empty("to_line_id", &self.to_line_id)?;
+        anyhow::ensure!(
+            self.from_line_id.trim() != self.to_line_id.trim(),
+            "line adjacency must connect different lines"
+        );
+        ensure_non_empty("adjacency_kind", &self.adjacency_kind)?;
+        ensure_optional_non_empty(
+            "interchange_station_id",
+            self.interchange_station_id.as_deref(),
+        )?;
+        ensure_optional_non_negative("station_hop_count", self.station_hop_count)?;
+        ensure_optional_non_empty("source_id", self.source_id.as_deref())?;
+        ensure_optional_non_empty("source_version", self.source_version.as_deref())?;
+        ensure_json_object("attributes", &self.attributes)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ProfileManifestRecord {
     pub profile_id: String,
@@ -481,6 +548,12 @@ pub trait CandidateProjectionSync: Send + Sync {
 }
 
 #[async_trait]
+pub trait GraphAdjacencyRepository: Send + Sync {
+    async fn load_area_adjacencies(&self, area_id: &str) -> Result<Vec<AreaAdjacency>>;
+    async fn load_line_adjacencies(&self, line_id: &str) -> Result<Vec<LineAdjacency>>;
+}
+
+#[async_trait]
 pub trait RecommendationRepository: Send + Sync {
     async fn health_check(&self) -> Result<()>;
     async fn ready_check(&self) -> Result<()>;
@@ -527,6 +600,13 @@ fn ensure_non_negative(field: &str, value: i32) -> Result<()> {
     Ok(())
 }
 
+fn ensure_optional_non_negative(field: &str, value: Option<i32>) -> Result<()> {
+    if let Some(value) = value {
+        ensure_non_negative(field, value)?;
+    }
+    Ok(())
+}
+
 fn ensure_non_negative_i64(field: &str, value: i64) -> Result<()> {
     anyhow::ensure!(value >= 0, "{field} must not be negative");
     Ok(())
@@ -540,8 +620,22 @@ fn ensure_non_negative_f64(field: &str, value: f64) -> Result<()> {
     Ok(())
 }
 
+fn ensure_optional_non_negative_f64(field: &str, value: Option<f64>) -> Result<()> {
+    if let Some(value) = value {
+        ensure_non_negative_f64(field, value)?;
+    }
+    Ok(())
+}
+
 fn ensure_positive(field: &str, value: i32) -> Result<()> {
     anyhow::ensure!(value > 0, "{field} must be positive");
+    Ok(())
+}
+
+fn ensure_optional_non_empty(field: &str, value: Option<&str>) -> Result<()> {
+    if let Some(value) = value {
+        ensure_non_empty(field, value)?;
+    }
     Ok(())
 }
 
@@ -565,6 +659,14 @@ fn ensure_json_object(field: &str, value: &Value) -> Result<()> {
 fn ensure_json_array(field: &str, value: &Value) -> Result<()> {
     anyhow::ensure!(value.is_array(), "{field} must be a JSON array");
     Ok(())
+}
+
+fn default_json_object() -> Value {
+    Value::Object(serde_json::Map::new())
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -697,6 +799,50 @@ mod tests {
     }
 
     #[test]
+    fn graph_adjacency_validation_rejects_invalid_reference_edges() {
+        let mut area = area_adjacency();
+        assert!(area.validate().is_ok());
+
+        area.to_area_id = area.from_area_id.clone();
+        let error = area
+            .validate()
+            .expect_err("self-referential area adjacency should fail");
+        assert!(error
+            .to_string()
+            .contains("area adjacency must connect different areas"));
+
+        let mut line = line_adjacency();
+        assert!(line.validate().is_ok());
+
+        line.station_hop_count = Some(-1);
+        let error = line
+            .validate()
+            .expect_err("negative station hop count should fail");
+        assert!(error
+            .to_string()
+            .contains("station_hop_count must not be negative"));
+
+        let mut area = area_adjacency();
+        area.attributes = serde_json::json!([]);
+        let error = area
+            .validate()
+            .expect_err("adjacency attributes must be an object");
+        assert!(error
+            .to_string()
+            .contains("attributes must be a JSON object"));
+
+        let decoded: LineAdjacency = serde_json::from_value(serde_json::json!({
+            "from_line_id": "line_yamanote",
+            "to_line_id": "line_keihin_tohoku",
+            "adjacency_kind": "interchange"
+        }))
+        .expect("line adjacency serde defaults should match storage defaults");
+        assert!(decoded.requires_transfer);
+        assert_eq!(decoded.attributes, serde_json::json!({}));
+        assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
     fn evaluation_run_record_validation_requires_complete_case_counts() {
         let mut run = evaluation_run_record();
         run.scenarios = 2;
@@ -770,6 +916,33 @@ mod tests {
         assert_eq!(EvaluationRunKind::Golden.as_str(), "golden");
         assert_eq!(EvaluationRunStatus::Blocked.as_str(), "blocked");
         assert_eq!(EvaluationRunCaseStatus::Passed.as_str(), "passed");
+    }
+
+    fn area_adjacency() -> AreaAdjacency {
+        AreaAdjacency {
+            from_area_id: "area_tokyo_minato".to_string(),
+            to_area_id: "area_tokyo_shinagawa".to_string(),
+            adjacency_kind: "city_neighbor".to_string(),
+            distance_meters: Some(1_250.0),
+            area_cluster_id: Some("cluster_tokyo_bay".to_string()),
+            source_id: Some("fixture".to_string()),
+            source_version: Some("2026-05-13".to_string()),
+            attributes: serde_json::json!({ "note": "fixture" }),
+        }
+    }
+
+    fn line_adjacency() -> LineAdjacency {
+        LineAdjacency {
+            from_line_id: "line_yamanote".to_string(),
+            to_line_id: "line_keihin_tohoku".to_string(),
+            adjacency_kind: "interchange".to_string(),
+            interchange_station_id: Some("st_shinagawa".to_string()),
+            station_hop_count: Some(0),
+            requires_transfer: true,
+            source_id: Some("fixture".to_string()),
+            source_version: Some("2026-05-13".to_string()),
+            attributes: serde_json::json!({ "platform_hint": "same_station" }),
+        }
     }
 
     fn school_station_link(
