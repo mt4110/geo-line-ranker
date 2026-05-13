@@ -7,7 +7,14 @@ CREATE TABLE IF NOT EXISTS area_adjacencies (
         REFERENCES areas(area_id) ON DELETE CASCADE
         CHECK (btrim(to_area_id) <> ''),
     adjacency_kind TEXT NOT NULL CHECK (btrim(adjacency_kind) <> ''),
-    distance_meters DOUBLE PRECISION CHECK (distance_meters IS NULL OR distance_meters >= 0),
+    distance_meters DOUBLE PRECISION
+        CHECK (
+            distance_meters IS NULL
+            OR (
+                distance_meters >= 0
+                AND distance_meters < 'Infinity'::double precision
+            )
+        ),
     area_cluster_id TEXT CHECK (area_cluster_id IS NULL OR btrim(area_cluster_id) <> ''),
     source_id TEXT CHECK (source_id IS NULL OR btrim(source_id) <> ''),
     source_version TEXT CHECK (source_version IS NULL OR btrim(source_version) <> ''),

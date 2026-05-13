@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use serde_json::json;
 use storage::{GraphAdjacencyRepository, RecommendationRepository};
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
-use tokio_postgres::NoTls;
+use tokio_postgres::{error::SqlState, NoTls};
 mod common;
 
 use common::{create_empty_database, drop_database, repo_root};
@@ -194,6 +194,31 @@ async fn graph_adjacency_tables_support_reference_reads() -> anyhow::Result<()> 
             Some("cluster_tokyo_bay")
         );
         assert_eq!(area_edges[0].attributes, json!({ "rank": 1 }));
+
+        for invalid_distance in ["'Infinity'::double precision", "'NaN'::double precision"] {
+            let statement = format!(
+                "INSERT INTO area_adjacencies (
+                    from_area_id,
+                    to_area_id,
+                    adjacency_kind,
+                    distance_meters
+                 )
+                 VALUES (
+                    'area_tokyo_minato',
+                    'area_tokyo_shinagawa',
+                    'invalid_distance',
+                    {invalid_distance}
+                 )"
+            );
+            let error = client
+                .execute(statement.as_str(), &[])
+                .await
+                .expect_err("non-finite area adjacency distance should be rejected");
+            let db_error = error
+                .as_db_error()
+                .unwrap_or_else(|| panic!("unexpected non-DB error for {invalid_distance}: {error}"));
+            assert_eq!(db_error.code(), &SqlState::CHECK_VIOLATION);
+        }
 
         let line_edges = repo.load_line_adjacencies("line_yamanote").await?;
         assert_eq!(line_edges.len(), 1);
