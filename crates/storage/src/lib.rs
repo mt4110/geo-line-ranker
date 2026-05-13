@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use domain::{RankingDataset, RankingQuery, SchoolStationLink, UserEvent};
@@ -18,6 +20,7 @@ const CANDIDATE_RETRIEVAL_OPENSEARCH_SORT_CONTRACT: [(&str, &str); 5] = [
     ("school_id", "asc"),
     ("station_id", "asc"),
 ];
+const CANDIDATE_PLAN_STAGE_STATUSES: [&str; 3] = ["selected", "insufficient", "skipped"];
 
 pub fn candidate_retrieval_ordering_contract() -> &'static [&'static str] {
     &CANDIDATE_RETRIEVAL_ORDERING_CONTRACT
@@ -50,6 +53,92 @@ pub struct RecommendationTrace {
     pub trace_payload: Value,
     pub fallback_stage: String,
     pub algorithm_version: String,
+    pub context_evidence_summary: Option<RecommendationTraceContextEvidenceSummary>,
+    pub candidate_plan_trace: Option<RecommendationTraceCandidatePlanTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecommendationTraceContextEvidenceSummary {
+    pub context_source: String,
+    pub confidence: f64,
+    pub privacy_level: String,
+    pub primary_kind: String,
+    pub evidence_count: i64,
+    pub strongest_strength: f64,
+    pub has_search_execute: bool,
+    pub warning_count: i64,
+    pub evidence_payload: Value,
+}
+
+impl RecommendationTraceContextEvidenceSummary {
+    pub fn validate(&self) -> Result<()> {
+        ensure_non_empty("context_source", &self.context_source)?;
+        ensure_non_empty("privacy_level", &self.privacy_level)?;
+        ensure_non_empty("primary_kind", &self.primary_kind)?;
+        ensure_non_negative_i64("evidence_count", self.evidence_count)?;
+        ensure_non_negative_i64("warning_count", self.warning_count)?;
+        ensure_non_negative_f64("confidence", self.confidence)?;
+        ensure_non_negative_f64("strongest_strength", self.strongest_strength)?;
+        ensure_json_object("evidence_payload", &self.evidence_payload)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecommendationTraceCandidatePlanTrace {
+    pub minimum_candidate_count: i64,
+    pub selected_stage: String,
+    pub stop_reason: String,
+    pub area_context_usable: bool,
+    pub plan_payload: Value,
+    pub stages: Vec<RecommendationTraceCandidatePlanStage>,
+}
+
+impl RecommendationTraceCandidatePlanTrace {
+    pub fn validate(&self) -> Result<()> {
+        ensure_non_negative_i64("minimum_candidate_count", self.minimum_candidate_count)?;
+        ensure_non_empty("selected_stage", &self.selected_stage)?;
+        ensure_non_empty("stop_reason", &self.stop_reason)?;
+        ensure_json_object("plan_payload", &self.plan_payload)?;
+        let mut stage_orders = BTreeSet::new();
+        for stage in &self.stages {
+            stage.validate()?;
+            anyhow::ensure!(
+                stage_orders.insert(stage.stage_order),
+                "stage_order must be unique within candidate plan trace: {}",
+                stage.stage_order
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecommendationTraceCandidatePlanStage {
+    pub stage_order: i32,
+    pub stage: String,
+    pub candidate_count: i64,
+    pub required_min_candidates: i64,
+    pub status: String,
+    pub reason_code: String,
+    pub stage_payload: Value,
+}
+
+impl RecommendationTraceCandidatePlanStage {
+    pub fn validate(&self) -> Result<()> {
+        ensure_non_negative("stage_order", self.stage_order)?;
+        ensure_non_empty("stage", &self.stage)?;
+        ensure_non_negative_i64("candidate_count", self.candidate_count)?;
+        ensure_non_negative_i64("required_min_candidates", self.required_min_candidates)?;
+        ensure_non_empty("status", &self.status)?;
+        anyhow::ensure!(
+            CANDIDATE_PLAN_STAGE_STATUSES.contains(&self.status.as_str()),
+            "status must be one of selected, insufficient, skipped"
+        );
+        ensure_non_empty("reason_code", &self.reason_code)?;
+        ensure_json_object("stage_payload", &self.stage_payload)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -438,6 +527,19 @@ fn ensure_non_negative(field: &str, value: i32) -> Result<()> {
     Ok(())
 }
 
+fn ensure_non_negative_i64(field: &str, value: i64) -> Result<()> {
+    anyhow::ensure!(value >= 0, "{field} must not be negative");
+    Ok(())
+}
+
+fn ensure_non_negative_f64(field: &str, value: f64) -> Result<()> {
+    anyhow::ensure!(
+        value.is_finite() && value >= 0.0,
+        "{field} must be a finite non-negative number"
+    );
+    Ok(())
+}
+
 fn ensure_positive(field: &str, value: i32) -> Result<()> {
     anyhow::ensure!(value > 0, "{field} must be positive");
     Ok(())
@@ -518,6 +620,80 @@ mod tests {
         let error = run.validate().expect_err("blank case id should fail");
 
         assert!(error.to_string().contains("case_id must not be empty"));
+    }
+
+    #[test]
+    fn recommendation_trace_detail_validation_rejects_invalid_audit_rows() {
+        let mut context_summary = RecommendationTraceContextEvidenceSummary {
+            context_source: "recent_search_context".to_string(),
+            confidence: 0.75,
+            privacy_level: "station_level".to_string(),
+            primary_kind: "search_execute".to_string(),
+            evidence_count: 1,
+            strongest_strength: 0.75,
+            has_search_execute: true,
+            warning_count: 0,
+            evidence_payload: serde_json::json!({
+                "primary_kind": "search_execute",
+                "evidence_count": 1
+            }),
+        };
+        assert!(context_summary.validate().is_ok());
+
+        context_summary.evidence_count = -1;
+        let error = context_summary
+            .validate()
+            .expect_err("negative evidence count should fail");
+        assert!(error
+            .to_string()
+            .contains("evidence_count must not be negative"));
+
+        let mut plan = RecommendationTraceCandidatePlanTrace {
+            minimum_candidate_count: 3,
+            selected_stage: "same_line".to_string(),
+            stop_reason: "sufficient_scoped_candidates".to_string(),
+            area_context_usable: true,
+            plan_payload: serde_json::json!({ "selected_stage": "same_line" }),
+            stages: vec![RecommendationTraceCandidatePlanStage {
+                stage_order: 0,
+                stage: "same_line".to_string(),
+                candidate_count: 4,
+                required_min_candidates: 3,
+                status: "selected".to_string(),
+                reason_code: "selected_sufficient_scoped_candidates".to_string(),
+                stage_payload: serde_json::json!({ "stage": "same_line" }),
+            }],
+        };
+        assert!(plan.validate().is_ok());
+
+        plan.stages[0].status = " ".to_string();
+        let error = plan.validate().expect_err("blank stage status should fail");
+        assert!(error.to_string().contains("status must not be empty"));
+
+        plan.stages[0].status = "deferred".to_string();
+        let error = plan
+            .validate()
+            .expect_err("unexpected stage status should fail");
+        assert!(error
+            .to_string()
+            .contains("status must be one of selected, insufficient, skipped"));
+
+        plan.stages[0].status = "selected".to_string();
+        plan.stages.push(RecommendationTraceCandidatePlanStage {
+            stage_order: 0,
+            stage: "same_station".to_string(),
+            candidate_count: 1,
+            required_min_candidates: 3,
+            status: "insufficient".to_string(),
+            reason_code: "insufficient_scoped_candidates".to_string(),
+            stage_payload: serde_json::json!({ "stage": "same_station" }),
+        });
+        let error = plan
+            .validate()
+            .expect_err("duplicate stage order should fail");
+        assert!(error
+            .to_string()
+            .contains("stage_order must be unique within candidate plan trace: 0"));
     }
 
     #[test]

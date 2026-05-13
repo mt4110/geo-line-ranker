@@ -28,7 +28,9 @@ use sha2::{Digest, Sha256};
 use storage::{
     ClaimedJob, EvaluationRunRecord, JobType, NewJob, ProfileCompatibilityStatusRecord,
     ProfileManifestRecord, ProfileRegistryRepository, RecommendationRepository,
-    RecommendationTrace, SnapshotRefreshStats, SnapshotTuning,
+    RecommendationTrace, RecommendationTraceCandidatePlanStage,
+    RecommendationTraceCandidatePlanTrace, RecommendationTraceContextEvidenceSummary,
+    SnapshotRefreshStats, SnapshotTuning,
 };
 use tokio::sync::OnceCell;
 use tokio_postgres::Row;
@@ -182,6 +184,8 @@ pub struct RecommendationTraceReadRow {
     pub fallback_stage: String,
     pub algorithm_version: String,
     pub created_at: String,
+    pub context_evidence_summary: Option<RecommendationTraceContextEvidenceSummary>,
+    pub candidate_plan_trace: Option<RecommendationTraceCandidatePlanTrace>,
 }
 
 impl PgRepository {
@@ -1161,7 +1165,7 @@ impl PgRepository {
         trace_id: i64,
     ) -> Result<Option<RecommendationTraceReadRow>> {
         let client = self.connect().await?;
-        client
+        let Some(row) = client
             .query_opt(
                 r#"SELECT id,
                           request_payload,
@@ -1175,18 +1179,26 @@ impl PgRepository {
                 &[&trace_id],
             )
             .await
-            .map(|row| {
-                row.map(|row| RecommendationTraceReadRow {
-                    id: row.get("id"),
-                    request_payload: row.get("request_payload"),
-                    response_payload: row.get("response_payload"),
-                    trace_payload: row.get("trace_payload"),
-                    fallback_stage: row.get("fallback_stage"),
-                    algorithm_version: row.get("algorithm_version"),
-                    created_at: row.get("created_at"),
-                })
-            })
-            .context("failed to load recommendation trace")
+            .context("failed to load recommendation trace")?
+        else {
+            return Ok(None);
+        };
+
+        let context_evidence_summary =
+            load_trace_context_evidence_summary(&client, trace_id).await?;
+        let candidate_plan_trace = load_trace_candidate_plan_trace(&client, trace_id).await?;
+
+        Ok(Some(RecommendationTraceReadRow {
+            id: row.get("id"),
+            request_payload: row.get("request_payload"),
+            response_payload: row.get("response_payload"),
+            trace_payload: row.get("trace_payload"),
+            fallback_stage: row.get("fallback_stage"),
+            algorithm_version: row.get("algorithm_version"),
+            created_at: row.get("created_at"),
+            context_evidence_summary,
+            candidate_plan_trace,
+        }))
     }
 
     pub async fn inspect_job(&self, job_id: i64) -> Result<JobInspection> {
@@ -1855,6 +1867,253 @@ pub fn user_event_reference_validation_message(error: &anyhow::Error) -> Option<
             .strip_prefix(USER_EVENT_REFERENCE_VALIDATION_PREFIX)
             .map(str::to_string)
     })
+}
+
+async fn load_trace_context_evidence_summary(
+    client: &impl GenericClient,
+    trace_id: i64,
+) -> Result<Option<RecommendationTraceContextEvidenceSummary>> {
+    match client
+        .query_opt(
+            "SELECT context_source,
+                    confidence,
+                    privacy_level,
+                    primary_kind,
+                    evidence_count,
+                    strongest_strength,
+                    has_search_execute,
+                    warning_count,
+                    evidence_payload
+             FROM recommendation_trace_context_evidence
+             WHERE recommendation_trace_id = $1",
+            &[&trace_id],
+        )
+        .await
+    {
+        Ok(row) => Ok(row.map(|row| RecommendationTraceContextEvidenceSummary {
+            context_source: row.get("context_source"),
+            confidence: row.get("confidence"),
+            privacy_level: row.get("privacy_level"),
+            primary_kind: row.get("primary_kind"),
+            evidence_count: row.get("evidence_count"),
+            strongest_strength: row.get("strongest_strength"),
+            has_search_execute: row.get("has_search_execute"),
+            warning_count: row.get("warning_count"),
+            evidence_payload: row.get("evidence_payload"),
+        })),
+        Err(error) if is_undefined_table_error(&error) => Ok(None),
+        Err(error) => {
+            Err(error).context("failed to load recommendation trace context evidence summary")
+        }
+    }
+}
+
+async fn load_trace_candidate_plan_trace(
+    client: &impl GenericClient,
+    trace_id: i64,
+) -> Result<Option<RecommendationTraceCandidatePlanTrace>> {
+    let Some(plan) = (match client
+        .query_opt(
+            "SELECT minimum_candidate_count,
+                    selected_stage,
+                    stop_reason,
+                    area_context_usable,
+                    plan_payload
+             FROM recommendation_trace_candidate_plans
+             WHERE recommendation_trace_id = $1",
+            &[&trace_id],
+        )
+        .await
+    {
+        Ok(row) => row,
+        Err(error) if is_undefined_table_error(&error) => return Ok(None),
+        Err(error) => {
+            return Err(error).context("failed to load recommendation trace candidate plan")
+        }
+    }) else {
+        return Ok(None);
+    };
+
+    let stages = match client
+        .query(
+            "SELECT stage_order,
+                    stage,
+                    candidate_count,
+                    required_min_candidates,
+                    status,
+                    reason_code,
+                    stage_payload
+             FROM recommendation_trace_candidate_plan_stages
+             WHERE recommendation_trace_id = $1
+             ORDER BY stage_order",
+            &[&trace_id],
+        )
+        .await
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|row| RecommendationTraceCandidatePlanStage {
+                stage_order: row.get("stage_order"),
+                stage: row.get("stage"),
+                candidate_count: row.get("candidate_count"),
+                required_min_candidates: row.get("required_min_candidates"),
+                status: row.get("status"),
+                reason_code: row.get("reason_code"),
+                stage_payload: row.get("stage_payload"),
+            })
+            .collect(),
+        Err(error) if is_undefined_table_error(&error) => return Ok(None),
+        Err(error) => {
+            return Err(error).context("failed to load recommendation trace candidate plan stages");
+        }
+    };
+
+    Ok(Some(RecommendationTraceCandidatePlanTrace {
+        minimum_candidate_count: plan.get("minimum_candidate_count"),
+        selected_stage: plan.get("selected_stage"),
+        stop_reason: plan.get("stop_reason"),
+        area_context_usable: plan.get("area_context_usable"),
+        plan_payload: plan.get("plan_payload"),
+        stages,
+    }))
+}
+
+fn is_undefined_table_error(error: &tokio_postgres::Error) -> bool {
+    error
+        .code()
+        .is_some_and(|code| *code == tokio_postgres::error::SqlState::UNDEFINED_TABLE)
+}
+
+fn error_chain_contains_undefined_table(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<tokio_postgres::Error>()
+            .is_some_and(is_undefined_table_error)
+    })
+}
+
+async fn insert_trace_context_evidence_summary(
+    client: &impl GenericClient,
+    trace_id: i64,
+    summary: &RecommendationTraceContextEvidenceSummary,
+) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO recommendation_trace_context_evidence (
+                recommendation_trace_id,
+                context_source,
+                confidence,
+                privacy_level,
+                primary_kind,
+                evidence_count,
+                strongest_strength,
+                has_search_execute,
+                warning_count,
+                evidence_payload
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            &[
+                &trace_id,
+                &summary.context_source,
+                &summary.confidence,
+                &summary.privacy_level,
+                &summary.primary_kind,
+                &summary.evidence_count,
+                &summary.strongest_strength,
+                &summary.has_search_execute,
+                &summary.warning_count,
+                &summary.evidence_payload,
+            ],
+        )
+        .await
+        .context("failed to insert recommendation trace context evidence summary")?;
+    Ok(())
+}
+
+async fn insert_trace_candidate_plan_trace(
+    client: &impl GenericClient,
+    trace_id: i64,
+    plan: &RecommendationTraceCandidatePlanTrace,
+) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO recommendation_trace_candidate_plans (
+                recommendation_trace_id,
+                minimum_candidate_count,
+                selected_stage,
+                stop_reason,
+                area_context_usable,
+                plan_payload
+            ) VALUES ($1, $2, $3, $4, $5, $6)",
+            &[
+                &trace_id,
+                &plan.minimum_candidate_count,
+                &plan.selected_stage,
+                &plan.stop_reason,
+                &plan.area_context_usable,
+                &plan.plan_payload,
+            ],
+        )
+        .await
+        .context("failed to insert recommendation trace candidate plan")?;
+
+    for stage in &plan.stages {
+        client
+            .execute(
+                "INSERT INTO recommendation_trace_candidate_plan_stages (
+                    recommendation_trace_id,
+                    stage_order,
+                    stage,
+                    candidate_count,
+                    required_min_candidates,
+                    status,
+                    reason_code,
+                    stage_payload
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[
+                    &trace_id,
+                    &stage.stage_order,
+                    &stage.stage,
+                    &stage.candidate_count,
+                    &stage.required_min_candidates,
+                    &stage.status,
+                    &stage.reason_code,
+                    &stage.stage_payload,
+                ],
+            )
+            .await
+            .context("failed to insert recommendation trace candidate plan stage")?;
+    }
+
+    Ok(())
+}
+
+async fn record_trace_detail_rows(
+    client: &mut Client,
+    trace_id: i64,
+    trace: &RecommendationTrace,
+) -> Result<()> {
+    if trace.context_evidence_summary.is_none() && trace.candidate_plan_trace.is_none() {
+        return Ok(());
+    }
+
+    if let Some(context_evidence_summary) = &trace.context_evidence_summary {
+        context_evidence_summary.validate()?;
+    }
+    if let Some(candidate_plan_trace) = &trace.candidate_plan_trace {
+        candidate_plan_trace.validate()?;
+    }
+
+    let transaction = client.transaction().await?;
+    if let Some(context_evidence_summary) = &trace.context_evidence_summary {
+        insert_trace_context_evidence_summary(&transaction, trace_id, context_evidence_summary)
+            .await?;
+    }
+    if let Some(candidate_plan_trace) = &trace.candidate_plan_trace {
+        insert_trace_candidate_plan_trace(&transaction, trace_id, candidate_plan_trace).await?;
+    }
+
+    transaction.commit().await?;
+    Ok(())
 }
 
 async fn insert_user_event(client: &impl GenericClient, event: &UserEvent) -> Result<i64> {
@@ -2713,16 +2972,17 @@ impl RecommendationRepository for PgRepository {
     }
 
     async fn record_trace(&self, trace: &RecommendationTrace) -> Result<()> {
-        let client = self.connect().await?;
-        client
-            .execute(
+        let mut client = self.connect().await?;
+        let row = client
+            .query_one(
                 "INSERT INTO recommendation_traces (
                     request_payload,
                     response_payload,
                     trace_payload,
                     fallback_stage,
                     algorithm_version
-                ) VALUES ($1, $2, $3, $4, $5)",
+                ) VALUES ($1, $2, $3, $4, $5)
+                RETURNING id",
                 &[
                     &trace.request_payload,
                     &trace.response_payload,
@@ -2732,6 +2992,22 @@ impl RecommendationRepository for PgRepository {
                 ],
             )
             .await?;
+        let trace_id = row.get::<_, i64>("id");
+
+        if let Err(error) = record_trace_detail_rows(&mut client, trace_id, trace).await {
+            if error_chain_contains_undefined_table(&error) {
+                tracing::debug!(
+                    trace_id,
+                    "skipping recommendation trace detail rows because trace detail tables are unavailable"
+                );
+            } else {
+                tracing::warn!(
+                    trace_id,
+                    %error,
+                    "failed to persist recommendation trace detail rows"
+                );
+            }
+        }
         Ok(())
     }
 

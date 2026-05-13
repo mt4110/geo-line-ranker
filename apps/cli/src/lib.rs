@@ -32,9 +32,10 @@ pub use doctor::{
 };
 #[cfg(feature = "storage-backends")]
 pub use explain::{
-    run_explain_trace, ExplainTraceCheck, ExplainTraceIntegritySummary, ExplainTraceItemSummary,
-    ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport,
-    ExplainTraceRequestSummary, ExplainTraceResponseSummary, ExplainTraceStatus,
+    run_explain_trace, ExplainTraceCheck, ExplainTraceContextEvidenceSummary,
+    ExplainTraceIntegritySummary, ExplainTraceItemSummary, ExplainTracePayloadSummary,
+    ExplainTraceReasonSummary, ExplainTraceReport, ExplainTraceRequestSummary,
+    ExplainTraceResponseSummary, ExplainTraceStatus,
 };
 pub use explanation_integrity::{QualityCheckStatus, QualitySeverity};
 pub use fixtures::{

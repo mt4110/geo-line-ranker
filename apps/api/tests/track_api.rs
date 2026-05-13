@@ -1828,7 +1828,7 @@ async fn recommend_endpoint_ignores_trace_persistence_failures() -> anyhow::Resu
         run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
         seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
         client
-            .simple_query("DROP TABLE recommendation_traces")
+            .simple_query("DROP TABLE recommendation_traces CASCADE")
             .await?;
         client
             .simple_query("DROP TABLE context_resolution_traces")
