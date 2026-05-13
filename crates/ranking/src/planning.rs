@@ -7,6 +7,8 @@ use domain::{
 
 use crate::diversity::DiversitySelection;
 use crate::explanation::build_top_level_explanation;
+use crate::graph::CandidateGraphExpansion;
+use crate::scoring::CandidateScoringInput;
 use crate::{RankingEngine, RankingError};
 
 impl RankingEngine {
@@ -14,6 +16,15 @@ impl RankingEngine {
         &self,
         dataset: &RankingDataset,
         query: &RankingQuery,
+    ) -> Result<RecommendationResult, RankingError> {
+        self.recommend_with_graph_expansion(dataset, query, &CandidateGraphExpansion::empty())
+    }
+
+    pub fn recommend_with_graph_expansion(
+        &self,
+        dataset: &RankingDataset,
+        query: &RankingQuery,
+        graph_expansion: &CandidateGraphExpansion,
     ) -> Result<RecommendationResult, RankingError> {
         let target_station = dataset
             .stations
@@ -30,7 +41,7 @@ impl RankingEngine {
         let strict_min_candidates = self.minimum_candidate_count();
 
         let staged_candidates =
-            self.collect_candidates_by_stage(dataset, query, &target_station, placement_profile);
+            self.collect_candidates_by_stage(dataset, query, &target_station, graph_expansion);
         let candidate_counts = staged_candidates
             .iter()
             .map(|(stage, candidates)| (stage.as_str().to_string(), candidates.len()))
@@ -125,12 +136,15 @@ impl RankingEngine {
         }
 
         let scored_candidates = self.score_candidates(
-            dataset,
-            query,
-            &target_station,
-            placement_profile,
+            CandidateScoringInput {
+                dataset,
+                query,
+                target_station: &target_station,
+                placement_profile,
+                fallback_stage: &fallback_stage,
+                graph_expansion,
+            },
             candidates,
-            &fallback_stage,
         );
         let DiversitySelection {
             items,

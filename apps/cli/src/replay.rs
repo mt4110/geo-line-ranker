@@ -15,9 +15,11 @@ use domain::{
     RecommendationResult,
 };
 use ranking::RankingEngine;
+#[cfg(feature = "storage-backends")]
+use ranking::{AreaGraphExpansion, CandidateGraphExpansion, LineGraphExpansion};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "storage-backends")]
-use storage_postgres::{PgRepository, RecommendationTraceReplayRow};
+use storage_postgres::{ContextCandidateLinkQuery, PgRepository, RecommendationTraceReplayRow};
 
 use crate::explanation_integrity::{
     check_recommendation_result_integrity, QualityCheckStatus, QualitySeverity,
@@ -1214,14 +1216,35 @@ async fn evaluate_replay_trace(
     let query = request.with_resolved_context(target_station.id.clone(), resolved_context);
     let neighbor_max_hops = engine.neighbor_max_hops(query.placement);
     let min_candidate_count = engine.minimum_candidate_count();
-    let candidate_links = match repository
-        .load_context_candidate_links(
+    let storage_graph_expansion = match repository
+        .load_candidate_plan_graph_expansion(
             &target_station,
             query.context.as_ref().expect("resolved context is set"),
-            candidate_limit,
-            min_candidate_count,
-            neighbor_distance_cap_meters,
-            neighbor_max_hops,
+        )
+        .await
+    {
+        Ok(expansion) => expansion,
+        Err(error) => {
+            return failed_replay_case(
+                trace,
+                Some(request_id),
+                Some(expected_fallback_stage),
+                format!("failed to load replay graph expansion: {error}"),
+            );
+        }
+    };
+    let candidate_link_query = ContextCandidateLinkQuery {
+        target_station: &target_station,
+        context: query.context.as_ref().expect("resolved context is set"),
+        candidate_limit,
+        min_scoped_candidates: min_candidate_count,
+        neighbor_distance_cap_meters,
+        neighbor_max_hops,
+    };
+    let candidate_links = match repository
+        .load_context_candidate_links_with_graph_expansion(
+            candidate_link_query,
+            &storage_graph_expansion,
         )
         .await
     {
@@ -1249,7 +1272,8 @@ async fn evaluate_replay_trace(
             );
         }
     };
-    let actual = match engine.recommend(&dataset, &query) {
+    let graph_expansion = candidate_graph_expansion_from_storage(storage_graph_expansion);
+    let actual = match engine.recommend_with_graph_expansion(&dataset, &query, &graph_expansion) {
         Ok(result) => RecommendationResponse::from(result),
         Err(error) => {
             return failed_replay_case(
@@ -1281,6 +1305,19 @@ async fn evaluate_replay_trace(
         message: (status == ReplayEvaluationStatus::Mismatched)
             .then_some("stored response differs from current deterministic replay".to_string()),
     }
+}
+
+#[cfg(feature = "storage-backends")]
+fn candidate_graph_expansion_from_storage(
+    expansion: storage::CandidatePlanGraphExpansion,
+) -> CandidateGraphExpansion {
+    let line = expansion
+        .line
+        .and_then(|line| LineGraphExpansion::new(line.origin_line_id, line.adjacent_line_ids));
+    let area = expansion
+        .area
+        .and_then(|area| AreaGraphExpansion::new(area.origin_area_id, area.adjacent_area_ids));
+    CandidateGraphExpansion::from_parts(line, area)
 }
 
 #[cfg(feature = "storage-backends")]

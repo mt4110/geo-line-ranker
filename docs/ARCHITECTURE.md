@@ -21,12 +21,16 @@
   read-only `GeoGraph` / `LineGraph` components that normalize deterministic
   edge ordering and provide diagnostics for observed area clusters, station
   hops, and interchange groups.
-- The graph-aware candidate plan slice is diagnostic/read-only. The API can
-  load the `GeoGraph` / `LineGraph` read models for the resolved area and line
-  origins and persist compact `graph_diagnostics` in dedicated candidate plan
-  trace rows, but candidate expansion, score math, fallback selection, ranking
-  weights, and crawler behavior remain unchanged. The persisted diagnostics use
-  counts plus capped samples rather than full per-edge graph details.
+- The graph-aware candidate plan slice is active in the PostgreSQL candidate
+  path. The API loads the `GeoGraph` / `LineGraph` read models for the resolved
+  area and line origins, uses normalized adjacent id sets as deterministic
+  candidate expansion hints, and persists compact `graph_diagnostics` in
+  dedicated candidate plan trace rows. Line adjacency is scoped by the neighbor
+  distance and hop caps before it can feed the `same_line` stage. Area adjacency
+  can feed `neighbor_area`. Ranking weights, crawler behavior, and dynamic
+  connector loading remain unchanged. The persisted diagnostics use counts plus
+  capped samples rather than full per-edge graph details or expanded candidate
+  ids.
 - Session context summaries are PostgreSQL diagnostic/reference data keyed by a
   hashed session identifier. They are read through the storage contract and do
   not change ranking, crawler, or connector runtime behavior by themselves.
@@ -68,12 +72,20 @@ flowchart LR
 
 1. `POST /v1/recommendations` receives a target station plus placement.
 2. The API builds a cache key from the serialized request payload plus profile version, algorithm version, retrieval mode, candidate limit, and fallback `neighbor_distance_cap_meters`.
-3. Candidate links come from PostgreSQL (`sql_only`) or OpenSearch (`full`).
-4. PostgreSQL loads school rows, active event rows, station rows, and snapshot rows for the candidate slice.
-5. `crates/ranking` scores school candidates and event candidates from the same slice.
-6. Placement config applies mixed-ranking boosts and diversity hard caps.
-7. When diversity caps remove candidates from the display list, the response explanation names the affected cap family without changing the score math.
-8. The response returns mixed items, explanation text, profile version, and algorithm version.
+3. The API loads graph expansion hints for the resolved area and line origins.
+4. Candidate links come from PostgreSQL (`sql_only`) or OpenSearch (`full`).
+   PostgreSQL retrieval consumes the graph hints directly; OpenSearch remains
+   candidate-retrieval-only and falls back to PostgreSQL when it returns too
+   few candidates.
+5. PostgreSQL loads school rows, active event rows, station rows, and snapshot
+   rows for the candidate slice.
+6. `crates/ranking` scores school candidates and event candidates from the same
+   slice, using the same graph hints for deterministic fallback-stage planning.
+7. Placement config applies mixed-ranking boosts and diversity hard caps.
+8. When diversity caps remove candidates from the display list, the response
+   explanation names the affected cap family without changing the score math.
+9. The response returns mixed items, explanation text, profile version, and
+   algorithm version.
 
 ## Mixed ranking model
 

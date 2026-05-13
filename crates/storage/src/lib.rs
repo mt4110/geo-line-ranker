@@ -9,8 +9,9 @@ use serde_json::Value;
 mod graph;
 
 pub use graph::{
-    AreaClusterDiagnostic, GeoGraph, GeoGraphEdge, InterchangeDiagnostic, LineGraph, LineGraphEdge,
-    StationHopDiagnostic,
+    AreaClusterDiagnostic, CandidatePlanAreaGraphExpansion, CandidatePlanGraphExpansion,
+    CandidatePlanLineGraphExpansion, GeoGraph, GeoGraphEdge, InterchangeDiagnostic, LineGraph,
+    LineGraphEdge, StationHopDiagnostic,
 };
 
 const CANDIDATE_RETRIEVAL_ORDERING_CONTRACT: [&str; 5] = [

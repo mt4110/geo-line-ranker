@@ -9,6 +9,8 @@ mod scoring;
 #[cfg(test)]
 mod test_utils;
 
+pub use graph::{AreaGraphExpansion, CandidateGraphExpansion, LineGraphExpansion};
+
 use config::RankingProfiles;
 use thiserror::Error;
 
@@ -56,6 +58,7 @@ mod tests {
 
     use super::RankingEngine;
     use crate::test_utils::{config_root, fixture_root, query};
+    use crate::{AreaGraphExpansion, CandidateGraphExpansion, LineGraphExpansion};
 
     fn request_area_context(
         city_name: Option<&str>,
@@ -177,6 +180,7 @@ mod tests {
                     name: "Target".to_string(),
                     line_name: "Target Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -185,6 +189,7 @@ mod tests {
                     name: "Line A Station".to_string(),
                     line_name: "Target Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.01,
                     longitude: 139.01,
                 },
@@ -193,6 +198,7 @@ mod tests {
                     name: "Line B Station".to_string(),
                     line_name: "Target Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.02,
                     longitude: 139.02,
                 },
@@ -201,6 +207,7 @@ mod tests {
                     name: "Global Station".to_string(),
                     line_name: "Far Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 26.21,
                     longitude: 127.68,
                 },
@@ -330,6 +337,7 @@ mod tests {
                     name: "Target".to_string(),
                     line_name: "Shared Line".to_string(),
                     line_id: Some("line_target".to_string()),
+                    area_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -338,6 +346,7 @@ mod tests {
                     name: "Target Line Station".to_string(),
                     line_name: "Shared Line".to_string(),
                     line_id: Some("line_target".to_string()),
+                    area_id: None,
                     latitude: 35.01,
                     longitude: 139.01,
                 },
@@ -346,6 +355,7 @@ mod tests {
                     name: "Other Line Station".to_string(),
                     line_name: "Shared Line".to_string(),
                     line_id: Some("line_other".to_string()),
+                    area_id: None,
                     latitude: 35.02,
                     longitude: 139.02,
                 },
@@ -421,6 +431,204 @@ mod tests {
     }
 
     #[test]
+    fn line_graph_expansion_can_feed_same_line_stage() {
+        let dataset = RankingDataset {
+            schools: vec![School {
+                id: "school_adjacent_line".to_string(),
+                name: "Adjacent Line School".to_string(),
+                area: "Shinagawa".to_string(),
+                prefecture_name: Some("Tokyo".to_string()),
+                school_type: "high_school".to_string(),
+                group_id: "group_adjacent_line".to_string(),
+            }],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: Some("line_target".to_string()),
+                    area_id: None,
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_adjacent".to_string(),
+                    name: "Adjacent".to_string(),
+                    line_name: "Adjacent Line".to_string(),
+                    line_id: Some("line_adjacent".to_string()),
+                    area_id: None,
+                    latitude: 35.01,
+                    longitude: 139.01,
+                },
+            ],
+            school_station_links: vec![SchoolStationLink {
+                school_id: "school_adjacent_line".to_string(),
+                station_id: "st_adjacent".to_string(),
+                walking_minutes: 6,
+                distance_meters: 600,
+                hop_distance: 1,
+                line_name: "Adjacent Line".to_string(),
+            }],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 1;
+        profiles.fallback.min_results = 1;
+        let engine = RankingEngine::new(profiles, "v030-line-graph-expansion-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.debug = true;
+        query.context = Some(RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Target Line".to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+        let graph_expansion = CandidateGraphExpansion::from_parts(
+            LineGraphExpansion::new("line_target", vec!["line_adjacent".to_string()]),
+            None,
+        );
+
+        let result = engine
+            .recommend_with_graph_expansion(&dataset, &query, &graph_expansion)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&1));
+        assert_eq!(result.fallback_stage, FallbackStage::SameLine);
+        let line_details = result.items[0]
+            .score_breakdown
+            .iter()
+            .find(|component| component.feature == "line_match_bonus")
+            .and_then(|component| component.details.as_ref())
+            .expect("line match debug details");
+        assert_eq!(line_details["match_kind"], "line_graph_adjacent_line_id");
+        assert_eq!(result.items[0].school_id, "school_adjacent_line");
+    }
+
+    #[test]
+    fn line_graph_expansion_requires_neighbor_caps_for_same_line_stage() {
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "school_far_adjacent_line".to_string(),
+                    name: "Far Adjacent Line School".to_string(),
+                    area: "Far Ward".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_far_adjacent_line".to_string(),
+                },
+                School {
+                    id: "school_too_many_hops_adjacent_line".to_string(),
+                    name: "Too Many Hops Adjacent Line School".to_string(),
+                    area: "Near Ward".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_too_many_hops_adjacent_line".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: Some("line_target".to_string()),
+                    area_id: None,
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_far_adjacent".to_string(),
+                    name: "Far Adjacent".to_string(),
+                    line_name: "Adjacent Line".to_string(),
+                    line_id: Some("line_adjacent".to_string()),
+                    area_id: None,
+                    latitude: 36.0,
+                    longitude: 140.0,
+                },
+                Station {
+                    id: "st_too_many_hops_adjacent".to_string(),
+                    name: "Too Many Hops Adjacent".to_string(),
+                    line_name: "Adjacent Line".to_string(),
+                    line_id: Some("line_adjacent".to_string()),
+                    area_id: None,
+                    latitude: 35.01,
+                    longitude: 139.01,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "school_far_adjacent_line".to_string(),
+                    station_id: "st_far_adjacent".to_string(),
+                    walking_minutes: 6,
+                    distance_meters: 600,
+                    hop_distance: 1,
+                    line_name: "Adjacent Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "school_too_many_hops_adjacent_line".to_string(),
+                    station_id: "st_too_many_hops_adjacent".to_string(),
+                    walking_minutes: 6,
+                    distance_meters: 600,
+                    hop_distance: 9,
+                    line_name: "Adjacent Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 1;
+        profiles.fallback.min_results = 1;
+        let engine = RankingEngine::new(profiles, "v030-line-graph-expansion-cap-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.debug = true;
+        query.context = Some(RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Target Line".to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+        let graph_expansion = CandidateGraphExpansion::from_parts(
+            LineGraphExpansion::new("line_target", vec!["line_adjacent".to_string()]),
+            None,
+        );
+
+        let result = engine
+            .recommend_with_graph_expansion(&dataset, &query, &graph_expansion)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("same_line"), Some(&0));
+        assert_eq!(result.fallback_stage, FallbackStage::SafeGlobalPopular);
+        assert!(result.items.iter().all(|item| {
+            item.score_breakdown
+                .iter()
+                .all(|component| component.feature != "line_match_bonus")
+        }));
+    }
+
+    #[test]
     fn city_context_requires_prefecture_match_when_present() {
         let dataset = RankingDataset {
             schools: vec![
@@ -448,6 +656,7 @@ mod tests {
                     name: "Target".to_string(),
                     line_name: "Target Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -456,6 +665,7 @@ mod tests {
                     name: "Tokyo Fuchu Station".to_string(),
                     line_name: "Target Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.01,
                     longitude: 139.01,
                 },
@@ -464,6 +674,7 @@ mod tests {
                     name: "Hiroshima Fuchu Station".to_string(),
                     line_name: "Other Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 34.57,
                     longitude: 133.24,
                 },
@@ -593,6 +804,7 @@ mod tests {
                     name: "Target".to_string(),
                     line_name: "Target Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -601,6 +813,7 @@ mod tests {
                     name: "Neighbor A Station".to_string(),
                     line_name: "Other Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.0005,
                     longitude: 139.0005,
                 },
@@ -609,6 +822,7 @@ mod tests {
                     name: "Neighbor B Station".to_string(),
                     line_name: "Another Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.0007,
                     longitude: 139.0007,
                 },
@@ -668,6 +882,87 @@ mod tests {
     }
 
     #[test]
+    fn area_graph_expansion_can_feed_neighbor_area_stage() {
+        let dataset = RankingDataset {
+            schools: vec![School {
+                id: "school_area_neighbor".to_string(),
+                name: "Area Neighbor".to_string(),
+                area: "Neighbor Ward".to_string(),
+                prefecture_name: None,
+                school_type: "high_school".to_string(),
+                group_id: "group_area_neighbor".to_string(),
+            }],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_target".to_string(),
+                    name: "Target".to_string(),
+                    line_name: "Target Line".to_string(),
+                    line_id: Some("line_target".to_string()),
+                    area_id: Some("area_target".to_string()),
+                    latitude: 35.0,
+                    longitude: 139.0,
+                },
+                Station {
+                    id: "st_area_neighbor".to_string(),
+                    name: "Area Neighbor Station".to_string(),
+                    line_name: "Other Line".to_string(),
+                    line_id: Some("line_other".to_string()),
+                    area_id: Some("area_neighbor".to_string()),
+                    latitude: 36.0,
+                    longitude: 140.0,
+                },
+            ],
+            school_station_links: vec![SchoolStationLink {
+                school_id: "school_area_neighbor".to_string(),
+                station_id: "st_area_neighbor".to_string(),
+                walking_minutes: 9,
+                distance_meters: 800,
+                hop_distance: 0,
+                line_name: "Other Line".to_string(),
+            }],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 1;
+        profiles.fallback.min_results = 1;
+        let engine = RankingEngine::new(profiles, "v030-area-graph-expansion-test");
+        let mut query = query("st_target", PlacementKind::Search);
+        query.context = Some(RankingContext {
+            context_source: ContextSource::RequestStation,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Target Line".to_string(),
+                operator_name: None,
+            }),
+            station: Some(StationContext {
+                station_id: "st_target".to_string(),
+                station_name: "Target".to_string(),
+            }),
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+        let graph_expansion = CandidateGraphExpansion::from_parts(
+            None,
+            AreaGraphExpansion::new("area_target", vec!["area_neighbor".to_string()]),
+        );
+
+        let result = engine
+            .recommend_with_graph_expansion(&dataset, &query, &graph_expansion)
+            .expect("recommendation result");
+
+        assert_eq!(result.candidate_counts.get("neighbor_area"), Some(&1));
+        assert_eq!(result.fallback_stage, FallbackStage::NeighborArea);
+        assert_eq!(result.items[0].school_id, "school_area_neighbor");
+    }
+
+    #[test]
     fn hokkaido_context_does_not_prioritize_okinawa_popularity() {
         let dataset = RankingDataset {
             schools: vec![
@@ -695,6 +990,7 @@ mod tests {
                     name: "Sapporo".to_string(),
                     line_name: "Sapporo Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 43.0618,
                     longitude: 141.3545,
                 },
@@ -703,6 +999,7 @@ mod tests {
                     name: "Naha".to_string(),
                     line_name: "Yui Rail".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 26.2124,
                     longitude: 127.6792,
                 },
@@ -780,6 +1077,7 @@ mod tests {
                     name: "Tokyo".to_string(),
                     line_name: "Tokyo Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -788,6 +1086,7 @@ mod tests {
                     name: "Osaka".to_string(),
                     line_name: "Osaka Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 34.0,
                     longitude: 135.0,
                 },

@@ -14,7 +14,9 @@ use axum::{
 use observability::{cache_hit, cache_miss, cache_write, candidate_retrieval_completed};
 use ranking::RankingError;
 use storage::RecommendationRepository;
-use storage_postgres::{is_foreign_key_violation, user_event_reference_validation_message};
+use storage_postgres::{
+    is_foreign_key_violation, user_event_reference_validation_message, ContextCandidateLinkQuery,
+};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -24,7 +26,10 @@ use crate::{
     errors::{context_resolution_error_message, context_resolution_error_status, error_response},
     request_id::resolve_request_id,
     trace::{build_trace_payload, record_trace_best_effort, TracePayloadInput},
-    trace_graph::build_candidate_plan_graph_diagnostics_for_trace,
+    trace_graph::{
+        build_candidate_plan_graph_diagnostics_for_trace, candidate_graph_expansion_from_storage,
+        load_candidate_graph_expansion_for_plan,
+    },
     tracking::build_tracking_jobs,
     AppState, CandidateBackend,
 };
@@ -233,16 +238,26 @@ async fn recommend(
     let min_candidate_count = state.engine.minimum_candidate_count();
     let actual_candidate_backend =
         actual_candidate_backend_name(&state.candidate_backend, &resolved_context);
+    let storage_graph_expansion = load_candidate_graph_expansion_for_plan(
+        &state.repository,
+        &resolved_context,
+        &target_station,
+    )
+    .await;
+    let candidate_link_query = ContextCandidateLinkQuery {
+        target_station: &target_station,
+        context: &resolved_context,
+        candidate_limit: state.candidate_retrieval_limit,
+        min_scoped_candidates: min_candidate_count,
+        neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
+        neighbor_max_hops,
+    };
     let candidate_links = match &state.candidate_backend {
         CandidateBackend::SqlOnly => match state
             .repository
-            .load_context_candidate_links(
-                &target_station,
-                &resolved_context,
-                state.candidate_retrieval_limit,
-                min_candidate_count,
-                state.neighbor_distance_cap_meters,
-                neighbor_max_hops,
+            .load_context_candidate_links_with_graph_expansion(
+                candidate_link_query,
+                &storage_graph_expansion,
             )
             .await
         {
@@ -264,13 +279,9 @@ async fn recommend(
             {
                 Ok(candidate_links) if candidate_links.len() < min_candidate_count => match state
                     .repository
-                    .load_context_candidate_links(
-                        &target_station,
-                        &resolved_context,
-                        state.candidate_retrieval_limit,
-                        min_candidate_count,
-                        state.neighbor_distance_cap_meters,
-                        neighbor_max_hops,
+                    .load_context_candidate_links_with_graph_expansion(
+                        candidate_link_query,
+                        &storage_graph_expansion,
                     )
                     .await
                 {
@@ -290,13 +301,9 @@ async fn recommend(
         }
         CandidateBackend::Full(_) => match state
             .repository
-            .load_context_candidate_links(
-                &target_station,
-                &resolved_context,
-                state.candidate_retrieval_limit,
-                min_candidate_count,
-                state.neighbor_distance_cap_meters,
-                neighbor_max_hops,
+            .load_context_candidate_links_with_graph_expansion(
+                candidate_link_query,
+                &storage_graph_expansion,
             )
             .await
         {
@@ -324,16 +331,21 @@ async fn recommend(
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
         }
     };
+    let graph_expansion = candidate_graph_expansion_from_storage(storage_graph_expansion);
 
-    let result = match state.engine.recommend(&dataset, &query) {
-        Ok(result) => result,
-        Err(RankingError::UnknownStation(message)) => {
-            return error_response(StatusCode::BAD_REQUEST, message);
-        }
-        Err(RankingError::NoCandidates(message)) => {
-            return error_response(StatusCode::NOT_FOUND, message);
-        }
-    };
+    let result =
+        match state
+            .engine
+            .recommend_with_graph_expansion(&dataset, &query, &graph_expansion)
+        {
+            Ok(result) => result,
+            Err(RankingError::UnknownStation(message)) => {
+                return error_response(StatusCode::BAD_REQUEST, message);
+            }
+            Err(RankingError::NoCandidates(message)) => {
+                return error_response(StatusCode::NOT_FOUND, message);
+            }
+        };
 
     let mut response: RecommendationResponse = result.into();
     response.request_id = Some(request_id.clone());

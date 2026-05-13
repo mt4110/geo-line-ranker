@@ -26,8 +26,9 @@ use serde::{de, Deserialize, Deserializer};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use storage::{
-    AreaAdjacency, ClaimedJob, EvaluationRunRecord, GraphAdjacencyRepository, JobType,
-    LineAdjacency, NewJob, ProfileCompatibilityStatusRecord, ProfileManifestRecord,
+    AreaAdjacency, CandidatePlanAreaGraphExpansion, CandidatePlanGraphExpansion,
+    CandidatePlanLineGraphExpansion, ClaimedJob, EvaluationRunRecord, GraphAdjacencyRepository,
+    JobType, LineAdjacency, NewJob, ProfileCompatibilityStatusRecord, ProfileManifestRecord,
     ProfileRegistryRepository, RecommendationRepository, RecommendationTrace,
     RecommendationTraceCandidatePlanStage, RecommendationTraceCandidatePlanTrace,
     RecommendationTraceContextEvidenceSummary, SessionContextSummary,
@@ -77,6 +78,16 @@ pub struct PgRepository {
     trace_hash_salt: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ContextCandidateLinkQuery<'a> {
+    pub target_station: &'a Station,
+    pub context: &'a RankingContext,
+    pub candidate_limit: usize,
+    pub min_scoped_candidates: usize,
+    pub neighbor_distance_cap_meters: f64,
+    pub neighbor_max_hops: u8,
+}
+
 #[derive(Debug, Clone, Default)]
 struct StationAreaColumns {
     country_code: Option<String>,
@@ -102,6 +113,16 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 
 fn matches_ignore_ascii(actual: Option<&str>, expected: &str) -> bool {
     actual.is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+}
+
+fn candidate_plan_line_graph_origin_id(
+    target_station: &Station,
+    context: &RankingContext,
+) -> Option<String> {
+    match context.line.as_ref() {
+        Some(line) => non_empty(line.line_id.as_deref()).map(str::to_string),
+        None => non_empty(target_station.line_id.as_deref()).map(str::to_string),
+    }
 }
 
 fn normalized_area_context(area_input: &AreaContextInput) -> AreaContext {
@@ -234,7 +255,7 @@ impl PgRepository {
         let client = self.connect().await?;
         client
             .query_opt(
-                "SELECT id, name, line_name, line_id, latitude, longitude
+                "SELECT id, name, line_name, line_id, area_id, latitude, longitude
                  FROM stations
                  WHERE id = $1",
                 &[&station_id],
@@ -246,6 +267,7 @@ impl PgRepository {
                     name: row.get("name"),
                     line_name: row.get("line_name"),
                     line_id: row.get("line_id"),
+                    area_id: row.get("area_id"),
                     latitude: row.get("latitude"),
                     longitude: row.get("longitude"),
                 })
@@ -391,7 +413,7 @@ impl PgRepository {
         if let Some(station_id) = context.station_id() {
             return client
                 .query_opt(
-                    "SELECT id, name, line_name, line_id, latitude, longitude
+                    "SELECT id, name, line_name, line_id, area_id, latitude, longitude
                      FROM stations
                      WHERE id = $1",
                     &[&station_id],
@@ -408,7 +430,7 @@ impl PgRepository {
                 .and_then(|line| line.line_id.as_deref());
             return client
                 .query_opt(
-                    "SELECT id, name, line_name, line_id, latitude, longitude
+                    "SELECT id, name, line_name, line_id, area_id, latitude, longitude
                      FROM stations
                      WHERE ($1::TEXT IS NOT NULL AND line_id = $1)
                         OR (
@@ -463,7 +485,7 @@ impl PgRepository {
 
         client
             .query_opt(
-                "SELECT id, name, line_name, line_id, latitude, longitude
+                "SELECT id, name, line_name, line_id, area_id, latitude, longitude
                  FROM stations
                  ORDER BY id
                  LIMIT 1",
@@ -487,6 +509,7 @@ impl PgRepository {
                     station.name,
                     station.line_name,
                     station.line_id,
+                    station.area_id,
                     station.latitude,
                     station.longitude,
                     line.operator_name,
@@ -510,6 +533,7 @@ impl PgRepository {
             name: station_row.get("name"),
             line_name: station_row.get("line_name"),
             line_id: station_row.get("line_id"),
+            area_id: station_row.get("area_id"),
             latitude: station_row.get("latitude"),
             longitude: station_row.get("longitude"),
         };
@@ -923,7 +947,10 @@ impl PgRepository {
             Some(area) => self.resolve_trace_area_id(client, area).await?,
             None => None,
         };
-        let line_id = context.line.as_ref().and_then(|line| line.line_id.clone());
+        let line_id = context
+            .line
+            .as_ref()
+            .and_then(|line| non_empty(line.line_id.as_deref()).map(str::to_string));
         let station_id = context
             .station
             .as_ref()
@@ -1050,7 +1077,14 @@ impl PgRepository {
     ) -> Result<Option<Station>> {
         client
             .query_opt(
-                "SELECT station.id, station.name, station.line_name, station.line_id, station.latitude, station.longitude
+                "SELECT
+                    station.id,
+                    station.name,
+                    station.line_name,
+                    station.line_id,
+                    station.area_id,
+                    station.latitude,
+                    station.longitude
                  FROM schools AS school
                  INNER JOIN school_station_links AS link
                    ON link.school_id = school.id
@@ -1426,6 +1460,94 @@ impl PgRepository {
             .collect())
     }
 
+    pub async fn load_candidate_plan_graph_expansion(
+        &self,
+        target_station: &Station,
+        context: &RankingContext,
+    ) -> Result<CandidatePlanGraphExpansion> {
+        let area = self
+            .load_candidate_plan_area_graph_expansion(target_station, context)
+            .await?;
+        let line = self
+            .load_candidate_plan_line_graph_expansion(target_station, context)
+            .await?;
+
+        Ok(CandidatePlanGraphExpansion { area, line })
+    }
+
+    async fn load_candidate_plan_area_graph_expansion(
+        &self,
+        target_station: &Station,
+        context: &RankingContext,
+    ) -> Result<Option<CandidatePlanAreaGraphExpansion>> {
+        let Some(origin_area_id) = self
+            .candidate_plan_area_graph_origin_id(target_station, context)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let graph = self.load_geo_graph(&origin_area_id).await?;
+        let adjacent_area_ids = graph.adjacent_area_ids();
+        if adjacent_area_ids.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(CandidatePlanAreaGraphExpansion {
+            origin_area_id,
+            adjacent_area_ids,
+        }))
+    }
+
+    async fn candidate_plan_area_graph_origin_id(
+        &self,
+        target_station: &Station,
+        context: &RankingContext,
+    ) -> Result<Option<String>> {
+        let area_hint_was_ignored = context
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "station_area_conflict");
+        let context_area_id = if area_hint_was_ignored {
+            None
+        } else if let Some(area) = context.area.as_ref() {
+            self.load_area_id_for_context_area(area).await?
+        } else {
+            None
+        };
+        let origin_area_id = if let Some(area_id) = context_area_id {
+            area_id
+        } else if let Some(area_id) = target_station.area_id.clone() {
+            area_id
+        } else {
+            match self.load_station_area_id(&target_station.id).await? {
+                Some(area_id) => area_id,
+                None => return Ok(None),
+            }
+        };
+        Ok(Some(origin_area_id))
+    }
+
+    async fn load_candidate_plan_line_graph_expansion(
+        &self,
+        target_station: &Station,
+        context: &RankingContext,
+    ) -> Result<Option<CandidatePlanLineGraphExpansion>> {
+        let Some(origin_line_id) = candidate_plan_line_graph_origin_id(target_station, context)
+        else {
+            return Ok(None);
+        };
+        let graph = self.load_line_graph(&origin_line_id).await?;
+        let adjacent_line_ids = graph.adjacent_line_ids();
+        if adjacent_line_ids.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(CandidatePlanLineGraphExpansion {
+            origin_line_id,
+            adjacent_line_ids,
+        }))
+    }
+
     pub async fn load_context_candidate_links(
         &self,
         target_station: &Station,
@@ -1435,14 +1557,75 @@ impl PgRepository {
         neighbor_distance_cap_meters: f64,
         neighbor_max_hops: u8,
     ) -> Result<Vec<SchoolStationLink>> {
-        let client = self.connect().await?;
+        let graph_expansion = match self
+            .load_candidate_plan_graph_expansion(target_station, context)
+            .await
+        {
+            Ok(graph_expansion) => graph_expansion,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    station_id = target_station.id,
+                    "failed to load candidate plan graph expansion; using legacy scoped retrieval"
+                );
+                CandidatePlanGraphExpansion::default()
+            }
+        };
+        let query = ContextCandidateLinkQuery {
+            target_station,
+            context,
+            candidate_limit,
+            neighbor_distance_cap_meters,
+            min_scoped_candidates,
+            neighbor_max_hops,
+        };
+        self.load_context_candidate_links_with_graph_expansion(query, &graph_expansion)
+            .await
+    }
+
+    pub async fn load_context_candidate_links_with_graph_expansion(
+        &self,
+        query: ContextCandidateLinkQuery<'_>,
+        graph_expansion: &CandidatePlanGraphExpansion,
+    ) -> Result<Vec<SchoolStationLink>> {
+        let ContextCandidateLinkQuery {
+            target_station,
+            context,
+            candidate_limit,
+            min_scoped_candidates,
+            neighbor_distance_cap_meters,
+            neighbor_max_hops,
+        } = query;
         let station_id = context.station_id().map(str::to_string);
-        let line_id = context.line.as_ref().and_then(|line| line.line_id.clone());
+        let line_id = context
+            .line
+            .as_ref()
+            .and_then(|line| non_empty(line.line_id.as_deref()).map(str::to_string));
         let line_name = context.line_name().map(str::to_string);
         let city_name = context.city_name().map(str::to_string);
         let prefecture_name = context.prefecture_name().map(str::to_string);
-        let station_context_is_explicit = context.station.is_some();
+        let station_context_is_explicit = context.station_id().is_some();
         let include_safe_global_candidates = true;
+        let line_graph_origin_id = candidate_plan_line_graph_origin_id(target_station, context);
+        let area_graph_origin_id = if graph_expansion.area.is_some() {
+            self.candidate_plan_area_graph_origin_id(target_station, context)
+                .await?
+        } else {
+            None
+        };
+        let adjacent_line_ids = graph_expansion
+            .line
+            .as_ref()
+            .filter(|line| line_graph_origin_id.as_deref() == Some(line.origin_line_id.as_str()))
+            .map(|line| line.adjacent_line_ids.clone())
+            .unwrap_or_default();
+        let adjacent_area_ids = graph_expansion
+            .area
+            .as_ref()
+            .filter(|area| area_graph_origin_id.as_deref() == Some(area.origin_area_id.as_str()))
+            .map(|area| area.adjacent_area_ids.clone())
+            .unwrap_or_default();
+        let client = self.connect().await?;
         let rows = client
             .query(
                 "WITH candidate_rows AS (
@@ -1454,12 +1637,14 @@ impl PgRepository {
                         link.hop_distance,
                         link.line_name,
                         candidate_station.line_id AS candidate_line_id,
+                        candidate_station.area_id AS candidate_area_id,
                         candidate_station.geom AS candidate_geom,
                         ST_Distance(
                             candidate_station.geom,
                             ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography
                         ) AS target_distance_meters,
                         school.area AS school_area,
+                        school_area.area_id AS school_area_id,
                         COALESCE(school.prefecture_name, school_area.prefecture_name) AS school_prefecture_name
                     FROM school_station_links AS link
                     INNER JOIN stations AS candidate_station
@@ -1467,7 +1652,7 @@ impl PgRepository {
                     INNER JOIN schools AS school
                       ON school.id = link.school_id
                     LEFT JOIN LATERAL (
-                        SELECT area.prefecture_name
+                        SELECT area.area_id, area.prefecture_name
                         FROM areas AS area
                         WHERE area.country_code = 'JP'
                           AND area.area_level = 'city'
@@ -1517,6 +1702,15 @@ impl PgRepository {
                             )
                         ) AS is_same_prefecture,
                         (
+                            candidate_line_id = ANY($15::TEXT[])
+                            AND hop_distance <= $7
+                            AND ST_DWithin(
+                                candidate_geom,
+                                ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                                $8
+                            )
+                        ) AS is_line_graph_adjacent,
+                        (
                             $12
                             AND station_id <> $13
                             AND NOT (
@@ -1535,10 +1729,14 @@ impl PgRepository {
                                     OR lower(COALESCE(school_prefecture_name, '')) = lower($4)
                                 )
                             )
-                            AND ST_DWithin(
-                                candidate_geom,
-                                ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
-                                $8
+                            AND (
+                                ST_DWithin(
+                                    candidate_geom,
+                                    ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                                    $8
+                                )
+                                OR candidate_area_id = ANY($16::TEXT[])
+                                OR school_area_id = ANY($16::TEXT[])
                             )
                         ) AS is_neighbor_area,
                         (
@@ -1571,6 +1769,7 @@ impl PgRepository {
                     OR link.is_same_line
                     OR link.is_same_city
                     OR link.is_same_prefecture
+                    OR link.is_line_graph_adjacent
                     OR link.is_neighbor_area
                     OR link.is_near_same_line
                     OR (
@@ -1582,6 +1781,7 @@ impl PgRepository {
                                OR scoped.is_same_line
                                OR scoped.is_same_city
                                OR scoped.is_same_prefecture
+                               OR scoped.is_line_graph_adjacent
                                OR scoped.is_neighbor_area
                                OR scoped.is_near_same_line
                         ) < $14
@@ -1590,6 +1790,7 @@ impl PgRepository {
                     CASE
                         WHEN link.is_strict_station THEN 0
                         WHEN link.is_same_line THEN 1
+                        WHEN link.is_line_graph_adjacent THEN 2
                         WHEN link.is_same_city THEN 3
                         WHEN link.is_same_prefecture THEN 4
                         WHEN link.is_neighbor_area THEN 5
@@ -1601,6 +1802,7 @@ impl PgRepository {
                             OR link.is_same_line
                             OR link.is_same_city
                             OR link.is_same_prefecture
+                            OR link.is_line_graph_adjacent
                             OR link.is_neighbor_area
                             OR link.is_near_same_line
                         )
@@ -1627,6 +1829,8 @@ impl PgRepository {
                     &station_context_is_explicit,
                     &target_station.id,
                     &((min_scoped_candidates.max(1)) as i64),
+                    &adjacent_line_ids,
+                    &adjacent_area_ids,
                 ],
             )
             .await?;
@@ -1741,7 +1945,7 @@ impl PgRepository {
 
         let stations: Vec<Station> = client
             .query(
-                "SELECT id, name, line_name, line_id, latitude, longitude
+                "SELECT id, name, line_name, line_id, area_id, latitude, longitude
                  FROM stations
                  WHERE id = ANY($1)
                  ORDER BY id",
@@ -1754,6 +1958,7 @@ impl PgRepository {
                 name: row.get("name"),
                 line_name: row.get("line_name"),
                 line_id: row.get("line_id"),
+                area_id: row.get("area_id"),
                 latitude: row.get("latitude"),
                 longitude: row.get("longitude"),
             })
@@ -2322,6 +2527,7 @@ fn station_from_row(row: Row) -> Station {
         name: row.get("name"),
         line_name: row.get("line_name"),
         line_id: row.get("line_id"),
+        area_id: row.get("area_id"),
         latitude: row.get("latitude"),
         longitude: row.get("longitude"),
     }
@@ -3088,7 +3294,7 @@ impl RecommendationRepository for PgRepository {
 
         let stations = client
             .query(
-                "SELECT id, name, line_name, line_id, latitude, longitude FROM stations ORDER BY id",
+                "SELECT id, name, line_name, line_id, area_id, latitude, longitude FROM stations ORDER BY id",
                 &[],
             )
             .await?
@@ -3098,6 +3304,7 @@ impl RecommendationRepository for PgRepository {
                 name: row.get("name"),
                 line_name: row.get("line_name"),
                 line_id: row.get("line_id"),
+                area_id: row.get("area_id"),
                 latitude: row.get("latitude"),
                 longitude: row.get("longitude"),
             })

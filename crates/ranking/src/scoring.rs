@@ -11,7 +11,9 @@ use serde_json::json;
 use crate::explanation::{build_item_explanation, placement_label};
 use crate::fallback::{fallback_penalty_feature, fallback_penalty_reason, fallback_stage_penalty};
 use crate::feature::{component, debug_details};
-use crate::graph::{CandidateGraph, CandidateGraphEvidence};
+use crate::graph::{
+    CandidateGraph, CandidateGraphEvidence, CandidateGraphExpansion, LineMatchKind,
+};
 use crate::RankingEngine;
 
 #[derive(Debug, Clone)]
@@ -23,16 +25,29 @@ pub(crate) struct ScoredCandidate {
     pub(crate) item: RecommendationItem,
 }
 
+pub(crate) struct CandidateScoringInput<'a> {
+    pub(crate) dataset: &'a RankingDataset,
+    pub(crate) query: &'a RankingQuery,
+    pub(crate) target_station: &'a Station,
+    pub(crate) placement_profile: &'a PlacementProfile,
+    pub(crate) fallback_stage: &'a FallbackStage,
+    pub(crate) graph_expansion: &'a CandidateGraphExpansion,
+}
+
 impl RankingEngine {
     pub(crate) fn score_candidates(
         &self,
-        dataset: &RankingDataset,
-        query: &RankingQuery,
-        target_station: &Station,
-        placement_profile: &PlacementProfile,
+        input: CandidateScoringInput<'_>,
         candidates: Vec<SchoolStationLink>,
-        fallback_stage: &FallbackStage,
     ) -> Vec<ScoredCandidate> {
+        let CandidateScoringInput {
+            dataset,
+            query,
+            target_station,
+            placement_profile,
+            fallback_stage,
+            graph_expansion,
+        } = input;
         let schools_by_id: HashMap<&str, &School> = dataset
             .schools
             .iter()
@@ -65,11 +80,12 @@ impl RankingEngine {
             .iter()
             .map(|snapshot| (snapshot.school_id.as_str(), snapshot))
             .collect();
-        let graph = CandidateGraph::new(
+        let graph = CandidateGraph::new_with_expansion(
             query,
             target_station,
             self.profiles.fallback.neighbor_distance_cap_meters,
             placement_profile.neighbor_max_hops,
+            graph_expansion,
         );
 
         let school_enabled = placement_profile
@@ -263,7 +279,7 @@ impl RankingEngine {
             ));
         }
 
-        if graph_evidence.line_match.is_same_line {
+        if graph_evidence.counts_as_same_line_candidate() {
             let same_line_bonus = if matches!(fallback_stage, FallbackStage::NeighborArea) {
                 placement_profile.neighbor_same_line_bonus
             } else {
@@ -429,6 +445,16 @@ fn line_match_reason(graph_evidence: &CandidateGraphEvidence) -> String {
         hop_distance => format!("{hop_distance}駅目安"),
     };
 
+    if matches!(
+        graph_evidence.line_match.match_kind,
+        LineMatchKind::LineGraphAdjacentLineId
+    ) {
+        return format!(
+            "{} と接続する路線の候補です（{}）。",
+            graph_evidence.line_match.target_line_name, hop_phrase
+        );
+    }
+
     format!(
         "{} 沿線として確認できる候補です（{}）。",
         graph_evidence.line_match.target_line_name, hop_phrase
@@ -444,6 +470,12 @@ fn route_proximity_reason(
     if graph_evidence.interchange_like {
         return format!(
             "{} と同名駅の乗換相当として、{} まで約 {}m の近さを反映しています。",
+            target_station.name, candidate_station.name, rounded_distance
+        );
+    }
+    if graph_evidence.area_match.is_adjacent_area {
+        return format!(
+            "{} と隣接するエリアの候補として、{} まで約 {}m の距離も確認しています。",
             target_station.name, candidate_station.name, rounded_distance
         );
     }

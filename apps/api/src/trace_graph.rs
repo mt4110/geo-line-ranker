@@ -1,5 +1,6 @@
 use api_contracts::CandidatePlanTraceDto;
 use domain::Station;
+use ranking::{AreaGraphExpansion, CandidateGraphExpansion, LineGraphExpansion};
 use serde_json::{json, Value};
 use storage::{
     AreaClusterDiagnostic, GeoGraph, GraphAdjacencyRepository, InterchangeDiagnostic, LineGraph,
@@ -26,6 +27,39 @@ pub(crate) async fn build_candidate_plan_graph_diagnostics_for_trace(
     } else {
         None
     }
+}
+
+pub(crate) async fn load_candidate_graph_expansion_for_plan(
+    repository: &PgRepository,
+    context: &context::RankingContext,
+    target_station: &Station,
+) -> storage::CandidatePlanGraphExpansion {
+    match repository
+        .load_candidate_plan_graph_expansion(target_station, context)
+        .await
+    {
+        Ok(expansion) => expansion,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                station_id = target_station.id,
+                "failed to load candidate plan graph expansion"
+            );
+            storage::CandidatePlanGraphExpansion::default()
+        }
+    }
+}
+
+pub(crate) fn candidate_graph_expansion_from_storage(
+    expansion: storage::CandidatePlanGraphExpansion,
+) -> CandidateGraphExpansion {
+    let line = expansion
+        .line
+        .and_then(|line| LineGraphExpansion::new(line.origin_line_id, line.adjacent_line_ids));
+    let area = expansion
+        .area
+        .and_then(|area| AreaGraphExpansion::new(area.origin_area_id, area.adjacent_area_ids));
+    CandidateGraphExpansion::from_parts(line, area)
 }
 
 async fn build_candidate_plan_graph_diagnostics(
@@ -182,7 +216,7 @@ fn candidate_plan_graph_diagnostics_payload(
     warnings.dedup();
     json!({
         "mode": "diagnostic_read_only",
-        "candidate_expansion_behavior": "unchanged",
+        "candidate_expansion_behavior": "graph_aware_candidate_plan",
         "origin": {
             "area_id": area_origin.map(|origin| origin.id),
             "area_source": area_origin.map(|origin| origin.source),
@@ -356,6 +390,7 @@ mod tests {
             name: "Tamachi".to_string(),
             line_name: "Yamanote".to_string(),
             line_id: Some("line_yamanote".to_string()),
+            area_id: Some("area_tokyo_minato".to_string()),
             latitude: 35.645,
             longitude: 139.747,
         };
@@ -430,7 +465,10 @@ mod tests {
         );
 
         assert_eq!(payload["mode"], "diagnostic_read_only");
-        assert_eq!(payload["candidate_expansion_behavior"], "unchanged");
+        assert_eq!(
+            payload["candidate_expansion_behavior"],
+            "graph_aware_candidate_plan"
+        );
         assert_eq!(payload["geo_graph"]["status"], "loaded");
         assert_eq!(payload["geo_graph"]["edge_count"], 2);
         assert_eq!(payload["geo_graph"]["adjacent_area_count"], 2);
