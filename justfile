@@ -12,6 +12,9 @@ smoke:
 docs:
   ./scripts/docs_check.sh
 
+spellcheck:
+  ./scripts/spellcheck.sh
+
 eval:
   ./scripts/contributor_eval.sh
 

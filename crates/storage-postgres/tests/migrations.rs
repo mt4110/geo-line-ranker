@@ -2,7 +2,8 @@ use std::{fs, path::Path};
 
 use serde_json::json;
 use storage::{
-    GraphAdjacencyRepository, RecommendationRepository, SessionContextSummaryRepository,
+    AreaClusterDiagnostic, GraphAdjacencyRepository, InterchangeDiagnostic,
+    RecommendationRepository, SessionContextSummaryRepository, StationHopDiagnostic,
 };
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
 use tokio_postgres::{error::SqlState, NoTls};
@@ -197,6 +198,20 @@ async fn graph_adjacency_tables_support_reference_reads() -> anyhow::Result<()> 
         );
         assert_eq!(area_edges[0].attributes, json!({ "rank": 1 }));
 
+        let geo_graph = repo.load_geo_graph("area_tokyo_minato").await?;
+        assert_eq!(geo_graph.origin_area_id(), "area_tokyo_minato");
+        assert_eq!(geo_graph.adjacent_area_ids(), vec!["area_tokyo_shinagawa"]);
+        assert_eq!(
+            geo_graph.area_cluster_diagnostics(),
+            vec![AreaClusterDiagnostic {
+                area_cluster_id: "cluster_tokyo_bay".to_string(),
+                observed_area_ids: vec![
+                    "area_tokyo_minato".to_string(),
+                    "area_tokyo_shinagawa".to_string()
+                ],
+            }]
+        );
+
         for invalid_distance in ["'Infinity'::double precision", "'NaN'::double precision"] {
             let statement = format!(
                 "INSERT INTO area_adjacencies (
@@ -234,6 +249,35 @@ async fn graph_adjacency_tables_support_reference_reads() -> anyhow::Result<()> 
         assert_eq!(
             line_edges[0].attributes,
             json!({ "interchange_name": "Shinagawa" })
+        );
+
+        let line_graph = repo.load_line_graph("line_yamanote").await?;
+        assert_eq!(line_graph.origin_line_id(), "line_yamanote");
+        assert_eq!(
+            line_graph.adjacent_line_ids(),
+            vec!["line_keihin_tohoku"]
+        );
+        assert_eq!(
+            line_graph.station_hop_diagnostics(),
+            vec![StationHopDiagnostic {
+                from_line_id: "line_yamanote".to_string(),
+                to_line_id: "line_keihin_tohoku".to_string(),
+                adjacency_kind: "interchange".to_string(),
+                station_hop_count: Some(0),
+                interchange_station_id: Some("st_shinagawa_yamanote".to_string()),
+                requires_transfer: true,
+            }]
+        );
+        assert_eq!(
+            line_graph.interchange_diagnostics(),
+            vec![InterchangeDiagnostic {
+                interchange_station_id: "st_shinagawa_yamanote".to_string(),
+                from_line_id: "line_yamanote".to_string(),
+                to_line_ids: vec!["line_keihin_tohoku".to_string()],
+                adjacency_kinds: vec!["interchange".to_string()],
+                requires_transfer: true,
+                minimum_station_hop_count: Some(0),
+            }]
         );
 
         client

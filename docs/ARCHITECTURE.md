@@ -17,7 +17,10 @@
 - Area and line adjacency tables are PostgreSQL reference data for future
   `GeoGraph` / `LineGraph` expansion. They are read through the storage
   contract and do not change ranking weights, crawler behavior, or dynamic
-  connector loading by themselves.
+  connector loading by themselves. The storage contract exposes canonical
+  read-only `GeoGraph` / `LineGraph` components that normalize deterministic
+  edge ordering and provide diagnostics for observed area clusters, station
+  hops, and interchange groups.
 - Session context summaries are PostgreSQL diagnostic/reference data keyed by a
   hashed session identifier. They are read through the storage contract and do
   not change ranking, crawler, or connector runtime behavior by themselves.
