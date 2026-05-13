@@ -24,6 +24,7 @@ use crate::{
     errors::{context_resolution_error_message, context_resolution_error_status, error_response},
     request_id::resolve_request_id,
     trace::{build_trace_payload, record_trace_best_effort, TracePayloadInput},
+    trace_graph::build_candidate_plan_graph_diagnostics_for_trace,
     tracking::build_tracking_jobs,
     AppState, CandidateBackend,
 };
@@ -193,11 +194,19 @@ async fn recommend(
                     actual_candidate_backend_name(&state.candidate_backend, &resolved_context);
                 response.request_id = Some(request_id.clone());
                 cache_hit(cache_key);
+                let graph_diagnostics = build_candidate_plan_graph_diagnostics_for_trace(
+                    &state.repository,
+                    &resolved_context,
+                    &target_station,
+                    response.candidate_plan_trace.as_ref(),
+                )
+                .await;
                 record_trace_best_effort(
                     &state.repository,
                     &request,
                     &response,
                     "cache",
+                    graph_diagnostics.as_ref(),
                     build_trace_payload(TracePayloadInput {
                         response_source: "cache",
                         context: &resolved_context,
@@ -328,11 +337,19 @@ async fn recommend(
 
     let mut response: RecommendationResponse = result.into();
     response.request_id = Some(request_id.clone());
+    let graph_diagnostics = build_candidate_plan_graph_diagnostics_for_trace(
+        &state.repository,
+        &resolved_context,
+        &target_station,
+        response.candidate_plan_trace.as_ref(),
+    )
+    .await;
     record_trace_best_effort(
         &state.repository,
         &request,
         &response,
         "fresh",
+        graph_diagnostics.as_ref(),
         build_trace_payload(TracePayloadInput {
             response_source: "fresh",
             context: &resolved_context,

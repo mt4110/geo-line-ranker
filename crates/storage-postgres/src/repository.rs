@@ -253,6 +253,32 @@ impl PgRepository {
             .context("failed to load target station")
     }
 
+    pub async fn load_area_id_for_context_area(
+        &self,
+        area: &AreaContext,
+    ) -> Result<Option<String>> {
+        let client = self.connect().await?;
+        self.resolve_trace_area_id(&client, area).await
+    }
+
+    pub async fn load_station_area_id(&self, station_id: &str) -> Result<Option<String>> {
+        ensure!(
+            !station_id.trim().is_empty(),
+            "station_id must not be empty"
+        );
+        let client = self.connect().await?;
+        client
+            .query_opt(
+                "SELECT area_id
+                 FROM stations
+                 WHERE id = $1",
+                &[&station_id],
+            )
+            .await
+            .map(|row| row.and_then(|row| row.get("area_id")))
+            .with_context(|| format!("failed to load station area_id for {station_id}"))
+    }
+
     pub async fn resolve_context(
         &self,
         request_id: &str,

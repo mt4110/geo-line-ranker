@@ -31,6 +31,13 @@ inspect deterministic area edge ordering, observed area cluster membership,
 station hop metadata, and interchange groups without changing candidate
 expansion or score math.
 
+Dedicated candidate plan trace rows may include `graph_diagnostics` with a
+`diagnostic_read_only` mode. That payload records the resolved graph origins,
+graph read status, edge counts, capped deterministic samples, and
+origin-mismatch/load warnings. It is for plan inspection and audit only;
+current candidate expansion still follows the existing fallback ladder and does
+not consume adjacency edges.
+
 ## Session context summaries
 
 PostgreSQL owns `session_context_summaries` as diagnostic/reference data for

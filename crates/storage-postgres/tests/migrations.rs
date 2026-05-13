@@ -1,5 +1,6 @@
 use std::{fs, path::Path};
 
+use context::AreaContext;
 use serde_json::json;
 use storage::{
     AreaClusterDiagnostic, GraphAdjacencyRepository, InterchangeDiagnostic,
@@ -135,9 +136,9 @@ async fn graph_adjacency_tables_support_reference_reads() -> anyhow::Result<()> 
                     ('line_yamanote', 'JR Yamanote Line', 'JP', 'fixture', '2026-05-13'),
                     ('line_keihin_tohoku', 'JR Keihin-Tohoku Line', 'JP', 'fixture', '2026-05-13');
 
-                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id)
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id, area_id)
                  VALUES
-                    ('st_shinagawa_yamanote', 'Shinagawa', 'JR Yamanote Line', 35.6285, 139.7388, 'line_yamanote');
+                    ('st_shinagawa_yamanote', 'Shinagawa', 'JR Yamanote Line', 35.6285, 139.7388, 'line_yamanote', 'area_tokyo_minato');
 
                  INSERT INTO area_adjacencies (
                     from_area_id,
@@ -187,6 +188,22 @@ async fn graph_adjacency_tables_support_reference_reads() -> anyhow::Result<()> 
 
         let repo = PgRepository::new(&database_url);
         repo.ready_check().await?;
+
+        assert_eq!(
+            repo.load_station_area_id("st_shinagawa_yamanote").await?,
+            Some("area_tokyo_minato".to_string())
+        );
+        assert_eq!(
+            repo.load_area_id_for_context_area(&AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: Some("Tokyo".to_string()),
+                city_code: None,
+                city_name: Some("Minato".to_string()),
+            })
+            .await?,
+            Some("area_tokyo_minato".to_string())
+        );
 
         let area_edges = repo.load_area_adjacencies("area_tokyo_minato").await?;
         assert_eq!(area_edges.len(), 1);

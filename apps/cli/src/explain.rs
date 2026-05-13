@@ -115,7 +115,19 @@ pub struct ExplainTraceCandidatePlanSummary {
     pub selected_stage: String,
     pub stop_reason: String,
     pub area_context_usable: bool,
+    pub graph_diagnostics: Option<ExplainTraceCandidatePlanGraphDiagnosticsSummary>,
     pub stages: Vec<ExplainTraceCandidatePlanStageSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExplainTraceCandidatePlanGraphDiagnosticsSummary {
+    pub mode: Option<String>,
+    pub candidate_expansion_behavior: Option<String>,
+    pub geo_graph_status: Option<String>,
+    pub geo_graph_edge_count: Option<usize>,
+    pub line_graph_status: Option<String>,
+    pub line_graph_edge_count: Option<usize>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -431,6 +443,11 @@ fn summarize_candidate_plan_trace(
             selected_stage: trace.selected_stage.clone(),
             stop_reason: trace.stop_reason.clone(),
             area_context_usable: trace.area_context_usable,
+            graph_diagnostics: summarize_candidate_plan_graph_diagnostics(
+                trace.plan_payload.get("graph_diagnostics").or_else(|| {
+                    candidate_plan_trace.and_then(|payload| payload.get("graph_diagnostics"))
+                }),
+            ),
             stages: trace
                 .stages
                 .iter()
@@ -460,6 +477,9 @@ fn summarize_candidate_plan_trace(
             selected_stage: trace.selected_stage.as_str().to_string(),
             stop_reason: trace.stop_reason,
             area_context_usable: trace.area_context_usable,
+            graph_diagnostics: summarize_candidate_plan_graph_diagnostics(
+                candidate_plan_trace.get("graph_diagnostics"),
+            ),
             stages: trace
                 .stages
                 .into_iter()
@@ -479,6 +499,42 @@ fn summarize_candidate_plan_trace(
             None
         }
     }
+}
+
+fn summarize_candidate_plan_graph_diagnostics(
+    graph_diagnostics: Option<&Value>,
+) -> Option<ExplainTraceCandidatePlanGraphDiagnosticsSummary> {
+    let graph_diagnostics = graph_diagnostics?;
+    Some(ExplainTraceCandidatePlanGraphDiagnosticsSummary {
+        mode: string_field(graph_diagnostics, "mode"),
+        candidate_expansion_behavior: string_field(
+            graph_diagnostics,
+            "candidate_expansion_behavior",
+        ),
+        geo_graph_status: graph_diagnostics
+            .get("geo_graph")
+            .and_then(|value| string_field(value, "status")),
+        geo_graph_edge_count: graph_diagnostics
+            .get("geo_graph")
+            .and_then(|value| usize_field(value, "edge_count")),
+        line_graph_status: graph_diagnostics
+            .get("line_graph")
+            .and_then(|value| string_field(value, "status")),
+        line_graph_edge_count: graph_diagnostics
+            .get("line_graph")
+            .and_then(|value| usize_field(value, "edge_count")),
+        warnings: graph_diagnostics
+            .get("warnings")
+            .and_then(Value::as_array)
+            .map(|warnings| {
+                warnings
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
 }
 
 fn dedicated_i64_to_usize(field: &str, value: i64, warnings: &mut Vec<String>) -> usize {
@@ -797,7 +853,21 @@ mod tests {
             selected_stage: "same_line".to_string(),
             stop_reason: "dedicated_rows".to_string(),
             area_context_usable: true,
-            plan_payload: json!({ "selected_stage": "same_line" }),
+            plan_payload: json!({
+                "selected_stage": "same_line",
+                "graph_diagnostics": {
+                    "mode": "diagnostic_read_only",
+                    "candidate_expansion_behavior": "unchanged",
+                    "geo_graph": {
+                        "status": "loaded",
+                        "edge_count": 2
+                    },
+                    "line_graph": {
+                        "status": "origin_unavailable"
+                    },
+                    "warnings": ["line_graph_origin_unavailable"]
+                }
+            }),
             stages: vec![storage::RecommendationTraceCandidatePlanStage {
                 stage_order: 0,
                 stage: "same_line".to_string(),
@@ -819,6 +889,73 @@ mod tests {
         assert_eq!(plan.stop_reason, "dedicated_rows");
         assert!(plan.area_context_usable);
         assert_eq!(plan.stages[0].candidate_count, 4);
+        let graph = plan.graph_diagnostics.expect("graph diagnostics summary");
+        assert_eq!(graph.mode.as_deref(), Some("diagnostic_read_only"));
+        assert_eq!(graph.geo_graph_status.as_deref(), Some("loaded"));
+        assert_eq!(graph.geo_graph_edge_count, Some(2));
+        assert_eq!(
+            graph.warnings,
+            vec!["line_graph_origin_unavailable".to_string()]
+        );
+    }
+
+    #[test]
+    fn explain_trace_falls_back_to_payload_graph_diagnostics_for_legacy_plan_rows() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.trace_payload["candidate_plan_trace"] = json!({
+            "minimum_candidate_count": 1,
+            "selected_stage": "strict_station",
+            "stop_reason": "payload_copy",
+            "area_context_usable": false,
+            "graph_diagnostics": {
+                "mode": "diagnostic_read_only",
+                "candidate_expansion_behavior": "unchanged",
+                "geo_graph": {
+                    "status": "loaded",
+                    "edge_count": 1
+                },
+                "line_graph": {
+                    "status": "not_loaded"
+                },
+                "warnings": ["line_graph_load_failed"]
+            },
+            "stages": []
+        });
+        trace.candidate_plan_trace = Some(storage::RecommendationTraceCandidatePlanTrace {
+            minimum_candidate_count: 3,
+            selected_stage: "same_line".to_string(),
+            stop_reason: "dedicated_rows".to_string(),
+            area_context_usable: true,
+            plan_payload: json!({ "selected_stage": "same_line" }),
+            stages: vec![storage::RecommendationTraceCandidatePlanStage {
+                stage_order: 0,
+                stage: "same_line".to_string(),
+                candidate_count: 4,
+                required_min_candidates: 3,
+                status: "selected".to_string(),
+                reason_code: "selected_sufficient_scoped_candidates".to_string(),
+                stage_payload: json!({ "stage": "same_line" }),
+            }],
+        });
+
+        let report = explain_trace_row(&trace);
+        let plan = report
+            .trace_payload
+            .candidate_plan_trace
+            .expect("candidate plan summary");
+
+        assert_eq!(plan.selected_stage, "same_line");
+        assert_eq!(plan.stop_reason, "dedicated_rows");
+        let graph = plan.graph_diagnostics.expect("graph diagnostics summary");
+        assert_eq!(graph.geo_graph_status.as_deref(), Some("loaded"));
+        assert_eq!(graph.geo_graph_edge_count, Some(1));
+        assert_eq!(graph.line_graph_status.as_deref(), Some("not_loaded"));
+        assert_eq!(graph.warnings, vec!["line_graph_load_failed".to_string()]);
     }
 
     #[test]

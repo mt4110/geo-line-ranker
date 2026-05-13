@@ -26,9 +26,14 @@ async fn record_trace(
     repository: &PgRepository,
     request: &RecommendationRequest,
     response: &RecommendationResponse,
+    candidate_plan_graph_diagnostics: Option<&Value>,
     trace_payload: serde_json::Value,
 ) -> Result<()> {
-    let candidate_plan_trace = match build_candidate_plan_trace_record(response) {
+    let candidate_plan_trace = match build_candidate_plan_trace_record(
+        response,
+        trace_payload.get("candidate_plan_trace"),
+        candidate_plan_graph_diagnostics,
+    ) {
         Ok(candidate_plan_trace) => candidate_plan_trace,
         Err(error) => {
             tracing::warn!(%error, "failed to build candidate plan trace detail rows");
@@ -67,13 +72,24 @@ fn build_context_evidence_summary_record(
 
 fn build_candidate_plan_trace_record(
     response: &RecommendationResponse,
+    candidate_plan_trace_payload: Option<&Value>,
+    candidate_plan_graph_diagnostics: Option<&Value>,
 ) -> Result<Option<RecommendationTraceCandidatePlanTrace>> {
     response
         .candidate_plan_trace
         .as_ref()
         .map(|trace| {
-            let plan_payload = serde_json::to_value(trace)
-                .context("failed to serialize candidate plan trace for storage")?;
+            let mut plan_payload =
+                match candidate_plan_trace_payload.filter(|value| value.is_object()) {
+                    Some(payload) => payload.clone(),
+                    None => serde_json::to_value(trace)
+                        .context("failed to serialize candidate plan trace for storage")?,
+                };
+            if let Some(graph_diagnostics) = candidate_plan_graph_diagnostics.or_else(|| {
+                candidate_plan_trace_payload.and_then(|payload| payload.get("graph_diagnostics"))
+            }) {
+                plan_payload["graph_diagnostics"] = graph_diagnostics.clone();
+            }
             let stages = trace
                 .stages
                 .iter()
@@ -113,9 +129,18 @@ pub(crate) async fn record_trace_best_effort(
     request: &RecommendationRequest,
     response: &RecommendationResponse,
     response_source: &'static str,
+    candidate_plan_graph_diagnostics: Option<&Value>,
     trace_payload: serde_json::Value,
 ) {
-    if let Err(error) = record_trace(repository, request, response, trace_payload).await {
+    if let Err(error) = record_trace(
+        repository,
+        request,
+        response,
+        candidate_plan_graph_diagnostics,
+        trace_payload,
+    )
+    .await
+    {
         tracing::warn!(response_source, %error, "failed to persist recommendation trace");
     }
 }
@@ -182,6 +207,7 @@ mod tests {
         FallbackStageDto, RecommendationResponse,
     };
     use config::CandidateRetrievalMode;
+    use serde_json::json;
     use std::collections::BTreeMap;
 
     use super::{
@@ -256,6 +282,9 @@ mod tests {
             payload["candidate_plan_trace"]["stages"][0]["status"],
             "selected"
         );
+        assert!(payload["candidate_plan_trace"]
+            .get("graph_diagnostics")
+            .is_none());
     }
 
     #[test]
@@ -310,13 +339,26 @@ mod tests {
             profile_version: "test".to_string(),
             algorithm_version: "test".to_string(),
         };
-        let trace = build_candidate_plan_trace_record(&response)
-            .expect("candidate plan conversion")
-            .expect("candidate plan record");
+        let trace = build_candidate_plan_trace_record(
+            &response,
+            Some(&json!({
+                "selected_stage": "same_line"
+            })),
+            Some(&json!({
+                "mode": "diagnostic_read_only",
+                "candidate_expansion_behavior": "unchanged"
+            })),
+        )
+        .expect("candidate plan conversion")
+        .expect("candidate plan record");
 
         assert_eq!(trace.selected_stage, "same_line");
         assert_eq!(trace.stages.len(), 1);
         assert_eq!(trace.stages[0].status, "selected");
         assert_eq!(trace.stages[0].stage_order, 0);
+        assert_eq!(
+            trace.plan_payload["graph_diagnostics"]["mode"],
+            "diagnostic_read_only"
+        );
     }
 }
