@@ -17,7 +17,6 @@ pub(crate) struct TracePayloadInput<'a> {
     pub(crate) candidate_count: usize,
     pub(crate) duration_ms: u128,
     pub(crate) candidate_plan_trace: Option<&'a CandidatePlanTraceDto>,
-    pub(crate) candidate_plan_graph_diagnostics: Option<&'a Value>,
     pub(crate) target_station_id: &'a str,
     pub(crate) candidate_limit: usize,
     pub(crate) neighbor_distance_cap_meters: f64,
@@ -27,11 +26,13 @@ async fn record_trace(
     repository: &PgRepository,
     request: &RecommendationRequest,
     response: &RecommendationResponse,
+    candidate_plan_graph_diagnostics: Option<&Value>,
     trace_payload: serde_json::Value,
 ) -> Result<()> {
     let candidate_plan_trace = match build_candidate_plan_trace_record(
         response,
         trace_payload.get("candidate_plan_trace"),
+        candidate_plan_graph_diagnostics,
     ) {
         Ok(candidate_plan_trace) => candidate_plan_trace,
         Err(error) => {
@@ -72,17 +73,23 @@ fn build_context_evidence_summary_record(
 fn build_candidate_plan_trace_record(
     response: &RecommendationResponse,
     candidate_plan_trace_payload: Option<&Value>,
+    candidate_plan_graph_diagnostics: Option<&Value>,
 ) -> Result<Option<RecommendationTraceCandidatePlanTrace>> {
     response
         .candidate_plan_trace
         .as_ref()
         .map(|trace| {
-            let plan_payload = match candidate_plan_trace_payload.filter(|value| value.is_object())
-            {
-                Some(payload) => payload.clone(),
-                None => serde_json::to_value(trace)
-                    .context("failed to serialize candidate plan trace for storage")?,
-            };
+            let mut plan_payload =
+                match candidate_plan_trace_payload.filter(|value| value.is_object()) {
+                    Some(payload) => payload.clone(),
+                    None => serde_json::to_value(trace)
+                        .context("failed to serialize candidate plan trace for storage")?,
+                };
+            if let Some(graph_diagnostics) = candidate_plan_graph_diagnostics.or_else(|| {
+                candidate_plan_trace_payload.and_then(|payload| payload.get("graph_diagnostics"))
+            }) {
+                plan_payload["graph_diagnostics"] = graph_diagnostics.clone();
+            }
             let stages = trace
                 .stages
                 .iter()
@@ -122,9 +129,18 @@ pub(crate) async fn record_trace_best_effort(
     request: &RecommendationRequest,
     response: &RecommendationResponse,
     response_source: &'static str,
+    candidate_plan_graph_diagnostics: Option<&Value>,
     trace_payload: serde_json::Value,
 ) {
-    if let Err(error) = record_trace(repository, request, response, trace_payload).await {
+    if let Err(error) = record_trace(
+        repository,
+        request,
+        response,
+        candidate_plan_graph_diagnostics,
+        trace_payload,
+    )
+    .await
+    {
         tracing::warn!(response_source, %error, "failed to persist recommendation trace");
     }
 }
@@ -152,10 +168,7 @@ pub(crate) fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::V
 
     if let Some(candidate_plan_trace) = input.candidate_plan_trace {
         match serde_json::to_value(candidate_plan_trace) {
-            Ok(mut candidate_plan_trace_value) => {
-                if let Some(graph_diagnostics) = input.candidate_plan_graph_diagnostics {
-                    candidate_plan_trace_value["graph_diagnostics"] = graph_diagnostics.clone();
-                }
+            Ok(candidate_plan_trace_value) => {
                 payload["candidate_plan_trace"] = candidate_plan_trace_value;
             }
             Err(error) => {
@@ -216,7 +229,6 @@ mod tests {
             candidate_count: 3,
             duration_ms: 12,
             candidate_plan_trace: None,
-            candidate_plan_graph_diagnostics: None,
             target_station_id: "st_tamachi",
             candidate_limit: 256,
             neighbor_distance_cap_meters: 5_000.0,
@@ -257,10 +269,6 @@ mod tests {
             candidate_count: 3,
             duration_ms: 12,
             candidate_plan_trace: Some(&candidate_plan_trace),
-            candidate_plan_graph_diagnostics: Some(&json!({
-                "mode": "diagnostic_read_only",
-                "candidate_expansion_behavior": "unchanged"
-            })),
             target_station_id: "st_tamachi",
             candidate_limit: 256,
             neighbor_distance_cap_meters: 5_000.0,
@@ -274,10 +282,9 @@ mod tests {
             payload["candidate_plan_trace"]["stages"][0]["status"],
             "selected"
         );
-        assert_eq!(
-            payload["candidate_plan_trace"]["graph_diagnostics"]["mode"],
-            "diagnostic_read_only"
-        );
+        assert!(payload["candidate_plan_trace"]
+            .get("graph_diagnostics")
+            .is_none());
     }
 
     #[test]
@@ -294,7 +301,6 @@ mod tests {
             candidate_count: 3,
             duration_ms: 12,
             candidate_plan_trace: None,
-            candidate_plan_graph_diagnostics: None,
             target_station_id: "st_tamachi",
             candidate_limit: 256,
             neighbor_distance_cap_meters: 5_000.0,
@@ -336,11 +342,11 @@ mod tests {
         let trace = build_candidate_plan_trace_record(
             &response,
             Some(&json!({
-                "selected_stage": "same_line",
-                "graph_diagnostics": {
-                    "mode": "diagnostic_read_only",
-                    "candidate_expansion_behavior": "unchanged"
-                }
+                "selected_stage": "same_line"
+            })),
+            Some(&json!({
+                "mode": "diagnostic_read_only",
+                "candidate_expansion_behavior": "unchanged"
             })),
         )
         .expect("candidate plan conversion")

@@ -31,12 +31,12 @@ inspect deterministic area edge ordering, observed area cluster membership,
 station hop metadata, and interchange groups without changing candidate
 expansion or score math.
 
-Recommendation traces may include
-`candidate_plan_trace.graph_diagnostics` with a `diagnostic_read_only` mode.
-That payload records the resolved graph origins, graph read status, edge
-counts, deterministic adjacent ids, and origin-mismatch/load warnings. It is
-for plan inspection and audit only; current candidate expansion still follows
-the existing fallback ladder and does not consume adjacency edges.
+Dedicated candidate plan trace rows may include `graph_diagnostics` with a
+`diagnostic_read_only` mode. That payload records the resolved graph origins,
+graph read status, edge counts, capped deterministic samples, and
+origin-mismatch/load warnings. It is for plan inspection and audit only;
+current candidate expansion still follows the existing fallback ladder and does
+not consume adjacency edges.
 
 ## Session context summaries
 

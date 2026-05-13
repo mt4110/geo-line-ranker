@@ -1,8 +1,13 @@
 use api_contracts::CandidatePlanTraceDto;
 use domain::Station;
 use serde_json::{json, Value};
-use storage::{GeoGraph, GraphAdjacencyRepository, LineGraph};
+use storage::{
+    AreaClusterDiagnostic, GeoGraph, GraphAdjacencyRepository, InterchangeDiagnostic, LineGraph,
+    StationHopDiagnostic,
+};
 use storage_postgres::PgRepository;
+
+const GRAPH_DIAGNOSTIC_SAMPLE_LIMIT: usize = 8;
 
 #[derive(Debug, Clone, Copy)]
 struct GraphDiagnosticOrigin<'a> {
@@ -196,14 +201,20 @@ fn geo_graph_diagnostic_payload(
     warnings: &mut Vec<String>,
 ) -> Value {
     match (origin, graph) {
-        (Some(origin), Some(graph)) if graph.origin_area_id() == origin.id => json!({
-            "status": "loaded",
-            "origin_area_id": graph.origin_area_id(),
-            "origin_source": origin.source,
-            "edge_count": graph.edges().len(),
-            "adjacent_area_ids": graph.adjacent_area_ids(),
-            "area_clusters": graph.area_cluster_diagnostics(),
-        }),
+        (Some(origin), Some(graph)) if graph.origin_area_id() == origin.id => {
+            let adjacent_area_ids = graph.adjacent_area_ids();
+            let area_clusters = graph.area_cluster_diagnostics();
+            json!({
+                "status": "loaded",
+                "origin_area_id": graph.origin_area_id(),
+                "origin_source": origin.source,
+                "edge_count": graph.edges().len(),
+                "adjacent_area_count": adjacent_area_ids.len(),
+                "adjacent_area_id_sample": capped_string_sample(adjacent_area_ids),
+                "area_cluster_count": area_clusters.len(),
+                "area_cluster_sample": area_cluster_diagnostic_sample(area_clusters),
+            })
+        }
         (Some(origin), Some(graph)) => {
             warnings.push("geo_graph_origin_mismatch".to_string());
             json!({
@@ -230,15 +241,23 @@ fn line_graph_diagnostic_payload(
     warnings: &mut Vec<String>,
 ) -> Value {
     match (origin, graph) {
-        (Some(origin), Some(graph)) if graph.origin_line_id() == origin.id => json!({
-            "status": "loaded",
-            "origin_line_id": graph.origin_line_id(),
-            "origin_source": origin.source,
-            "edge_count": graph.edges().len(),
-            "adjacent_line_ids": graph.adjacent_line_ids(),
-            "station_hops": graph.station_hop_diagnostics(),
-            "interchanges": graph.interchange_diagnostics(),
-        }),
+        (Some(origin), Some(graph)) if graph.origin_line_id() == origin.id => {
+            let adjacent_line_ids = graph.adjacent_line_ids();
+            let station_hops = graph.station_hop_diagnostics();
+            let interchanges = graph.interchange_diagnostics();
+            json!({
+                "status": "loaded",
+                "origin_line_id": graph.origin_line_id(),
+                "origin_source": origin.source,
+                "edge_count": graph.edges().len(),
+                "adjacent_line_count": adjacent_line_ids.len(),
+                "adjacent_line_id_sample": capped_string_sample(adjacent_line_ids),
+                "station_hop_count": station_hops.len(),
+                "station_hop_sample": station_hop_diagnostic_sample(station_hops),
+                "interchange_count": interchanges.len(),
+                "interchange_sample": interchange_diagnostic_sample(interchanges),
+            })
+        }
         (Some(origin), Some(graph)) => {
             warnings.push("line_graph_origin_mismatch".to_string());
             json!({
@@ -259,6 +278,63 @@ fn line_graph_diagnostic_payload(
     }
 }
 
+fn capped_string_sample(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .take(GRAPH_DIAGNOSTIC_SAMPLE_LIMIT)
+        .collect()
+}
+
+fn area_cluster_diagnostic_sample(area_clusters: Vec<AreaClusterDiagnostic>) -> Vec<Value> {
+    area_clusters
+        .into_iter()
+        .take(GRAPH_DIAGNOSTIC_SAMPLE_LIMIT)
+        .map(|cluster| {
+            json!({
+                "area_cluster_id": cluster.area_cluster_id,
+                "observed_area_count": cluster.observed_area_ids.len(),
+                "observed_area_id_sample": capped_string_sample(cluster.observed_area_ids),
+            })
+        })
+        .collect()
+}
+
+fn station_hop_diagnostic_sample(station_hops: Vec<StationHopDiagnostic>) -> Vec<Value> {
+    station_hops
+        .into_iter()
+        .take(GRAPH_DIAGNOSTIC_SAMPLE_LIMIT)
+        .map(|hop| {
+            json!({
+                "from_line_id": hop.from_line_id,
+                "to_line_id": hop.to_line_id,
+                "adjacency_kind": hop.adjacency_kind,
+                "station_hop_count": hop.station_hop_count,
+                "interchange_station_id": hop.interchange_station_id,
+                "requires_transfer": hop.requires_transfer,
+            })
+        })
+        .collect()
+}
+
+fn interchange_diagnostic_sample(interchanges: Vec<InterchangeDiagnostic>) -> Vec<Value> {
+    interchanges
+        .into_iter()
+        .take(GRAPH_DIAGNOSTIC_SAMPLE_LIMIT)
+        .map(|interchange| {
+            json!({
+                "interchange_station_id": interchange.interchange_station_id,
+                "from_line_id": interchange.from_line_id,
+                "to_line_count": interchange.to_line_ids.len(),
+                "to_line_id_sample": capped_string_sample(interchange.to_line_ids),
+                "adjacency_kind_count": interchange.adjacency_kinds.len(),
+                "adjacency_kind_sample": capped_string_sample(interchange.adjacency_kinds),
+                "requires_transfer": interchange.requires_transfer,
+                "minimum_station_hop_count": interchange.minimum_station_hop_count,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use domain::Station;
@@ -268,7 +344,7 @@ mod tests {
 
     use super::{
         build_candidate_plan_graph_diagnostics_for_trace, candidate_plan_graph_diagnostics_payload,
-        GraphDiagnosticOrigin,
+        GraphDiagnosticOrigin, GRAPH_DIAGNOSTIC_SAMPLE_LIMIT,
     };
 
     #[tokio::test]
@@ -357,13 +433,92 @@ mod tests {
         assert_eq!(payload["candidate_expansion_behavior"], "unchanged");
         assert_eq!(payload["geo_graph"]["status"], "loaded");
         assert_eq!(payload["geo_graph"]["edge_count"], 2);
+        assert_eq!(payload["geo_graph"]["adjacent_area_count"], 2);
         assert_eq!(
-            payload["geo_graph"]["adjacent_area_ids"],
+            payload["geo_graph"]["adjacent_area_id_sample"],
             json!(["area_tokyo_chuo", "area_tokyo_shinagawa"])
         );
+        assert_eq!(payload["geo_graph"]["area_cluster_count"], 1);
         assert_eq!(payload["line_graph"]["status"], "loaded");
         assert_eq!(payload["line_graph"]["edge_count"], 1);
+        assert_eq!(payload["line_graph"]["adjacent_line_count"], 1);
+        assert_eq!(payload["line_graph"]["station_hop_count"], 1);
+        assert_eq!(payload["line_graph"]["interchange_count"], 1);
         assert_eq!(payload["warnings"], json!([]));
+    }
+
+    #[test]
+    fn candidate_plan_graph_diagnostics_caps_detailed_samples() {
+        let geo_graph = GeoGraph::from_area_adjacencies(
+            "area_tokyo_minato",
+            (0..12).map(|index| AreaAdjacency {
+                from_area_id: "area_tokyo_minato".to_string(),
+                to_area_id: format!("area_tokyo_neighbor_{index:02}"),
+                adjacency_kind: "city_neighbor".to_string(),
+                distance_meters: Some(f64::from(index)),
+                area_cluster_id: Some(format!("cluster_{index:02}")),
+                source_id: Some("fixture".to_string()),
+                source_version: Some("2026-05-13".to_string()),
+                attributes: json!({}),
+            }),
+        )
+        .expect("geo graph");
+        let line_graph = LineGraph::from_line_adjacencies(
+            "line_yamanote",
+            (0..12).map(|index| LineAdjacency {
+                from_line_id: "line_yamanote".to_string(),
+                to_line_id: format!("line_neighbor_{index:02}"),
+                adjacency_kind: "interchange".to_string(),
+                interchange_station_id: Some(format!("st_interchange_{index:02}")),
+                station_hop_count: Some(index),
+                requires_transfer: true,
+                source_id: Some("fixture".to_string()),
+                source_version: Some("2026-05-13".to_string()),
+                attributes: json!({}),
+            }),
+        )
+        .expect("line graph");
+
+        let payload = candidate_plan_graph_diagnostics_payload(
+            Some(GraphDiagnosticOrigin {
+                id: "area_tokyo_minato",
+                source: "context_area",
+            }),
+            Some(&geo_graph),
+            Some(GraphDiagnosticOrigin {
+                id: "line_yamanote",
+                source: "context_line",
+            }),
+            Some(&line_graph),
+            Vec::new(),
+        );
+
+        assert_eq!(payload["geo_graph"]["edge_count"], 12);
+        assert_eq!(payload["geo_graph"]["adjacent_area_count"], 12);
+        assert_eq!(
+            payload["geo_graph"]["adjacent_area_id_sample"]
+                .as_array()
+                .expect("adjacent area sample")
+                .len(),
+            GRAPH_DIAGNOSTIC_SAMPLE_LIMIT
+        );
+        assert_eq!(payload["line_graph"]["edge_count"], 12);
+        assert_eq!(payload["line_graph"]["station_hop_count"], 12);
+        assert_eq!(
+            payload["line_graph"]["station_hop_sample"]
+                .as_array()
+                .expect("station hop sample")
+                .len(),
+            GRAPH_DIAGNOSTIC_SAMPLE_LIMIT
+        );
+        assert_eq!(payload["line_graph"]["interchange_count"], 12);
+        assert_eq!(
+            payload["line_graph"]["interchange_sample"]
+                .as_array()
+                .expect("interchange sample")
+                .len(),
+            GRAPH_DIAGNOSTIC_SAMPLE_LIMIT
+        );
     }
 
     #[test]

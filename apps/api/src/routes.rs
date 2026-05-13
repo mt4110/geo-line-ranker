@@ -206,6 +206,7 @@ async fn recommend(
                     &request,
                     &response,
                     "cache",
+                    graph_diagnostics.as_ref(),
                     build_trace_payload(TracePayloadInput {
                         response_source: "cache",
                         context: &resolved_context,
@@ -214,7 +215,6 @@ async fn recommend(
                         candidate_count: 0,
                         duration_ms: 0,
                         candidate_plan_trace: response.candidate_plan_trace.as_ref(),
-                        candidate_plan_graph_diagnostics: graph_diagnostics.as_ref(),
                         target_station_id: &target_station.id,
                         candidate_limit: state.candidate_retrieval_limit,
                         neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
@@ -349,6 +349,7 @@ async fn recommend(
         &request,
         &response,
         "fresh",
+        graph_diagnostics.as_ref(),
         build_trace_payload(TracePayloadInput {
             response_source: "fresh",
             context: &resolved_context,
@@ -357,7 +358,6 @@ async fn recommend(
             candidate_count: candidate_links.len(),
             duration_ms: retrieval_duration_ms,
             candidate_plan_trace: response.candidate_plan_trace.as_ref(),
-            candidate_plan_graph_diagnostics: graph_diagnostics.as_ref(),
             target_station_id: &target_station.id,
             candidate_limit: state.candidate_retrieval_limit,
             neighbor_distance_cap_meters: state.neighbor_distance_cap_meters,
