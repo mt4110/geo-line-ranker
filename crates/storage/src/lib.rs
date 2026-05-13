@@ -1023,12 +1023,30 @@ mod tests {
         assert!(area_error
             .to_string()
             .contains("geo graph edge must start from origin_area_id"));
+        assert!(area_error
+            .to_string()
+            .contains("expected from_area_id=area_tokyo_other"));
+        assert!(area_error
+            .to_string()
+            .contains("actual from_area_id=area_tokyo_minato"));
+        assert!(area_error
+            .to_string()
+            .contains("to_area_id=area_tokyo_shinagawa"));
 
         let line_error = LineGraph::from_line_adjacencies("line_other", vec![line_adjacency()])
             .expect_err("line graph origin mismatch should fail");
         assert!(line_error
             .to_string()
             .contains("line graph edge must start from origin_line_id"));
+        assert!(line_error
+            .to_string()
+            .contains("expected from_line_id=line_other"));
+        assert!(line_error
+            .to_string()
+            .contains("actual from_line_id=line_yamanote"));
+        assert!(line_error
+            .to_string()
+            .contains("to_line_id=line_keihin_tohoku"));
     }
 
     #[test]

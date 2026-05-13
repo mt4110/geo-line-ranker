@@ -4,13 +4,13 @@ use std::{
 };
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::{ensure_non_empty, AreaAdjacency, LineAdjacency};
 
 /// Canonical read-only geographic graph component backed by area adjacency rows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GeoGraph {
     origin_area_id: String,
     edges: Vec<GeoGraphEdge>,
@@ -30,7 +30,11 @@ impl GeoGraph {
         for edge in &edges {
             anyhow::ensure!(
                 edge.from_area_id == origin_area_id,
-                "geo graph edge must start from origin_area_id"
+                "geo graph edge must start from origin_area_id: expected from_area_id={}, actual from_area_id={}, to_area_id={}, adjacency_kind={}",
+                origin_area_id,
+                edge.from_area_id,
+                edge.to_area_id,
+                edge.adjacency_kind
             );
         }
         sort_geo_graph_edges(&mut edges);
@@ -77,7 +81,7 @@ impl GeoGraph {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GeoGraphEdge {
     pub from_area_id: String,
     pub to_area_id: String,
@@ -105,14 +109,14 @@ impl GeoGraphEdge {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AreaClusterDiagnostic {
     pub area_cluster_id: String,
     pub observed_area_ids: Vec<String>,
 }
 
 /// Canonical read-only rail line graph component backed by line adjacency rows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LineGraph {
     origin_line_id: String,
     edges: Vec<LineGraphEdge>,
@@ -132,7 +136,11 @@ impl LineGraph {
         for edge in &edges {
             anyhow::ensure!(
                 edge.from_line_id == origin_line_id,
-                "line graph edge must start from origin_line_id"
+                "line graph edge must start from origin_line_id: expected from_line_id={}, actual from_line_id={}, to_line_id={}, adjacency_kind={}",
+                origin_line_id,
+                edge.from_line_id,
+                edge.to_line_id,
+                edge.adjacency_kind
             );
         }
         sort_line_graph_edges(&mut edges);
@@ -207,7 +215,7 @@ impl LineGraph {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LineGraphEdge {
     pub from_line_id: String,
     pub to_line_id: String,
@@ -238,7 +246,7 @@ impl LineGraphEdge {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StationHopDiagnostic {
     pub from_line_id: String,
     pub to_line_id: String,
@@ -248,7 +256,7 @@ pub struct StationHopDiagnostic {
     pub requires_transfer: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InterchangeDiagnostic {
     pub interchange_station_id: String,
     pub from_line_id: String,
