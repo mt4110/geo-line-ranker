@@ -30,7 +30,8 @@ use storage::{
     LineAdjacency, NewJob, ProfileCompatibilityStatusRecord, ProfileManifestRecord,
     ProfileRegistryRepository, RecommendationRepository, RecommendationTrace,
     RecommendationTraceCandidatePlanStage, RecommendationTraceCandidatePlanTrace,
-    RecommendationTraceContextEvidenceSummary, SnapshotRefreshStats, SnapshotTuning,
+    RecommendationTraceContextEvidenceSummary, SessionContextSummary,
+    SessionContextSummaryRepository, SnapshotRefreshStats, SnapshotTuning,
 };
 use tokio::sync::OnceCell;
 use tokio_postgres::Row;
@@ -38,7 +39,7 @@ use uuid::Uuid;
 
 use crate::pool::{build_pool_config, load_postgres_pool_max_size};
 
-const REQUIRED_READY_TABLES: [&str; 21] = [
+const REQUIRED_READY_TABLES: [&str; 22] = [
     "area_adjacencies",
     "areas",
     "context_resolution_traces",
@@ -59,6 +60,7 @@ const REQUIRED_READY_TABLES: [&str; 21] = [
     "profile_pack_manifest_lineage",
     "profile_registry",
     "recommendation_traces",
+    "session_context_summaries",
     "job_queue",
 ];
 const JOB_COALESCE_LOCK_NAMESPACE: i32 = 6_042;
@@ -2330,6 +2332,43 @@ fn line_adjacency_from_row(row: Row) -> Result<LineAdjacency> {
     Ok(adjacency)
 }
 
+fn session_context_summary_from_row(row: Row) -> Result<SessionContextSummary> {
+    let summary = SessionContextSummary {
+        session_id_hash: row.get("session_id_hash"),
+        context_source: row.get("context_source"),
+        confidence: row.get("confidence"),
+        privacy_level: row.get("privacy_level"),
+        primary_kind: row.get("primary_kind"),
+        evidence_count: row.get("evidence_count"),
+        search_execute_count: row.get("search_execute_count"),
+        warning_count: row.get("warning_count"),
+        area_id: row.get("area_id"),
+        line_id: row.get("line_id"),
+        station_id: row.get("station_id"),
+        summary_payload: row.get("summary_payload"),
+        first_seen_at: row.get("first_seen_at"),
+        last_seen_at: row.get("last_seen_at"),
+        updated_at: row.get("updated_at"),
+    };
+    summary.validate()?;
+    Ok(summary)
+}
+
+fn ensure_session_id_hash(session_id_hash: &str) -> Result<()> {
+    ensure!(
+        !session_id_hash.trim().is_empty(),
+        "session_id_hash must not be empty"
+    );
+    ensure!(
+        session_id_hash.len() == 64
+            && session_id_hash
+                .chars()
+                .all(|character| character.is_ascii_hexdigit()),
+        "session_id_hash must be a 64-character hex digest"
+    );
+    Ok(())
+}
+
 fn stable_id(prefix: &str, value: &str) -> String {
     let normalized = value
         .chars()
@@ -2848,6 +2887,77 @@ impl GraphAdjacencyRepository for PgRepository {
             .await?
             .into_iter()
             .map(line_adjacency_from_row)
+            .collect()
+    }
+}
+
+#[async_trait]
+impl SessionContextSummaryRepository for PgRepository {
+    async fn load_session_context_summary(
+        &self,
+        session_id_hash: &str,
+    ) -> Result<Option<SessionContextSummary>> {
+        ensure_session_id_hash(session_id_hash)?;
+        let client = self.connect().await?;
+        client
+            .query_opt(
+                r#"SELECT
+                    session_id_hash,
+                    context_source,
+                    confidence,
+                    privacy_level,
+                    primary_kind,
+                    evidence_count,
+                    search_execute_count,
+                    warning_count,
+                    area_id,
+                    line_id,
+                    station_id,
+                    summary_payload,
+                    to_char(first_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS first_seen_at,
+                    to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_seen_at,
+                    to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
+                 FROM session_context_summaries
+                 WHERE session_id_hash = $1"#,
+                &[&session_id_hash],
+            )
+            .await?
+            .map(session_context_summary_from_row)
+            .transpose()
+    }
+
+    async fn list_recent_session_context_summaries(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<SessionContextSummary>> {
+        let client = self.connect().await?;
+        let limit = limit.clamp(1, 500);
+        client
+            .query(
+                r#"SELECT
+                    session_id_hash,
+                    context_source,
+                    confidence,
+                    privacy_level,
+                    primary_kind,
+                    evidence_count,
+                    search_execute_count,
+                    warning_count,
+                    area_id,
+                    line_id,
+                    station_id,
+                    summary_payload,
+                    to_char(first_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS first_seen_at,
+                    to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_seen_at,
+                    to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
+                 FROM session_context_summaries
+                 ORDER BY last_seen_at DESC, session_id_hash ASC
+                 LIMIT $1"#,
+                &[&limit],
+            )
+            .await?
+            .into_iter()
+            .map(session_context_summary_from_row)
             .collect()
     }
 }

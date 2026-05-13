@@ -25,6 +25,19 @@ dynamic connector loading. Current recommendation behavior remains driven by
 the existing candidate retrieval and ranking path until a reviewed graph-aware
 candidate plan explicitly consumes these reference reads.
 
+## Session context summaries
+
+PostgreSQL owns `session_context_summaries` as diagnostic/reference data for
+resolved session context. Rows store a hashed session identifier, coarse context
+ids, evidence counters, confidence, and a bounded JSON summary. Do not store raw
+addresses, emails, external account payloads, precise GPS, tokens, or raw
+session identifiers in this table.
+
+The table is not cache state, ranking weight configuration, crawler state, or a
+connector runtime. Current recommendation, crawler, and connector behavior do
+not consume these rows; they are available for audit and future reviewed
+context-resolution work.
+
 ## Public MVP profile
 
 The initial public-MVP operating profile is intentionally narrow:
