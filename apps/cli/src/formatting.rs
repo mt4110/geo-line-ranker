@@ -729,11 +729,22 @@ fn format_order(order: &[String]) -> String {
 #[cfg(feature = "storage-backends")]
 fn format_trace_payload_summary(summary: &ExplainTracePayloadSummary) -> String {
     format!(
-        "trace_payload: response_source={} context={} confidence={} privacy={} retrieval={}/{} candidate_count={} duration_ms={} candidate_plan={} suppressed_item_reasons={}",
+        "trace_payload: response_source={} context={} confidence={} privacy={} context_evidence={} retrieval={}/{} candidate_count={} duration_ms={} candidate_plan={} suppressed_item_reasons={}",
         optional_str(summary.response_source.as_deref()),
         optional_str(summary.context_source.as_deref()),
         optional_f64(summary.context_confidence),
         optional_str(summary.privacy_level.as_deref()),
+        summary
+            .context_evidence_summary
+            .as_ref()
+            .map(|evidence| format!(
+                "{}/{} count={} search_execute={}",
+                evidence.source,
+                evidence.primary_kind,
+                evidence.evidence_count,
+                evidence.has_search_execute
+            ))
+            .unwrap_or_else(|| "not_recorded".to_string()),
         optional_str(summary.candidate_retrieval_mode.as_deref()),
         optional_str(summary.candidate_retrieval_backend.as_deref()),
         optional_usize(summary.candidate_count),

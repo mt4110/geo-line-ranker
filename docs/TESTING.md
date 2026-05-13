@@ -401,8 +401,10 @@ cargo run -p cli -- explain trace --id <trace_id> --json
 This command is not a replacement for `eval golden` or `replay scenarios`. It
 is a DB-backed debugging view for one real trace: request, response fallback
 stage, item order, reason codes, trace payload context/candidate retrieval
-details, candidate plan trace fields, and explanation integrity checks. The
-report shows whether `user_id`
+details, context evidence summary, candidate plan trace fields, and explanation
+integrity checks. When dedicated context evidence or candidate plan rows are
+present, the report reads those rows; older traces still fall back to the stored
+JSON trace payload. The report shows whether `user_id`
 was present, but does not print the raw value. A missing id fails the command.
 Old or malformed payloads and integrity problems are surfaced as
 `status=warning`, failed checks, or `payload_shape=legacy_or_invalid` so they

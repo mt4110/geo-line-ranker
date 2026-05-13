@@ -5,6 +5,7 @@ use api_contracts::{
 use config::AppSettings;
 use serde::Serialize;
 use serde_json::Value;
+use storage::{RecommendationTraceCandidatePlanTrace, RecommendationTraceContextEvidenceSummary};
 use storage_postgres::RecommendationTraceReadRow;
 
 use crate::{
@@ -88,6 +89,7 @@ pub struct ExplainTracePayloadSummary {
     pub context_source: Option<String>,
     pub context_confidence: Option<f64>,
     pub privacy_level: Option<String>,
+    pub context_evidence_summary: Option<ExplainTraceContextEvidenceSummary>,
     pub candidate_retrieval_mode: Option<String>,
     pub candidate_retrieval_backend: Option<String>,
     pub candidate_count: Option<usize>,
@@ -95,6 +97,16 @@ pub struct ExplainTracePayloadSummary {
     pub candidate_plan_trace: Option<ExplainTraceCandidatePlanSummary>,
     pub suppressed_item_reasons_recorded: bool,
     pub suppressed_item_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExplainTraceContextEvidenceSummary {
+    pub source: String,
+    pub primary_kind: String,
+    pub evidence_count: i64,
+    pub strongest_strength: f64,
+    pub has_search_execute: bool,
+    pub warning_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -143,7 +155,7 @@ pub fn explain_trace_row(trace: &RecommendationTraceReadRow) -> ExplainTraceRepo
     let mut warnings = Vec::new();
     let request = summarize_request(&trace.request_payload, &mut warnings);
     let (response, parsed_response) = summarize_response(trace, &mut warnings);
-    let trace_payload = summarize_trace_payload(&trace.trace_payload, &mut warnings);
+    let trace_payload = summarize_trace_payload(trace, &mut warnings);
 
     if let Some(response_stage) = response.response_fallback_stage.as_deref() {
         if response.db_fallback_stage != response_stage {
@@ -297,13 +309,22 @@ fn summarize_response(
 }
 
 fn summarize_trace_payload(
-    trace_payload: &Value,
+    trace: &RecommendationTraceReadRow,
     warnings: &mut Vec<String>,
 ) -> ExplainTracePayloadSummary {
+    let trace_payload = &trace.trace_payload;
     let context = trace_payload.get("context");
     let candidate_retrieval = trace_payload.get("candidate_retrieval");
-    let candidate_plan_trace =
-        summarize_candidate_plan_trace(trace_payload.get("candidate_plan_trace"), warnings);
+    let context_evidence_summary = summarize_context_evidence(
+        trace.context_evidence_summary.as_ref(),
+        context.and_then(|value| value.get("evidence_summary")),
+        warnings,
+    );
+    let candidate_plan_trace = summarize_candidate_plan_trace(
+        trace.candidate_plan_trace.as_ref(),
+        trace_payload.get("candidate_plan_trace"),
+        warnings,
+    );
     let suppressed_items = trace_payload.get("suppressed_items");
     let suppressed_item_count = match suppressed_items {
         Some(Value::Array(items)) => Some(items.len()),
@@ -317,9 +338,22 @@ fn summarize_trace_payload(
 
     ExplainTracePayloadSummary {
         response_source: string_field(trace_payload, "response_source"),
-        context_source: context.and_then(|value| string_field(value, "context_source")),
-        context_confidence: context.and_then(|value| f64_field(value, "confidence")),
-        privacy_level: context.and_then(|value| string_field(value, "privacy_level")),
+        context_source: trace
+            .context_evidence_summary
+            .as_ref()
+            .map(|summary| summary.context_source.clone())
+            .or_else(|| context.and_then(|value| string_field(value, "context_source"))),
+        context_confidence: trace
+            .context_evidence_summary
+            .as_ref()
+            .map(|summary| summary.confidence)
+            .or_else(|| context.and_then(|value| f64_field(value, "confidence"))),
+        privacy_level: trace
+            .context_evidence_summary
+            .as_ref()
+            .map(|summary| summary.privacy_level.clone())
+            .or_else(|| context.and_then(|value| string_field(value, "privacy_level"))),
+        context_evidence_summary,
         candidate_retrieval_mode: candidate_retrieval.and_then(|value| string_field(value, "mode")),
         candidate_retrieval_backend: candidate_retrieval
             .and_then(|value| string_field(value, "backend")),
@@ -332,10 +366,93 @@ fn summarize_trace_payload(
     }
 }
 
+fn summarize_context_evidence(
+    dedicated: Option<&RecommendationTraceContextEvidenceSummary>,
+    payload_evidence: Option<&Value>,
+    warnings: &mut Vec<String>,
+) -> Option<ExplainTraceContextEvidenceSummary> {
+    if let Some(summary) = dedicated {
+        return Some(ExplainTraceContextEvidenceSummary {
+            source: "dedicated_rows".to_string(),
+            primary_kind: summary.primary_kind.clone(),
+            evidence_count: summary.evidence_count,
+            strongest_strength: summary.strongest_strength,
+            has_search_execute: summary.has_search_execute,
+            warning_count: Some(summary.warning_count),
+        });
+    }
+
+    let payload_evidence = payload_evidence?;
+    let Some(primary_kind) = string_field(payload_evidence, "primary_kind") else {
+        warnings.push(
+            "trace_payload.context.evidence_summary.primary_kind must be a string when present"
+                .to_string(),
+        );
+        return None;
+    };
+    let Some(evidence_count) = i64_field(payload_evidence, "evidence_count") else {
+        warnings.push(
+            "trace_payload.context.evidence_summary.evidence_count must be an integer when present"
+                .to_string(),
+        );
+        return None;
+    };
+    let Some(strongest_strength) = f64_field(payload_evidence, "strongest_strength") else {
+        warnings.push("trace_payload.context.evidence_summary.strongest_strength must be a number when present".to_string());
+        return None;
+    };
+    let Some(has_search_execute) = bool_field(payload_evidence, "has_search_execute") else {
+        warnings.push("trace_payload.context.evidence_summary.has_search_execute must be a boolean when present".to_string());
+        return None;
+    };
+
+    Some(ExplainTraceContextEvidenceSummary {
+        source: "trace_payload".to_string(),
+        primary_kind,
+        evidence_count,
+        strongest_strength,
+        has_search_execute,
+        warning_count: None,
+    })
+}
+
 fn summarize_candidate_plan_trace(
+    dedicated: Option<&RecommendationTraceCandidatePlanTrace>,
     candidate_plan_trace: Option<&Value>,
     warnings: &mut Vec<String>,
 ) -> Option<ExplainTraceCandidatePlanSummary> {
+    if let Some(trace) = dedicated {
+        return Some(ExplainTraceCandidatePlanSummary {
+            minimum_candidate_count: dedicated_i64_to_usize(
+                "candidate_plan.minimum_candidate_count",
+                trace.minimum_candidate_count,
+                warnings,
+            ),
+            selected_stage: trace.selected_stage.clone(),
+            stop_reason: trace.stop_reason.clone(),
+            area_context_usable: trace.area_context_usable,
+            stages: trace
+                .stages
+                .iter()
+                .map(|stage| ExplainTraceCandidatePlanStageSummary {
+                    stage: stage.stage.clone(),
+                    candidate_count: dedicated_i64_to_usize(
+                        "candidate_plan_stage.candidate_count",
+                        stage.candidate_count,
+                        warnings,
+                    ),
+                    required_min_candidates: dedicated_i64_to_usize(
+                        "candidate_plan_stage.required_min_candidates",
+                        stage.required_min_candidates,
+                        warnings,
+                    ),
+                    status: stage.status.clone(),
+                    reason_code: stage.reason_code.clone(),
+                })
+                .collect(),
+        });
+    }
+
     let candidate_plan_trace = candidate_plan_trace?;
     match serde_json::from_value::<CandidatePlanTraceDto>(candidate_plan_trace.clone()) {
         Ok(trace) => Some(ExplainTraceCandidatePlanSummary {
@@ -360,6 +477,18 @@ fn summarize_candidate_plan_trace(
                 "trace_payload.candidate_plan_trace could not be parsed: {error}"
             ));
             None
+        }
+    }
+}
+
+fn dedicated_i64_to_usize(field: &str, value: i64, warnings: &mut Vec<String>) -> usize {
+    match usize::try_from(value) {
+        Ok(value) => value,
+        Err(_) => {
+            warnings.push(format!(
+                "dedicated {field} value must be a non-negative usize-compatible integer"
+            ));
+            0
         }
     }
 }
@@ -451,6 +580,14 @@ fn field_present(value: &Value, key: &str) -> bool {
 
 fn bool_field(value: &Value, key: &str) -> Option<bool> {
     value.get(key).and_then(Value::as_bool)
+}
+
+fn i64_field(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+    })
 }
 
 fn usize_field(value: &Value, key: &str) -> Option<usize> {
@@ -641,6 +778,139 @@ mod tests {
     }
 
     #[test]
+    fn explain_trace_prefers_dedicated_candidate_plan_rows() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.trace_payload["candidate_plan_trace"] = json!({
+            "minimum_candidate_count": 1,
+            "selected_stage": "strict_station",
+            "stop_reason": "payload_copy",
+            "area_context_usable": false,
+            "stages": []
+        });
+        trace.candidate_plan_trace = Some(storage::RecommendationTraceCandidatePlanTrace {
+            minimum_candidate_count: 3,
+            selected_stage: "same_line".to_string(),
+            stop_reason: "dedicated_rows".to_string(),
+            area_context_usable: true,
+            plan_payload: json!({ "selected_stage": "same_line" }),
+            stages: vec![storage::RecommendationTraceCandidatePlanStage {
+                stage_order: 0,
+                stage: "same_line".to_string(),
+                candidate_count: 4,
+                required_min_candidates: 3,
+                status: "selected".to_string(),
+                reason_code: "selected_sufficient_scoped_candidates".to_string(),
+                stage_payload: json!({ "stage": "same_line" }),
+            }],
+        });
+
+        let report = explain_trace_row(&trace);
+        let plan = report
+            .trace_payload
+            .candidate_plan_trace
+            .expect("candidate plan summary");
+
+        assert_eq!(plan.selected_stage, "same_line");
+        assert_eq!(plan.stop_reason, "dedicated_rows");
+        assert!(plan.area_context_usable);
+        assert_eq!(plan.stages[0].candidate_count, 4);
+    }
+
+    #[test]
+    fn explain_trace_warns_on_invalid_dedicated_candidate_plan_counts() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.candidate_plan_trace = Some(storage::RecommendationTraceCandidatePlanTrace {
+            minimum_candidate_count: -1,
+            selected_stage: "same_line".to_string(),
+            stop_reason: "dedicated_rows".to_string(),
+            area_context_usable: true,
+            plan_payload: json!({ "selected_stage": "same_line" }),
+            stages: vec![storage::RecommendationTraceCandidatePlanStage {
+                stage_order: 0,
+                stage: "same_line".to_string(),
+                candidate_count: -1,
+                required_min_candidates: 3,
+                status: "selected".to_string(),
+                reason_code: "selected_sufficient_scoped_candidates".to_string(),
+                stage_payload: json!({ "stage": "same_line" }),
+            }],
+        });
+
+        let report = explain_trace_row(&trace);
+
+        assert_eq!(report.status, ExplainTraceStatus::Warning);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("candidate_plan.minimum_candidate_count")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("candidate_plan_stage.candidate_count")));
+    }
+
+    #[test]
+    fn explain_trace_reads_context_evidence_from_dedicated_or_payload_rows() {
+        let mut trace = current_trace_row(json!({
+            "feature": "direct_station_bonus",
+            "reason_code": "geo.direct_station",
+            "value": 2.0,
+            "reason": "direct"
+        }));
+        trace.trace_payload["context"]["evidence_summary"] = json!({
+            "primary_kind": "request_station",
+            "evidence_count": 1,
+            "strongest_strength": 1.0,
+            "has_search_execute": false
+        });
+
+        let report = explain_trace_row(&trace);
+        let payload_evidence = report
+            .trace_payload
+            .context_evidence_summary
+            .expect("payload evidence");
+
+        assert_eq!(payload_evidence.source, "trace_payload");
+        assert_eq!(payload_evidence.primary_kind, "request_station");
+
+        trace.context_evidence_summary = Some(storage::RecommendationTraceContextEvidenceSummary {
+            context_source: "recent_search_context".to_string(),
+            confidence: 0.8,
+            privacy_level: "station_level".to_string(),
+            primary_kind: "search_execute".to_string(),
+            evidence_count: 2,
+            strongest_strength: 0.8,
+            has_search_execute: true,
+            warning_count: 1,
+            evidence_payload: json!({ "primary_kind": "search_execute" }),
+        });
+
+        let report = explain_trace_row(&trace);
+        let dedicated_evidence = report
+            .trace_payload
+            .context_evidence_summary
+            .expect("dedicated evidence");
+
+        assert_eq!(
+            report.trace_payload.context_source.as_deref(),
+            Some("recent_search_context")
+        );
+        assert_eq!(dedicated_evidence.source, "dedicated_rows");
+        assert_eq!(dedicated_evidence.primary_kind, "search_execute");
+        assert_eq!(dedicated_evidence.warning_count, Some(1));
+    }
+
+    #[test]
     fn explain_trace_keeps_legacy_order_readable() {
         let mut trace = current_trace_row(json!({
             "feature": "direct_station_bonus",
@@ -762,6 +1032,8 @@ mod tests {
             fallback_stage: "strict_station".to_string(),
             algorithm_version: "test".to_string(),
             created_at: "2026-05-05T00:00:00.000000Z".to_string(),
+            context_evidence_summary: None,
+            candidate_plan_trace: None,
         }
     }
 }
