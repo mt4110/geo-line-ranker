@@ -14,8 +14,8 @@ use crate::{
 #[cfg(feature = "storage-backends")]
 use crate::{
     explain::{
-        ExplainTraceCandidatePlanSummary, ExplainTracePayloadSummary, ExplainTraceReasonSummary,
-        ExplainTraceReport,
+        ExplainTraceCandidatePlanGraphDiagnosticsSummary, ExplainTraceCandidatePlanSummary,
+        ExplainTracePayloadSummary, ExplainTraceReasonSummary, ExplainTraceReport,
     },
     import::CommandSummary,
     jobs::JobEnqueueSummary,
@@ -773,13 +773,35 @@ fn format_candidate_plan(trace: &ExplainTraceCandidatePlanSummary) -> String {
         .map(|stage| format!("{}:{}:{}", stage.stage, stage.status, stage.reason_code))
         .collect::<Vec<_>>()
         .join(",");
+    let graph_diagnostics = trace
+        .graph_diagnostics
+        .as_ref()
+        .map(format_candidate_plan_graph_diagnostics)
+        .unwrap_or_else(|| "not_recorded".to_string());
 
     format!(
-        "{}/{} stages={} [{}]",
+        "{}/{} stages={} [{}] graph={}",
         trace.selected_stage,
         trace.stop_reason,
         trace.stages.len(),
-        stage_reasons
+        stage_reasons,
+        graph_diagnostics
+    )
+}
+
+#[cfg(feature = "storage-backends")]
+fn format_candidate_plan_graph_diagnostics(
+    diagnostics: &ExplainTraceCandidatePlanGraphDiagnosticsSummary,
+) -> String {
+    format!(
+        "{}/{} geo={}({}) line={}({}) warnings={}",
+        optional_str(diagnostics.mode.as_deref()),
+        optional_str(diagnostics.candidate_expansion_behavior.as_deref()),
+        optional_str(diagnostics.geo_graph_status.as_deref()),
+        optional_usize(diagnostics.geo_graph_edge_count),
+        optional_str(diagnostics.line_graph_status.as_deref()),
+        optional_usize(diagnostics.line_graph_edge_count),
+        diagnostics.warnings.len()
     )
 }
 

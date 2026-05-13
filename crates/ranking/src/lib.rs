@@ -400,6 +400,14 @@ mod tests {
 
         assert_eq!(result.candidate_counts.get("same_line"), Some(&1));
         assert_eq!(result.fallback_stage, FallbackStage::SameLine);
+        assert_eq!(
+            result
+                .candidate_plan_trace
+                .as_ref()
+                .expect("candidate plan trace")
+                .selected_stage,
+            FallbackStage::SameLine
+        );
         assert_eq!(result.items[0].school_id, "school_target_line");
         let line_details = result.items[0]
             .score_breakdown
@@ -495,6 +503,14 @@ mod tests {
 
         assert_eq!(result.candidate_counts.get("same_city"), Some(&1));
         assert_eq!(result.fallback_stage, FallbackStage::SameCity);
+        assert_eq!(
+            result
+                .candidate_plan_trace
+                .as_ref()
+                .expect("candidate plan trace")
+                .selected_stage,
+            FallbackStage::SameCity
+        );
         assert_eq!(result.items[0].school_id, "school_tokyo_fuchu");
     }
 

@@ -21,6 +21,11 @@
   read-only `GeoGraph` / `LineGraph` components that normalize deterministic
   edge ordering and provide diagnostics for observed area clusters, station
   hops, and interchange groups.
+- The graph-aware candidate plan slice is diagnostic/read-only. The API can
+  load the `GeoGraph` / `LineGraph` read models for the resolved area and line
+  origins and persist a `candidate_plan_trace.graph_diagnostics` payload in
+  recommendation traces, but candidate expansion, score math, fallback
+  selection, ranking weights, and crawler behavior remain unchanged.
 - Session context summaries are PostgreSQL diagnostic/reference data keyed by a
   hashed session identifier. They are read through the storage contract and do
   not change ranking, crawler, or connector runtime behavior by themselves.

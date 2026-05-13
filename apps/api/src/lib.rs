@@ -12,6 +12,7 @@ mod errors;
 mod request_id;
 mod routes;
 mod trace;
+mod trace_graph;
 mod tracking;
 
 pub use routes::build_app;

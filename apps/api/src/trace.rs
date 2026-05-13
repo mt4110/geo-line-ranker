@@ -17,6 +17,7 @@ pub(crate) struct TracePayloadInput<'a> {
     pub(crate) candidate_count: usize,
     pub(crate) duration_ms: u128,
     pub(crate) candidate_plan_trace: Option<&'a CandidatePlanTraceDto>,
+    pub(crate) candidate_plan_graph_diagnostics: Option<&'a Value>,
     pub(crate) target_station_id: &'a str,
     pub(crate) candidate_limit: usize,
     pub(crate) neighbor_distance_cap_meters: f64,
@@ -28,7 +29,10 @@ async fn record_trace(
     response: &RecommendationResponse,
     trace_payload: serde_json::Value,
 ) -> Result<()> {
-    let candidate_plan_trace = match build_candidate_plan_trace_record(response) {
+    let candidate_plan_trace = match build_candidate_plan_trace_record(
+        response,
+        trace_payload.get("candidate_plan_trace"),
+    ) {
         Ok(candidate_plan_trace) => candidate_plan_trace,
         Err(error) => {
             tracing::warn!(%error, "failed to build candidate plan trace detail rows");
@@ -67,13 +71,18 @@ fn build_context_evidence_summary_record(
 
 fn build_candidate_plan_trace_record(
     response: &RecommendationResponse,
+    candidate_plan_trace_payload: Option<&Value>,
 ) -> Result<Option<RecommendationTraceCandidatePlanTrace>> {
     response
         .candidate_plan_trace
         .as_ref()
         .map(|trace| {
-            let plan_payload = serde_json::to_value(trace)
-                .context("failed to serialize candidate plan trace for storage")?;
+            let plan_payload = match candidate_plan_trace_payload.filter(|value| value.is_object())
+            {
+                Some(payload) => payload.clone(),
+                None => serde_json::to_value(trace)
+                    .context("failed to serialize candidate plan trace for storage")?,
+            };
             let stages = trace
                 .stages
                 .iter()
@@ -143,7 +152,10 @@ pub(crate) fn build_trace_payload(input: TracePayloadInput<'_>) -> serde_json::V
 
     if let Some(candidate_plan_trace) = input.candidate_plan_trace {
         match serde_json::to_value(candidate_plan_trace) {
-            Ok(candidate_plan_trace_value) => {
+            Ok(mut candidate_plan_trace_value) => {
+                if let Some(graph_diagnostics) = input.candidate_plan_graph_diagnostics {
+                    candidate_plan_trace_value["graph_diagnostics"] = graph_diagnostics.clone();
+                }
                 payload["candidate_plan_trace"] = candidate_plan_trace_value;
             }
             Err(error) => {
@@ -182,6 +194,7 @@ mod tests {
         FallbackStageDto, RecommendationResponse,
     };
     use config::CandidateRetrievalMode;
+    use serde_json::json;
     use std::collections::BTreeMap;
 
     use super::{
@@ -203,6 +216,7 @@ mod tests {
             candidate_count: 3,
             duration_ms: 12,
             candidate_plan_trace: None,
+            candidate_plan_graph_diagnostics: None,
             target_station_id: "st_tamachi",
             candidate_limit: 256,
             neighbor_distance_cap_meters: 5_000.0,
@@ -243,6 +257,10 @@ mod tests {
             candidate_count: 3,
             duration_ms: 12,
             candidate_plan_trace: Some(&candidate_plan_trace),
+            candidate_plan_graph_diagnostics: Some(&json!({
+                "mode": "diagnostic_read_only",
+                "candidate_expansion_behavior": "unchanged"
+            })),
             target_station_id: "st_tamachi",
             candidate_limit: 256,
             neighbor_distance_cap_meters: 5_000.0,
@@ -255,6 +273,10 @@ mod tests {
         assert_eq!(
             payload["candidate_plan_trace"]["stages"][0]["status"],
             "selected"
+        );
+        assert_eq!(
+            payload["candidate_plan_trace"]["graph_diagnostics"]["mode"],
+            "diagnostic_read_only"
         );
     }
 
@@ -272,6 +294,7 @@ mod tests {
             candidate_count: 3,
             duration_ms: 12,
             candidate_plan_trace: None,
+            candidate_plan_graph_diagnostics: None,
             target_station_id: "st_tamachi",
             candidate_limit: 256,
             neighbor_distance_cap_meters: 5_000.0,
@@ -310,13 +333,26 @@ mod tests {
             profile_version: "test".to_string(),
             algorithm_version: "test".to_string(),
         };
-        let trace = build_candidate_plan_trace_record(&response)
-            .expect("candidate plan conversion")
-            .expect("candidate plan record");
+        let trace = build_candidate_plan_trace_record(
+            &response,
+            Some(&json!({
+                "selected_stage": "same_line",
+                "graph_diagnostics": {
+                    "mode": "diagnostic_read_only",
+                    "candidate_expansion_behavior": "unchanged"
+                }
+            })),
+        )
+        .expect("candidate plan conversion")
+        .expect("candidate plan record");
 
         assert_eq!(trace.selected_stage, "same_line");
         assert_eq!(trace.stages.len(), 1);
         assert_eq!(trace.stages[0].status, "selected");
         assert_eq!(trace.stages[0].stage_order, 0);
+        assert_eq!(
+            trace.plan_payload["graph_diagnostics"]["mode"],
+            "diagnostic_read_only"
+        );
     }
 }
