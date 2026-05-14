@@ -5,12 +5,15 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     is_source_id, read_raw, validate_portable_relative_path, ProfileCompatibilityLevel,
     ProfilePackManifest, SOURCE_ID_RULE_DESCRIPTION,
 };
+
+const FIELD_MAPPING_REF_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, underscores, and hyphens, and must not start or end with a separator";
+const RUNTIME_EXECUTABLE_FIELD_MAPPING_IDS: &[&str] = &["event_v1"];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -106,16 +109,64 @@ impl ProfileConnectorSafetyMetadata {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProfileConnectorFieldMapping {
     EventV1,
+    Custom(String),
 }
 
 impl ProfileConnectorFieldMapping {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::EventV1 => "event_v1",
+            Self::Custom(value) => value.as_str(),
+        }
+    }
+
+    pub fn is_runtime_executable(&self) -> bool {
+        matches!(self, Self::EventV1)
+    }
+}
+
+impl Serialize for ProfileConnectorFieldMapping {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProfileConnectorFieldMapping {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value == "event_v1" {
+            Ok(Self::EventV1)
+        } else {
+            Ok(Self::Custom(value))
+        }
+    }
+}
+
+impl From<&str> for ProfileConnectorFieldMapping {
+    fn from(value: &str) -> Self {
+        if value == "event_v1" {
+            Self::EventV1
+        } else {
+            Self::Custom(value.to_string())
+        }
+    }
+}
+
+impl From<String> for ProfileConnectorFieldMapping {
+    fn from(value: String) -> Self {
+        if value == "event_v1" {
+            Self::EventV1
+        } else {
+            Self::Custom(value)
         }
     }
 }
@@ -174,6 +225,23 @@ pub(crate) fn build_profile_connector_registry(
     Ok(entries)
 }
 
+pub(crate) fn validate_profile_connector_ref_contract(
+    profile_path: &Path,
+    connector: &ProfileConnectorRef,
+) -> Result<()> {
+    if let Some(field_mapping) = connector.field_mapping.as_ref() {
+        ensure!(
+            is_field_mapping_ref(field_mapping.as_str()),
+            "profile pack {} connector {} field_mapping '{}' is invalid; {}",
+            profile_path.display(),
+            connector.connector_type.as_str(),
+            field_mapping.as_str(),
+            FIELD_MAPPING_REF_RULE_DESCRIPTION
+        );
+    }
+    Ok(())
+}
+
 fn profile_connector_registry_entry(
     path: &Path,
     manifest: &ProfilePackManifest,
@@ -229,7 +297,8 @@ fn profile_connector_registry_entry(
                 resolved.display(),
                 expected_extension
             );
-            let field_mapping = require_event_file_field_mapping(path, manifest, connector)?;
+            let field_mapping =
+                require_runtime_executable_file_field_mapping(path, manifest, connector)?;
             (
                 connector
                     .connector_type
@@ -366,12 +435,12 @@ fn ensure_no_file_field_mapping(
     Ok(())
 }
 
-fn require_event_file_field_mapping(
+fn require_runtime_executable_file_field_mapping(
     profile_path: &Path,
     manifest: &ProfilePackManifest,
     connector: &ProfileConnectorRef,
 ) -> Result<ProfileConnectorFieldMapping> {
-    let field_mapping = connector.field_mapping.with_context(|| {
+    let field_mapping = connector.field_mapping.as_ref().with_context(|| {
         format!(
             "profile pack {} connector {} must declare field_mapping",
             profile_path.display(),
@@ -379,11 +448,12 @@ fn require_event_file_field_mapping(
         )
     })?;
     ensure!(
-        field_mapping == ProfileConnectorFieldMapping::EventV1,
-        "profile pack {} connector {} field_mapping {} is unsupported; expected event_v1",
+        field_mapping.is_runtime_executable(),
+        "profile pack {} connector {} field_mapping {} is a valid mapping ref but is not executable by the current import runtime; current import runtime executes only {}",
         profile_path.display(),
         connector.connector_type.as_str(),
-        field_mapping.as_str()
+        field_mapping.as_str(),
+        RUNTIME_EXECUTABLE_FIELD_MAPPING_IDS.join(",")
     );
     ensure!(
         manifest
@@ -394,7 +464,31 @@ fn require_event_file_field_mapping(
         profile_path.display(),
         connector.connector_type.as_str()
     );
-    Ok(field_mapping)
+    Ok(field_mapping.clone())
+}
+
+fn is_field_mapping_ref(value: &str) -> bool {
+    if value.is_empty() || value.trim() != value {
+        return false;
+    }
+
+    let bytes = value.as_bytes();
+    let Some(first) = bytes.first() else {
+        return false;
+    };
+    let Some(last) = bytes.last() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+        return false;
+    }
+    if !last.is_ascii_lowercase() && !last.is_ascii_digit() {
+        return false;
+    }
+
+    bytes.iter().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+    })
 }
 
 fn ensure_unique_connector_source_ids(

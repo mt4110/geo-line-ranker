@@ -460,6 +460,7 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
                 connector.source_id.as_deref().unwrap_or("none"),
                 connector
                     .field_mapping
+                    .as_ref()
                     .map(|mapping| mapping.as_str())
                     .unwrap_or("none"),
                 connector.profile_compatibility.as_str(),
