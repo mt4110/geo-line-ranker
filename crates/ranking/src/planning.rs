@@ -160,6 +160,7 @@ impl RankingEngine {
             &fallback_stage,
             &items,
             &diversity_summary,
+            self.reason_catalog(),
         );
         let score_breakdown = items
             .first()

@@ -2937,6 +2937,7 @@ impl ProfileRegistryRepository for PgRepository {
         let supported_content_kinds = serde_json::to_value(&manifest.supported_content_kinds)?;
         let context_inputs = serde_json::to_value(&manifest.context_inputs)?;
         let placements = serde_json::to_value(&manifest.placements)?;
+        let fallback_policy = manifest.fallback_policy.clone();
         let row = transaction
             .query_one(
                 "INSERT INTO profile_pack_manifest_lineage (
@@ -3001,7 +3002,7 @@ impl ProfileRegistryRepository for PgRepository {
                     &supported_content_kinds,
                     &context_inputs,
                     &placements,
-                    &manifest.fallback_policy,
+                    &fallback_policy,
                     &manifest.fixture_count,
                     &manifest.connector_count,
                     &manifest.evaluation_reference_count,

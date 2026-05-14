@@ -1,6 +1,7 @@
 #[cfg(feature = "storage-backends")]
 use api_contracts::{FallbackStageDto, RecommendationResponse, ScoreComponentDto};
 use domain::{FallbackStage, RecommendationItem, RecommendationResult, ScoreComponent};
+use ranking::ReasonCatalog;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -64,52 +65,63 @@ struct ComponentRef<'a> {
     value: f64,
 }
 
-pub fn check_recommendation_result_integrity(
+pub fn check_recommendation_result_integrity_with_catalog(
     result: &RecommendationResult,
+    reason_catalog: &ReasonCatalog,
 ) -> Vec<ExplanationIntegrityCheck> {
-    check_integrity(IntegrityInput {
-        explanation: &result.explanation,
-        fallback_stage: result.fallback_stage.as_str(),
-        score_breakdown: result.score_breakdown.iter().map(component_ref).collect(),
-        items: result
-            .items
-            .iter()
-            .map(|item| ItemRef {
-                key: item_key(item),
-                explanation: &item.explanation,
-                fallback_stage: item.fallback_stage.as_ref().map(FallbackStage::as_str),
-                score_breakdown: item.score_breakdown.iter().map(component_ref).collect(),
-            })
-            .collect(),
-    })
+    check_integrity(
+        IntegrityInput {
+            explanation: &result.explanation,
+            fallback_stage: result.fallback_stage.as_str(),
+            score_breakdown: result.score_breakdown.iter().map(component_ref).collect(),
+            items: result
+                .items
+                .iter()
+                .map(|item| ItemRef {
+                    key: item_key(item),
+                    explanation: &item.explanation,
+                    fallback_stage: item.fallback_stage.as_ref().map(FallbackStage::as_str),
+                    score_breakdown: item.score_breakdown.iter().map(component_ref).collect(),
+                })
+                .collect(),
+        },
+        reason_catalog,
+    )
 }
 
 #[cfg(feature = "storage-backends")]
-pub fn check_recommendation_response_integrity(
+pub fn check_recommendation_response_integrity_with_catalog(
     response: &RecommendationResponse,
+    reason_catalog: &ReasonCatalog,
 ) -> Vec<ExplanationIntegrityCheck> {
-    check_integrity(IntegrityInput {
-        explanation: &response.explanation,
-        fallback_stage: response.fallback_stage.as_str(),
-        score_breakdown: response
-            .score_breakdown
-            .iter()
-            .map(component_dto_ref)
-            .collect(),
-        items: response
-            .items
-            .iter()
-            .map(|item| ItemRef {
-                key: format!("{}:{}", item.content_kind.as_str(), item.content_id),
-                explanation: &item.explanation,
-                fallback_stage: item.fallback_stage.as_ref().map(FallbackStageDto::as_str),
-                score_breakdown: item.score_breakdown.iter().map(component_dto_ref).collect(),
-            })
-            .collect(),
-    })
+    check_integrity(
+        IntegrityInput {
+            explanation: &response.explanation,
+            fallback_stage: response.fallback_stage.as_str(),
+            score_breakdown: response
+                .score_breakdown
+                .iter()
+                .map(component_dto_ref)
+                .collect(),
+            items: response
+                .items
+                .iter()
+                .map(|item| ItemRef {
+                    key: format!("{}:{}", item.content_kind.as_str(), item.content_id),
+                    explanation: &item.explanation,
+                    fallback_stage: item.fallback_stage.as_ref().map(FallbackStageDto::as_str),
+                    score_breakdown: item.score_breakdown.iter().map(component_dto_ref).collect(),
+                })
+                .collect(),
+        },
+        reason_catalog,
+    )
 }
 
-fn check_integrity(input: IntegrityInput<'_>) -> Vec<ExplanationIntegrityCheck> {
+fn check_integrity(
+    input: IntegrityInput<'_>,
+    reason_catalog: &ReasonCatalog,
+) -> Vec<ExplanationIntegrityCheck> {
     let mut checks = Vec::new();
 
     let component_failures = input
@@ -126,7 +138,7 @@ fn check_integrity(input: IntegrityInput<'_>) -> Vec<ExplanationIntegrityCheck> 
                 .iter()
                 .map(|component| ("result", *component)),
         )
-        .filter_map(|(scope, component)| reason_component_failure(scope, component))
+        .filter_map(|(scope, component)| reason_component_failure(scope, component, reason_catalog))
         .collect::<Vec<_>>();
     push_check(
         &mut checks,
@@ -143,7 +155,7 @@ fn check_integrity(input: IntegrityInput<'_>) -> Vec<ExplanationIntegrityCheck> 
         ),
     );
 
-    let missing_labels = top_reason_labels(&input.score_breakdown)
+    let missing_labels = top_reason_labels(&input.score_breakdown, reason_catalog)
         .into_iter()
         .filter(|label| !input.explanation.contains(label))
         .collect::<Vec<_>>();
@@ -162,7 +174,7 @@ fn check_integrity(input: IntegrityInput<'_>) -> Vec<ExplanationIntegrityCheck> 
         .items
         .iter()
         .filter_map(|item| {
-            let missing = top_reason_labels(&item.score_breakdown)
+            let missing = top_reason_labels(&item.score_breakdown, reason_catalog)
                 .into_iter()
                 .filter(|label| !item.explanation.contains(label))
                 .collect::<Vec<_>>();
@@ -240,8 +252,12 @@ fn check_integrity(input: IntegrityInput<'_>) -> Vec<ExplanationIntegrityCheck> 
     checks
 }
 
-fn reason_component_failure(scope: &str, component: ComponentRef<'_>) -> Option<String> {
-    let catalog_entry = match ranking::reason_catalog_entry(component.feature) {
+fn reason_component_failure(
+    scope: &str,
+    component: ComponentRef<'_>,
+    reason_catalog: &ReasonCatalog,
+) -> Option<String> {
+    let catalog_entry = match reason_catalog.entry(component.feature) {
         Some(entry) => entry,
         None => {
             return Some(format!(
@@ -258,7 +274,10 @@ fn reason_component_failure(scope: &str, component: ComponentRef<'_>) -> Option<
     })
 }
 
-fn top_reason_labels(breakdown: &[ComponentRef<'_>]) -> Vec<String> {
+fn top_reason_labels(
+    breakdown: &[ComponentRef<'_>],
+    reason_catalog: &ReasonCatalog,
+) -> Vec<String> {
     let mut components = breakdown
         .iter()
         .filter(|component| component.value > 0.0)
@@ -273,7 +292,8 @@ fn top_reason_labels(breakdown: &[ComponentRef<'_>]) -> Vec<String> {
 
     let mut labels = Vec::new();
     for component in components {
-        let label = ranking::reason_catalog_entry(component.feature)
+        let label = reason_catalog
+            .entry(component.feature)
             .map(|entry| entry.label.to_string())
             .unwrap_or_else(|| "固定重み".to_string());
         if labels.contains(&label) {

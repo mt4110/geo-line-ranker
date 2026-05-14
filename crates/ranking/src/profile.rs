@@ -1,14 +1,27 @@
 use config::RankingProfiles;
 use domain::PlacementKind;
 
-use crate::RankingEngine;
+use crate::{RankingEngine, ReasonCatalog, ReasonCatalogError};
 
 impl RankingEngine {
     pub fn new(profiles: RankingProfiles, algorithm_version: impl Into<String>) -> Self {
         Self {
             profiles,
             algorithm_version: algorithm_version.into(),
+            reason_catalog: ReasonCatalog::default_core(),
         }
+    }
+
+    pub fn with_profile_reason_catalog(
+        mut self,
+        catalog: &config::ProfileReasonCatalog,
+    ) -> Result<Self, ReasonCatalogError> {
+        self.reason_catalog = ReasonCatalog::from_profile_catalog(catalog)?;
+        Ok(self)
+    }
+
+    pub fn reason_catalog(&self) -> &ReasonCatalog {
+        &self.reason_catalog
     }
 
     pub fn neighbor_max_hops(&self, placement: PlacementKind) -> u8 {

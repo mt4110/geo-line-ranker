@@ -3,14 +3,15 @@ use domain::{
 };
 
 use crate::diversity::DiversitySelectionSummary;
-use crate::reason_catalog_entry;
+use crate::ReasonCatalog;
 
 pub(crate) fn build_item_explanation(
     content_kind: ContentKind,
     breakdown: &[ScoreComponent],
     fallback_stage: &FallbackStage,
+    reason_catalog: &ReasonCatalog,
 ) -> String {
-    let reasons = top_reason_labels(breakdown);
+    let reasons = top_reason_labels(breakdown, reason_catalog);
     let reason_text = join_reason_labels(&reasons);
     let fallback_text = match fallback_stage {
         FallbackStage::StrictStation => "指定駅直結",
@@ -39,10 +40,11 @@ pub(crate) fn build_top_level_explanation(
     fallback_stage: &FallbackStage,
     items: &[RecommendationItem],
     diversity_summary: &DiversitySelectionSummary,
+    reason_catalog: &ReasonCatalog,
 ) -> String {
     let reasons = items
         .first()
-        .map(|item| top_reason_labels(&item.score_breakdown))
+        .map(|item| top_reason_labels(&item.score_breakdown, reason_catalog))
         .unwrap_or_else(|| vec!["固定重み".to_string()]);
     let reason_text = join_reason_labels(&reasons);
     let fallback_text = match fallback_stage {
@@ -100,7 +102,7 @@ fn content_kind_label(kind: ContentKind) -> &'static str {
     }
 }
 
-fn top_reason_labels(breakdown: &[ScoreComponent]) -> Vec<String> {
+fn top_reason_labels(breakdown: &[ScoreComponent], reason_catalog: &ReasonCatalog) -> Vec<String> {
     let mut components = breakdown
         .iter()
         .filter(|component| component.value > 0.0)
@@ -114,7 +116,7 @@ fn top_reason_labels(breakdown: &[ScoreComponent]) -> Vec<String> {
 
     let mut labels = Vec::new();
     for component in components {
-        let label = feature_label(&component.feature);
+        let label = feature_label(&component.feature, reason_catalog);
         if labels.contains(&label) {
             continue;
         }
@@ -129,8 +131,9 @@ fn top_reason_labels(breakdown: &[ScoreComponent]) -> Vec<String> {
     labels
 }
 
-fn feature_label(feature: &str) -> String {
-    reason_catalog_entry(feature)
+fn feature_label(feature: &str, reason_catalog: &ReasonCatalog) -> String {
+    reason_catalog
+        .entry(feature)
         .map(|entry| entry.label.to_string())
         .unwrap_or_else(|| "固定重み".to_string())
 }
@@ -157,14 +160,17 @@ pub(crate) fn placement_label(placement: PlacementKind) -> &'static str {
 mod tests {
     use std::collections::BTreeMap;
 
-    use config::RankingProfiles;
+    use config::{
+        ProfileReason, ProfileReasonCatalog, ProfileReasonCatalogKind, ProfileReasonLayer,
+        RankingProfiles,
+    };
     use domain::{ContentKind, PlacementKind};
     use test_support::load_fixture_dataset;
 
     use super::{build_diversity_impact_sentence, top_reason_labels};
     use crate::diversity::DiversitySelectionSummary;
     use crate::test_utils::{config_root, fixture_root, query};
-    use crate::RankingEngine;
+    use crate::{RankingEngine, ReasonCatalog, ReasonCatalogError};
 
     #[test]
     fn emitted_score_components_are_backed_by_reason_catalog() {
@@ -186,7 +192,7 @@ mod tests {
             assert_eq!(component.reason_code, catalog_entry.reason_code);
         }
 
-        let labels = top_reason_labels(&result.score_breakdown);
+        let labels = top_reason_labels(&result.score_breakdown, &ReasonCatalog::default_core());
         assert!(labels
             .iter()
             .all(|label| result.explanation.contains(label)));
@@ -203,5 +209,118 @@ mod tests {
 
         assert!(sentence.contains("多様性上限"));
         assert!(sentence.contains("イベント候補2件"));
+    }
+
+    #[test]
+    fn profile_reason_catalog_labels_render_in_explanations() {
+        let dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let profile_catalog = ProfileReasonCatalog {
+            schema_version: 1,
+            kind: ProfileReasonCatalogKind::ProfileReasonCatalog,
+            profile_id: "local-discovery-generic".to_string(),
+            reasons: vec![ProfileReason {
+                feature: "direct_station_bonus".to_string(),
+                reason_code: "geo.direct_station".to_string(),
+                label: "Direct station".to_string(),
+                layer: ProfileReasonLayer::Core,
+            }],
+        };
+        let engine = RankingEngine::new(profiles, "profile-reason-catalog-test")
+            .with_profile_reason_catalog(&profile_catalog)
+            .expect("profile reason catalog");
+        let result = engine
+            .recommend(&dataset, &query("st_tamachi", PlacementKind::Search))
+            .expect("recommendation result");
+
+        assert!(result.explanation.contains("Direct station"));
+        assert!(result.items[0].explanation.contains("Direct station"));
+        assert!(result
+            .score_breakdown
+            .iter()
+            .any(|component| component.reason_code == "geo.direct_station"));
+    }
+
+    #[test]
+    fn profile_reason_catalog_rejects_duplicate_features() {
+        let profile_catalog = ProfileReasonCatalog {
+            schema_version: 1,
+            kind: ProfileReasonCatalogKind::ProfileReasonCatalog,
+            profile_id: "local-discovery-generic".to_string(),
+            reasons: vec![
+                ProfileReason {
+                    feature: "direct_station_bonus".to_string(),
+                    reason_code: "geo.direct_station".to_string(),
+                    label: "Direct station".to_string(),
+                    layer: ProfileReasonLayer::Core,
+                },
+                ProfileReason {
+                    feature: "direct_station_bonus".to_string(),
+                    reason_code: "geo.direct_station".to_string(),
+                    label: "Station directness".to_string(),
+                    layer: ProfileReasonLayer::Core,
+                },
+            ],
+        };
+        let error = ReasonCatalog::from_profile_catalog(&profile_catalog)
+            .expect_err("duplicate feature should fail");
+
+        assert!(matches!(
+            error,
+            ReasonCatalogError::DuplicateFeature { feature } if feature == "direct_station_bonus"
+        ));
+    }
+
+    #[test]
+    fn profile_reason_catalog_keeps_core_reason_codes_stable() {
+        let profile_catalog = ProfileReasonCatalog {
+            schema_version: 1,
+            kind: ProfileReasonCatalogKind::ProfileReasonCatalog,
+            profile_id: "local-discovery-generic".to_string(),
+            reasons: vec![ProfileReason {
+                feature: "direct_station_bonus".to_string(),
+                reason_code: "geo.changed".to_string(),
+                label: "Direct station".to_string(),
+                layer: ProfileReasonLayer::Core,
+            }],
+        };
+        let error = ReasonCatalog::from_profile_catalog(&profile_catalog)
+            .expect_err("core reason_code changes should fail");
+
+        assert!(matches!(
+            error,
+            ReasonCatalogError::StableReasonCodeChanged {
+                feature,
+                expected,
+                actual
+            } if feature == "direct_station_bonus"
+                && expected == "geo.direct_station"
+                && actual == "geo.changed"
+        ));
+    }
+
+    #[test]
+    fn profile_reason_catalog_rejects_unsupported_schema_version() {
+        let profile_catalog = ProfileReasonCatalog {
+            schema_version: 999,
+            kind: ProfileReasonCatalogKind::ProfileReasonCatalog,
+            profile_id: "local-discovery-generic".to_string(),
+            reasons: vec![ProfileReason {
+                feature: "direct_station_bonus".to_string(),
+                reason_code: "geo.direct_station".to_string(),
+                label: "Direct station".to_string(),
+                layer: ProfileReasonLayer::Core,
+            }],
+        };
+        let error = ReasonCatalog::from_profile_catalog(&profile_catalog)
+            .expect_err("unsupported schema version should fail");
+
+        assert!(matches!(
+            error,
+            ReasonCatalogError::UnsupportedSchemaVersion {
+                actual: 999,
+                expected: config::PROFILE_REASON_CATALOG_SCHEMA_VERSION
+            }
+        ));
     }
 }

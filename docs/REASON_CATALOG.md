@@ -6,7 +6,11 @@ one vocabulary.
 
 Profile-owned reason catalogs live under `configs/profiles/*/reasons.yaml`.
 They layer current reason codes into `core` and `profile` ownership without
-changing the public `reason_code` values listed here.
+changing the public `reason_code` values listed here. When a profile pack is
+selected, the runtime merges the built-in core catalog with the selected
+profile catalog in deterministic feature order. Profile labels are then used by
+item and top-level explanations. For existing core features, changing the
+stable `reason_code` is rejected.
 
 ## Contract
 
@@ -15,10 +19,20 @@ changing the public `reason_code` values listed here.
 - `score_breakdown[].reason` is human-readable explanatory text.
 - Top-level and item explanations may mention only catalog labels or fallback /
   diversity policy text.
+- Profile catalog overlays may change labels for locale/domain fit, but must
+  preserve the stable reason code for any existing core feature.
 
 Unknown score features are treated as `uncataloged` during deserialization for
 cache and trace compatibility, but new ranking code should emit only cataloged
 features.
+
+## Profile Runtime
+
+`profile.yaml` may declare `reason_catalog.locale_files` plus
+`default_locale`. Runtime selection validates all declared locale files and
+loads the selected catalog for API responses and profile-aware replay/eval
+commands. Legacy path mode, where `RANKING_CONFIG_DIR` or `FIXTURE_DIR` is set
+directly, skips profile catalog loading and uses the built-in catalog.
 
 ## Catalog
 
@@ -35,7 +49,7 @@ features.
 | `popularity_snapshot_bonus` | `behavior.popularity` | 最近の人気 |
 | `area_affinity_bonus` | `behavior.area_affinity` | エリア需要 |
 | `user_affinity_bonus` | `behavior.user_affinity` | ユーザー反応 |
-| `content_kind_boost` | `placement.content_kind_boost` | placement調整 |
+| `content_kind_boost` | `placement.content_kind_boost` | 配置調整 |
 | `neighbor_area_penalty` | `fallback.neighbor_area_penalty` | 近隣エリア調整 |
 | `safe_global_distance_penalty` | `fallback.safe_global_distance_penalty` | 遠距離抑制 |
 

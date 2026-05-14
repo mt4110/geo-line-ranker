@@ -66,12 +66,16 @@ Each `profile.yaml` declares:
 - `placements`: placement surfaces the profile supports. The current runtime
   validates that the profile includes `home`, `search`, `detail`, and `mypage`
   because the active ranking config still requires those four placement files.
-- `fallback_policy`: profile-side fallback policy name.
+- `fallback_policy`: profile-side fallback policy. The current manifest accepts
+  either a legacy policy name or a nested `config_file` reference. The nested
+  form is resolved and validated as a local runtime file reference; ranking
+  still uses the active `ranking_config_dir` fallback weights.
 - `ranking_config_dir`: active ranking config used by the profile.
 - `reason_catalog`: profile-owned reason labels and core/profile layering.
   The manifest accepts either a legacy single path or `locale_files`; when
   multiple locale files are declared, `default_locale` selects the runtime
-  catalog path.
+  catalog path. The selected catalog overlays labels used in runtime
+  explanations while preserving the stable public `reason_code` values.
 - `fixtures`: committed fixture sets that exercise the profile.
 - `connectors`: optional registry-facing local connector references. Supported
   connector types are `source_manifest`, `csv_import`, `ndjson_import`, and
@@ -113,21 +117,21 @@ manifest's `source_id`. For legacy schema-2 manifests that omit
 `content_kinds`, the validator treats `supported_content_kinds` as the inline
 registry; new profile packs should declare `content_kinds` explicitly.
 
-The manifest spec draft also sketches a nested fallback config object, richer
-connector families, and per-profile evaluation packs. This repository has
-adopted the local-reference contract above, a small source connector registry
-metadata surface, `csv_import` / `ndjson_import` event file mappings, the
-`import profile-source --source-id <id>` path for profile-declared one-shot
-imports, and the `eval golden --profile-id <id>` execution path for
-`evaluation.scenario_pack`. When a profile declares `evaluation.pairwise_pack`,
-the same golden runner loads those pairwise expectations into the selected
-scenario run and reports the pack path in the summary metadata. Pairwise packs
-use `schema_version: 1`, `kind: replay_pairwise_pack`, and `expectations`
-entries keyed by `scenario_id`. It has adopted profile-defined content-kind
-identifiers in manifests, while the current ranking runtime still emits the
-implemented school/event response shape. It has not adopted dynamic connector
-loading, locale-specific explanation rendering, arbitrary field mapping layers,
-or a replacement ranking engine.
+The manifest spec draft also sketches richer connector families and per-profile
+evaluation packs. This repository has adopted the local-reference contract
+above, a small source connector registry metadata surface, `csv_import` /
+`ndjson_import` event file mappings, the `import profile-source --source-id
+<id>` path for profile-declared one-shot imports, selected-locale reason label
+rendering, nested fallback config path validation, and the `eval golden
+--profile-id <id>` execution path for `evaluation.scenario_pack`. When a
+profile declares `evaluation.pairwise_pack`, the same golden runner loads those
+pairwise expectations into the selected scenario run and reports the pack path
+in the summary metadata. Pairwise packs use `schema_version: 1`, `kind:
+replay_pairwise_pack`, and `expectations` entries keyed by `scenario_id`. It has
+adopted profile-defined content-kind identifiers in manifests, while the
+current ranking runtime still emits the implemented school/event response
+shape. It has not adopted dynamic connector loading, arbitrary field mapping
+layers, or a replacement ranking engine.
 
 Compatibility levels are profile-pack contract labels, not storage parity
 claims:
@@ -206,11 +210,13 @@ is only local manifest discovery and selection. It is not a plugin ABI, dynamic
 loader, marketplace, or remote package source.
 
 The selected manifest then provides the runtime defaults for
-`ranking_config_dir`, the selected fixture path, and the profile-owned
-`reason_catalog` path. Runtime selection resolves and validates the reason
-catalog as a local file so later runtime code can use the selected profile's
-local references without re-parsing the manifest. It does not change ranking
-explanation semantics.
+`ranking_config_dir`, the selected fixture path, the optional nested fallback
+config file path, and the profile-owned `reason_catalog` path. Runtime selection
+resolves and validates these local file references. The selected reason catalog
+is loaded by the API and profile-aware replay/evaluation paths so item and
+top-level explanations render the profile's labels. Existing core score
+features must keep their stable `reason_code`; a profile catalog can override
+labels, not rewrite public reason-code identity.
 
 `eval golden` has a narrower profile-aware evaluation boundary. Without
 `--profile-id` or `PROFILE_ID`, it keeps the historical
@@ -244,7 +250,7 @@ the explicit directory is used, the other directory falls back to its built-in
 default, and startup does not require profile pack IO. In that mode, the
 profile-owned `reason_catalog` reference is also skipped and left unresolved
 because no runtime profile is selected; runtime continues to use the built-in
-ranking reason-code behavior instead of deriving reason labels from a manifest.
+reason label catalog instead of deriving labels from a manifest.
 `PROFILE_FIXTURE_SET_ID` is optional; when omitted, the first fixture declared
 by the selected profile is used. Profiles may omit fixtures for ranking-only
 runtimes. Commands that consume fixtures require either a selected profile

@@ -1237,7 +1237,7 @@ mod tests {
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
             manifest_payload: serde_json::json!({ "profile_id": "school-event-jp" }),
             ranking_config_dir: "configs/ranking".to_string(),
-            reason_catalog_path: "configs/profiles/school-event-jp/reasons/ja-JP.yaml".to_string(),
+            reason_catalog_path: "configs/profiles/school-event-jp/reasons.yaml".to_string(),
             content_kind_registry: vec!["school".to_string(), "event".to_string()],
             supported_content_kinds: vec!["school".to_string(), "event".to_string()],
             context_inputs: vec!["station".to_string(), "line".to_string()],

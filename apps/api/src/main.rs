@@ -3,7 +3,7 @@ use std::sync::Arc;
 use api::AppState;
 use cache::RecommendationCache;
 use clap::{Parser, Subcommand};
-use config::{AppSettings, RankingProfiles};
+use config::{load_profile_reason_catalog, AppSettings, RankingProfiles};
 use observability::init_tracing;
 use ranking::RankingEngine;
 use storage_opensearch::OpenSearchStore;
@@ -36,6 +36,11 @@ async fn serve() -> anyhow::Result<()> {
     let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
     let profile_version = profiles.profile_version.clone();
     let neighbor_distance_cap_meters = profiles.fallback.neighbor_distance_cap_meters;
+    let mut engine = RankingEngine::new(profiles, settings.algorithm_version.clone());
+    if !settings.profile_reason_catalog_path.is_empty() {
+        let profile_catalog = load_profile_reason_catalog(&settings.profile_reason_catalog_path)?;
+        engine = engine.with_profile_reason_catalog(&profile_catalog)?;
+    }
     let candidate_backend = if settings.candidate_retrieval_mode.is_full() {
         api::CandidateBackend::Full(OpenSearchStore::new(&settings.opensearch)?)
     } else {
@@ -46,7 +51,7 @@ async fn serve() -> anyhow::Result<()> {
             settings.database_url.clone(),
             settings.postgres_pool_max_size,
         )?),
-        engine: RankingEngine::new(profiles, settings.algorithm_version.clone()),
+        engine,
         cache: RecommendationCache::new(
             settings.redis_url.clone(),
             settings.recommendation_cache_ttl_secs,
