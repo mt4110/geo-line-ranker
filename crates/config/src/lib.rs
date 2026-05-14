@@ -2106,6 +2106,7 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
     }
     for connector in &manifest.connectors {
         validate_portable_relative_path(path, "connectors.manifest", &connector.manifest)?;
+        profile_connectors::validate_profile_connector_ref_contract(path, connector)?;
     }
     if let Some(evaluation) = &manifest.evaluation {
         validate_portable_relative_path(
@@ -2577,11 +2578,10 @@ mod tests {
         resolve_profile_pack_ranking_selection, resolve_profile_pack_runtime_selection,
         validate_portable_relative_path, validate_profile_pack_contract,
         validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
-        ProfileCompatibilityLevel, ProfileConnectorFieldMapping, ProfileConnectorType,
-        ProfileContextInput, ProfileFallbackPolicyRef, ProfilePackKind, ProfilePackManifest,
-        ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind,
-        ProfileReasonCatalogRef, ProfileSourceClass, RankingConfigKind, RankingProfiles,
-        DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        ProfileCompatibilityLevel, ProfileConnectorType, ProfileContextInput,
+        ProfileFallbackPolicyRef, ProfilePackKind, ProfilePackManifest, ProfilePackRegistry,
+        ProfileReasonCatalog, ProfileReasonCatalogKind, ProfileReasonCatalogRef,
+        ProfileSourceClass, RankingConfigKind, RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     use domain::{ContentKind, PlacementKind};
@@ -3806,8 +3806,11 @@ evaluation:
             Some("example-events")
         );
         assert_eq!(
-            lint.connector_registry[0].field_mapping,
-            Some(ProfileConnectorFieldMapping::EventV1)
+            lint.connector_registry[0]
+                .field_mapping
+                .as_ref()
+                .map(|mapping| mapping.as_str()),
+            Some("event_v1")
         );
         assert_eq!(
             lint.connector_registry[1].connector_type,
@@ -3819,8 +3822,11 @@ evaluation:
         );
         assert_eq!(lint.connector_registry[1].manifest_kind, "ndjson_file");
         assert_eq!(
-            lint.connector_registry[1].field_mapping,
-            Some(ProfileConnectorFieldMapping::EventV1)
+            lint.connector_registry[1]
+                .field_mapping
+                .as_ref()
+                .map(|mapping| mapping.as_str()),
+            Some("event_v1")
         );
         assert!(!lint.connector_registry[0].safety.dynamic_loading_enabled);
         assert_eq!(lint.evaluation_reference_count, 2);
@@ -3949,6 +3955,151 @@ connectors:
             lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("field mapping");
 
         assert!(format!("{error:#}").contains("must declare field_mapping"));
+    }
+
+    #[test]
+    fn accepts_custom_file_field_mapping_ref_as_manifest_contract() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+connectors:
+  - type: csv_import
+    manifest: sources/events.csv
+    source_id: example-events
+    field_mapping: custom_event_v1
+"#,
+        )
+        .expect("profile");
+
+        let manifest = load_profile_pack_manifest(&manifest_path).expect("manifest contract");
+        let mapping = manifest.connectors[0]
+            .field_mapping
+            .as_ref()
+            .expect("field mapping");
+
+        assert_eq!(mapping.as_str(), "custom_event_v1");
+        assert!(!mapping.is_runtime_executable());
+    }
+
+    #[test]
+    fn rejects_invalid_file_field_mapping_ref() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+connectors:
+  - type: csv_import
+    manifest: sources/events.csv
+    source_id: example-events
+    field_mapping: Custom Event V1
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path).expect_err("field mapping ref");
+
+        assert!(format!("{error:#}").contains("field_mapping 'Custom Event V1' is invalid"));
+    }
+
+    #[test]
+    fn runtime_validation_rejects_non_executable_file_field_mapping() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let source_dir = profile_dir.join("sources");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(source_dir.join("events.csv"), "event_id,title\n").expect("source");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+connectors:
+  - type: csv_import
+    manifest: sources/events.csv
+    source_id: example-events
+    field_mapping: custom_event_v1
+"#,
+        )
+        .expect("profile");
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("runtime mapping");
+        let rendered = format!("{error:#}");
+
+        assert!(rendered.contains("field_mapping custom_event_v1 is a valid mapping ref"));
+        assert!(rendered.contains("current import runtime executes only event_v1"));
     }
 
     #[test]

@@ -505,7 +505,10 @@ fn import_target_for_source_id(source_id: &str) -> Result<ImportTarget> {
 
 fn ensure_event_v1_mapping(connector: &ProfileConnectorRegistryEntry) -> Result<()> {
     ensure!(
-        connector.field_mapping == Some(ProfileConnectorFieldMapping::EventV1),
+        matches!(
+            connector.field_mapping.as_ref(),
+            Some(ProfileConnectorFieldMapping::EventV1)
+        ),
         "profile source_id {} connector {} must use field_mapping event_v1",
         connector.source_id.as_deref().unwrap_or("unknown"),
         connector.connector_type.as_str()
@@ -684,12 +687,19 @@ fn validate_starts_at(raw: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::PathBuf};
 
+    use config::{
+        ProfileCompatibilityLevel, ProfileConnectorFieldMapping, ProfileConnectorRegistryEntry,
+        ProfileConnectorSafetyMetadata, ProfileConnectorType, ProfileSourceClass,
+    };
     use serde_json::json;
     use storage_postgres::EventCsvRecord;
 
-    use super::{ensure_import_source_id, read_event_ndjson_records, validate_event_csv_records};
+    use super::{
+        ensure_event_v1_mapping, ensure_import_source_id, read_event_ndjson_records,
+        validate_event_csv_records,
+    };
 
     #[test]
     fn import_source_id_rejects_path_like_values() {
@@ -699,6 +709,33 @@ mod tests {
         assert!(error
             .to_string()
             .contains("event NDJSON source_id '../bad-source' is invalid"));
+    }
+
+    #[test]
+    fn profile_import_rejects_non_event_v1_field_mapping() {
+        let connector = ProfileConnectorRegistryEntry {
+            connector_type: ProfileConnectorType::CsvImport,
+            source_class: ProfileSourceClass::CsvImport,
+            manifest_path: PathBuf::from("events.csv"),
+            manifest_kind: "csv_file".to_string(),
+            source_id: Some("example-events".to_string()),
+            field_mapping: Some(ProfileConnectorFieldMapping::Custom(
+                "custom_event_v1".to_string(),
+            )),
+            profile_compatibility: ProfileCompatibilityLevel::Experimental,
+            safety: ProfileConnectorSafetyMetadata {
+                local_reference_only: true,
+                dynamic_loading_enabled: false,
+                live_fetch_default: false,
+                allowlist_required: false,
+            },
+        };
+
+        let error = ensure_event_v1_mapping(&connector).expect_err("unsupported mapping");
+
+        assert!(error.to_string().contains(
+            "profile source_id example-events connector csv_import must use field_mapping event_v1"
+        ));
     }
 
     #[test]

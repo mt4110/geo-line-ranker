@@ -90,8 +90,11 @@ Profile pack loading is strict:
   files must use portable relative paths and resolve locally when linted.
 - Profile `connectors` support local `source_manifest`, `csv_import`,
   `ndjson_import`, and `crawler_manifest` references. CSV/NDJSON file imports
-  must declare `field_mapping: event_v1`; arbitrary field mapping remains
-  outside the current schema-2 runtime slice.
+  must declare a portable `field_mapping` ref using lowercase letters, digits,
+  underscores, and hyphens, with no leading or trailing separator. The manifest
+  contract can carry future mapping refs, but the current schema-2 import
+  runtime executes only `event_v1`; unsupported mapping refs fail validation,
+  doctor, and import.
 
 Run profile pack contract lint together with ranking config lint:
 
