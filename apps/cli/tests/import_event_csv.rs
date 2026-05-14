@@ -1,6 +1,6 @@
 use std::fs;
 
-use cli::run_event_csv_import;
+use cli::{run_event_csv_import, run_event_ndjson_import};
 use config::{AppSettings, CandidateRetrievalMode, OpenSearchSettings};
 use serde_json::Value;
 use storage_postgres::{run_migrations, seed_fixture};
@@ -223,6 +223,92 @@ event_csv_rename_a,school_seaside,Seaside Rename June Open,open_campus,true,fals
                 "SELECT is_active
              FROM events
              WHERE id = 'event_csv_rename_b'",
+                &[],
+            )
+            .await?
+            .get::<_, bool>("is_active");
+        assert!(!stale_active);
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn event_ndjson_import_deactivates_stale_rows_after_csv_migration() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("glr_cli_ndjson_migration").await
+    else {
+        eprintln!(
+            "skipping event NDJSON migration integration test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client.simple_query("SELECT 1").await?;
+
+        let root = repo_root();
+        run_migrations(&database_url, root.join("storage/migrations/postgres")).await?;
+        seed_fixture(&database_url, root.join("storage/fixtures/minimal")).await?;
+
+        let temp = tempfile::tempdir()?;
+        let settings = test_settings(&temp.path().join("raw"), &database_url);
+        let csv_path = temp.path().join("events.csv");
+        let ndjson_path = temp.path().join("events.ndjson");
+
+        fs::write(
+            &csv_path,
+            "event_id,school_id,title,event_category,is_open_day,is_featured,priority_weight,starts_at,placement_tags\n\
+event_migration_a,school_seaside,Seaside CSV Open,open_campus,true,true,1.0,2026-05-01T10:00:00+09:00,home|detail\n\
+event_migration_b,school_garden,Garden CSV Lab,trial_class,false,false,0.5,2026-05-03T13:00:00+09:00,search\n",
+        )?;
+        run_event_csv_import(&settings, &csv_path).await?;
+
+        fs::write(
+            &ndjson_path,
+            r#"{"event_id":"event_migration_a","school_id":"school_seaside","title":"Seaside NDJSON Open","event_category":"open_campus","is_open_day":true,"is_featured":false,"priority_weight":0.8,"starts_at":"2026-06-01T10:00:00+09:00","placement_tags":["home","detail"],"details":{"format":"ndjson"}}
+"#,
+        )?;
+        run_event_ndjson_import(&settings, &ndjson_path, "event-csv").await?;
+
+        let active_rows = client
+            .query(
+                "SELECT id, title
+             FROM events
+             WHERE id = ANY($1)
+               AND source_type = 'event_csv'
+               AND source_key = $2
+               AND is_active = TRUE
+             ORDER BY id ASC",
+                &[
+                    &vec![
+                        "event_migration_a".to_string(),
+                        "event_migration_b".to_string(),
+                    ],
+                    &"event-csv",
+                ],
+            )
+            .await?;
+        assert_eq!(active_rows.len(), 1);
+        assert_eq!(active_rows[0].get::<_, String>("id"), "event_migration_a");
+        assert_eq!(
+            active_rows[0].get::<_, String>("title"),
+            "Seaside NDJSON Open"
+        );
+
+        let stale_active = client
+            .query_one(
+                "SELECT is_active
+             FROM events
+             WHERE id = 'event_migration_b'",
                 &[],
             )
             .await?
