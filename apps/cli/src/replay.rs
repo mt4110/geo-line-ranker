@@ -1242,7 +1242,7 @@ async fn evaluate_replay_trace(
         neighbor_max_hops,
     };
     let candidate_links = match repository
-        .load_context_candidate_links_with_graph_expansion(
+        .load_context_candidate_links_with_loaded_graph_expansion(
             candidate_link_query,
             &storage_graph_expansion,
         )

@@ -89,6 +89,27 @@ pub struct ContextCandidateLinkQuery<'a> {
 }
 
 #[derive(Debug, Clone, Default)]
+struct CandidatePlanGraphOriginIds {
+    area: Option<String>,
+    line: Option<String>,
+}
+
+impl CandidatePlanGraphOriginIds {
+    fn from_loaded_expansion(expansion: &CandidatePlanGraphExpansion) -> Self {
+        Self {
+            area: expansion
+                .area
+                .as_ref()
+                .map(|area| area.origin_area_id.clone()),
+            line: expansion
+                .line
+                .as_ref()
+                .map(|line| line.origin_line_id.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 struct StationAreaColumns {
     country_code: Option<String>,
     prefecture_code: Option<String>,
@@ -1579,14 +1600,70 @@ impl PgRepository {
             min_scoped_candidates,
             neighbor_max_hops,
         };
-        self.load_context_candidate_links_with_graph_expansion(query, &graph_expansion)
+        self.load_context_candidate_links_with_loaded_graph_expansion(query, &graph_expansion)
             .await
     }
 
+    /// Loads scoped candidate links with a graph expansion that was produced for the
+    /// same target station and context by `load_candidate_plan_graph_expansion`.
+    ///
+    /// Use `load_context_candidate_links_with_graph_expansion` when the expansion
+    /// may have come from another source and needs origin validation.
+    pub async fn load_context_candidate_links_with_loaded_graph_expansion(
+        &self,
+        query: ContextCandidateLinkQuery<'_>,
+        graph_expansion: &CandidatePlanGraphExpansion,
+    ) -> Result<Vec<SchoolStationLink>> {
+        let graph_origin_ids = CandidatePlanGraphOriginIds::from_loaded_expansion(graph_expansion);
+        self.load_context_candidate_links_with_graph_expansion_origins(
+            query,
+            graph_expansion,
+            &graph_origin_ids,
+        )
+        .await
+    }
+
+    /// Loads scoped candidate links with origin validation for caller-supplied
+    /// graph expansions.
     pub async fn load_context_candidate_links_with_graph_expansion(
         &self,
         query: ContextCandidateLinkQuery<'_>,
         graph_expansion: &CandidatePlanGraphExpansion,
+    ) -> Result<Vec<SchoolStationLink>> {
+        let graph_origin_ids = self
+            .candidate_plan_graph_origin_ids(query.target_station, query.context, graph_expansion)
+            .await?;
+        self.load_context_candidate_links_with_graph_expansion_origins(
+            query,
+            graph_expansion,
+            &graph_origin_ids,
+        )
+        .await
+    }
+
+    async fn candidate_plan_graph_origin_ids(
+        &self,
+        target_station: &Station,
+        context: &RankingContext,
+        graph_expansion: &CandidatePlanGraphExpansion,
+    ) -> Result<CandidatePlanGraphOriginIds> {
+        let area = if graph_expansion.area.is_some() {
+            self.candidate_plan_area_graph_origin_id(target_station, context)
+                .await?
+        } else {
+            None
+        };
+        Ok(CandidatePlanGraphOriginIds {
+            area,
+            line: candidate_plan_line_graph_origin_id(target_station, context),
+        })
+    }
+
+    async fn load_context_candidate_links_with_graph_expansion_origins(
+        &self,
+        query: ContextCandidateLinkQuery<'_>,
+        graph_expansion: &CandidatePlanGraphExpansion,
+        graph_origin_ids: &CandidatePlanGraphOriginIds,
     ) -> Result<Vec<SchoolStationLink>> {
         let ContextCandidateLinkQuery {
             target_station,
@@ -1606,23 +1683,16 @@ impl PgRepository {
         let prefecture_name = context.prefecture_name().map(str::to_string);
         let station_context_is_explicit = context.station_id().is_some();
         let include_safe_global_candidates = true;
-        let line_graph_origin_id = candidate_plan_line_graph_origin_id(target_station, context);
-        let area_graph_origin_id = if graph_expansion.area.is_some() {
-            self.candidate_plan_area_graph_origin_id(target_station, context)
-                .await?
-        } else {
-            None
-        };
         let adjacent_line_ids = graph_expansion
             .line
             .as_ref()
-            .filter(|line| line_graph_origin_id.as_deref() == Some(line.origin_line_id.as_str()))
+            .filter(|line| graph_origin_ids.line.as_deref() == Some(line.origin_line_id.as_str()))
             .map(|line| line.adjacent_line_ids.clone())
             .unwrap_or_default();
         let adjacent_area_ids = graph_expansion
             .area
             .as_ref()
-            .filter(|area| area_graph_origin_id.as_deref() == Some(area.origin_area_id.as_str()))
+            .filter(|area| graph_origin_ids.area.as_deref() == Some(area.origin_area_id.as_str()))
             .map(|area| area.adjacent_area_ids.clone())
             .unwrap_or_default();
         let client = self.connect().await?;
@@ -1736,7 +1806,6 @@ impl PgRepository {
                                     $8
                                 )
                                 OR candidate_area_id = ANY($16::TEXT[])
-                                OR school_area_id = ANY($16::TEXT[])
                             )
                         ) AS is_neighbor_area,
                         (

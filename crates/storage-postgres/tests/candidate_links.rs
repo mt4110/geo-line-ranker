@@ -485,17 +485,20 @@ async fn station_context_candidate_links_include_area_graph_neighbors() -> anyho
 
                  INSERT INTO schools (id, name, area, school_type, group_id) VALUES
                     ('school_direct', 'Direct School', 'Target Ward', 'high_school', 'group_direct'),
-                    ('school_area_neighbor', 'Area Neighbor', 'Neighbor Ward', 'high_school', 'group_area_neighbor');
+                    ('school_area_neighbor', 'Area Neighbor', 'Neighbor Ward', 'high_school', 'group_area_neighbor'),
+                    ('school_school_area_only', 'School Area Only', 'Neighbor Ward', 'high_school', 'group_school_area_only');
 
                  INSERT INTO stations (id, name, line_name, latitude, longitude, area_id) VALUES
                     ('st_target', 'Target', 'Target Line', 35.0, 139.0, 'area_target'),
-                    ('st_area_neighbor', 'Area Neighbor', 'Other Line', 36.0, 140.0, 'area_neighbor');
+                    ('st_area_neighbor', 'Area Neighbor', 'Other Line', 36.0, 140.0, 'area_neighbor'),
+                    ('st_school_area_only', 'School Area Only', 'Other Line', 36.2, 140.2, NULL);
 
                  INSERT INTO school_station_links
                     (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
                  VALUES
                     ('school_direct', 'st_target', 4, 250, 0, 'Target Line'),
-                    ('school_area_neighbor', 'st_area_neighbor', 9, 800, 0, 'Other Line');",
+                    ('school_area_neighbor', 'st_area_neighbor', 9, 800, 0, 'Other Line'),
+                    ('school_school_area_only', 'st_school_area_only', 9, 800, 0, 'Other Line');",
             )
             .await?;
 

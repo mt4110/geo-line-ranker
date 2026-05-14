@@ -255,7 +255,7 @@ async fn recommend(
     let candidate_links = match &state.candidate_backend {
         CandidateBackend::SqlOnly => match state
             .repository
-            .load_context_candidate_links_with_graph_expansion(
+            .load_context_candidate_links_with_loaded_graph_expansion(
                 candidate_link_query,
                 &storage_graph_expansion,
             )
@@ -279,7 +279,7 @@ async fn recommend(
             {
                 Ok(candidate_links) if candidate_links.len() < min_candidate_count => match state
                     .repository
-                    .load_context_candidate_links_with_graph_expansion(
+                    .load_context_candidate_links_with_loaded_graph_expansion(
                         candidate_link_query,
                         &storage_graph_expansion,
                     )
@@ -301,7 +301,7 @@ async fn recommend(
         }
         CandidateBackend::Full(_) => match state
             .repository
-            .load_context_candidate_links_with_graph_expansion(
+            .load_context_candidate_links_with_loaded_graph_expansion(
                 candidate_link_query,
                 &storage_graph_expansion,
             )
