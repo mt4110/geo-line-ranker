@@ -58,9 +58,13 @@ Each `profile.yaml` declares:
 - `default_locale`: selected reason-catalog locale when `reason_catalog`
   declares more than one locale file.
 - `content_kinds`: profile-defined content kind registry. These are stable
-  string identifiers, not a fixed core enum.
+  string identifiers, not a fixed core enum. A profile may declare future or
+  domain-specific identifiers here before the current runtime can execute them.
 - `supported_content_kinds`: content kind refs the profile intentionally
-  exposes. Each entry must exist in `content_kinds`.
+  exposes to the active runtime. Each entry must exist in `content_kinds`.
+  Today only `school` and `event` are executable; other declared kinds must
+  remain registry-only until their read model, ranking behavior, and response
+  shape are implemented.
 - `context_inputs`: accepted context entry points such as station, line, area,
   or user profile.
 - `placements`: placement surfaces the profile supports. The current runtime
@@ -93,15 +97,18 @@ Each `profile.yaml` declares:
   implemented by a profile.
 
 For the current runtime, `article_support` must remain `reserved`. A profile
+may declare `article` in `content_kinds` as a registry-only future kind, but it
 cannot expose `article` in `supported_content_kinds`, and the referenced
 placement configs cannot mention `article` in enabled content kinds, score
-boosts, or content-kind diversity ratios. The first article implementation
-should update this contract together with the article read model, fixture
-coverage, ranking tests, and any public API/OpenAPI docs required by the shape
-change.
+boosts, or content-kind diversity ratios. `profile validate`, `profile
+inspect`, and `doctor profile-pack` report the runtime-executable content kinds
+and registry-only kinds. The first article implementation should update this
+contract together with the article read model, fixture coverage, ranking tests,
+and any public API/OpenAPI docs required by the shape change.
 
 The linter checks schema version, kind, duplicate IDs, content-kind registry
-syntax, supported content-kind refs, ranking-config content-kind refs,
+syntax, supported content-kind refs, runtime-executable content-kind boundary,
+ranking-config content-kind refs,
 placement declarations, path syntax, referenced files, fixture manifest
 identity, compatibility level, the active ranking config, all declared reason
 catalog locale files, connector manifest refs, connector type / manifest-kind
@@ -130,8 +137,10 @@ in the summary metadata. Pairwise packs use `schema_version: 1`, `kind:
 replay_pairwise_pack`, and `expectations` entries keyed by `scenario_id`. It has
 adopted profile-defined content-kind identifiers in manifests, while the
 current ranking runtime still emits the implemented school/event response
-shape. It has not adopted dynamic connector loading, arbitrary field mapping
-layers, or a replacement ranking engine.
+shape. Non-executable identifiers are valid as registry entries, but exposing
+one through `supported_content_kinds` is a validation/runtime error instead of
+silent partial support. It has not adopted dynamic connector loading,
+arbitrary field mapping layers, or a replacement ranking engine.
 
 Compatibility levels are profile-pack contract labels, not storage parity
 claims:

@@ -147,7 +147,7 @@
 
 `article` は将来拡張枠です。型や設定名として予約されていますが、現在の実行時候補には含めません。
 
-現時点では、profile pack の `article_support` は `reserved` のままにし、`supported_content_kinds`、`enabled_content_kinds`、`score_boosts`、`content_kind_max_ratio` のいずれにも `article` を入れません。
+現時点では、profile pack の `article_support` は `reserved` のままにします。`content_kinds` registry に `article` を将来枠として宣言することはできますが、現在の runtime で実行可能なのは `school,event` だけです。そのため `supported_content_kinds`、`enabled_content_kinds`、`score_boosts`、`content_kind_max_ratio` のいずれにも `article` を入れません。
 
 記事候補を有効化する場合は、少なくとも次を同じ設計単位で用意します。
 

@@ -91,6 +91,8 @@ pub struct ProfilePackDoctorFile {
     pub compatibility_level: String,
     pub content_kind_registry: Vec<String>,
     pub supported_content_kinds: Vec<String>,
+    pub runtime_executable_content_kinds: Vec<String>,
+    pub registry_only_content_kinds: Vec<String>,
     pub placements: Vec<String>,
     pub reason_catalog_locale_count: usize,
     pub reason_count: usize,
@@ -143,6 +145,8 @@ pub struct RankingConfigDoctorProfile {
     pub compatibility_level: String,
     pub content_kind_registry: Vec<String>,
     pub supported_content_kinds: Vec<String>,
+    pub runtime_executable_content_kinds: Vec<String>,
+    pub registry_only_content_kinds: Vec<String>,
     pub placements: Vec<String>,
     pub reason_catalog_locale_count: usize,
     pub reason_count: usize,
@@ -1069,6 +1073,16 @@ fn profile_pack_doctor_file(file: ProfilePackLintFile) -> ProfilePackDoctorFile 
             .into_iter()
             .map(|kind| kind.as_str().to_string())
             .collect(),
+        runtime_executable_content_kinds: file
+            .runtime_executable_content_kinds
+            .into_iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
+        registry_only_content_kinds: file
+            .registry_only_content_kinds
+            .into_iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
         placements: file
             .placements
             .into_iter()
@@ -1109,6 +1123,16 @@ fn ranking_config_doctor_profile(file: ProfilePackLintFile) -> RankingConfigDoct
             .collect(),
         supported_content_kinds: file
             .supported_content_kinds
+            .into_iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
+        runtime_executable_content_kinds: file
+            .runtime_executable_content_kinds
+            .into_iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect(),
+        registry_only_content_kinds: file
+            .registry_only_content_kinds
             .into_iter()
             .map(|kind| kind.as_str().to_string())
             .collect(),

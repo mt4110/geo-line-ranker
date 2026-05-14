@@ -1707,6 +1707,10 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         .map(|kind| kind.as_str())
         .collect::<Vec<_>>()
         .join(",");
+    let runtime_executable_content_kinds =
+        format_content_kind_refs(file.runtime_executable_content_kinds.as_slice());
+    let registry_only_content_kinds =
+        format_content_kind_refs(file.registry_only_content_kinds.as_slice());
     let placements = file
         .placements
         .iter()
@@ -1714,7 +1718,7 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kind_registry={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
+        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
         file.path.display(),
         file.profile_id,
         file.schema_version,
@@ -1723,6 +1727,8 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         file.compatibility_level.as_str(),
         content_kind_registry,
         content_kinds,
+        runtime_executable_content_kinds,
+        registry_only_content_kinds,
         placements,
         file.reason_catalog_locale_count,
         file.reason_count,
@@ -1733,6 +1739,18 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         file.event_csv_example_count,
         file.optional_crawler_manifest_count
     )
+}
+
+fn format_content_kind_refs(content_kinds: &[domain::ContentKindRef]) -> String {
+    if content_kinds.is_empty() {
+        "-".to_string()
+    } else {
+        content_kinds
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 fn format_i64_order(values: &[i64]) -> String {
@@ -1795,6 +1813,10 @@ fn format_profile_inspect_summary(
         .map(|kind| kind.as_str())
         .collect::<Vec<_>>()
         .join(",");
+    let runtime_executable_content_kinds =
+        format_content_kind_refs(lint_file.runtime_executable_content_kinds.as_slice());
+    let registry_only_content_kinds =
+        format_content_kind_refs(lint_file.registry_only_content_kinds.as_slice());
     let context_inputs = manifest
         .context_inputs
         .iter()
@@ -1817,6 +1839,8 @@ fn format_profile_inspect_summary(
         ),
         format!("content_kind_registry={content_kind_registry}"),
         format!("content_kinds={content_kinds}"),
+        format!("runtime_executable_content_kinds={runtime_executable_content_kinds}"),
+        format!("registry_only_content_kinds={registry_only_content_kinds}"),
         format!("context_inputs={context_inputs}"),
         format!("fallback_policy={}", manifest.fallback_policy.display()),
         format!("ranking_config_dir={}", manifest.ranking_config_dir),
@@ -2780,6 +2804,8 @@ evaluation:
                 compatibility_level: "reference".to_string(),
                 content_kind_registry: vec!["school".to_string(), "event".to_string()],
                 supported_content_kinds: vec!["school".to_string(), "event".to_string()],
+                runtime_executable_content_kinds: vec!["school".to_string(), "event".to_string()],
+                registry_only_content_kinds: Vec::new(),
                 placements: vec![
                     "home".to_string(),
                     "search".to_string(),
@@ -2829,9 +2855,13 @@ evaluation:
         assert!(rendered.contains("profile_id=school-event-jp"));
         assert!(rendered.contains("fallback_config=none"));
         assert!(rendered.contains("compatibility_level=reference"));
+        assert!(rendered.contains("runtime_executable_content_kinds=school,event"));
+        assert!(rendered.contains("registry_only_content_kinds=-"));
 
         let json = serde_json::to_string(&summary).expect("json");
         assert!(json.contains("\"compatibility_level\":\"reference\""));
+        assert!(json.contains("\"runtime_executable_content_kinds\":[\"school\",\"event\"]"));
+        assert!(json.contains("\"registry_only_content_kinds\":[]"));
     }
 
     #[test]
@@ -2873,6 +2903,8 @@ evaluation:
                 compatibility_level: "stable".to_string(),
                 content_kind_registry: vec!["school".to_string(), "event".to_string()],
                 supported_content_kinds: vec!["school".to_string(), "event".to_string()],
+                runtime_executable_content_kinds: vec!["school".to_string(), "event".to_string()],
+                registry_only_content_kinds: Vec::new(),
                 placements: vec![
                     "home".to_string(),
                     "search".to_string(),
@@ -2905,6 +2937,8 @@ evaluation:
         assert!(rendered.contains("profile_id=local-discovery-generic"));
         assert!(rendered.contains("fallback_config=none"));
         assert!(rendered.contains("compatibility_level=stable"));
+        assert!(rendered.contains("runtime_executable_content_kinds=school,event"));
+        assert!(rendered.contains("registry_only_content_kinds=-"));
     }
 
     #[test]
@@ -2955,6 +2989,8 @@ evaluation:
                     compatibility_level: ProfileCompatibilityLevel::Stable,
                     content_kind_registry: vec!["school".into(), "event".into()],
                     supported_content_kinds: Vec::new(),
+                    runtime_executable_content_kinds: Vec::new(),
+                    registry_only_content_kinds: Vec::new(),
                     placements: vec![
                         PlacementKind::Home,
                         PlacementKind::Search,
@@ -2985,6 +3021,8 @@ evaluation:
                     compatibility_level: ProfileCompatibilityLevel::Reference,
                     content_kind_registry: vec!["school".into(), "event".into()],
                     supported_content_kinds: Vec::new(),
+                    runtime_executable_content_kinds: Vec::new(),
+                    registry_only_content_kinds: Vec::new(),
                     placements: vec![
                         PlacementKind::Home,
                         PlacementKind::Search,
@@ -3046,7 +3084,9 @@ evaluation:
                 manifest_version: 1,
                 compatibility_level: ProfileCompatibilityLevel::Stable,
                 content_kind_registry: vec!["school".into(), "event".into()],
-                supported_content_kinds: Vec::new(),
+                supported_content_kinds: vec!["school".into()],
+                runtime_executable_content_kinds: vec!["school".into()],
+                registry_only_content_kinds: vec!["event".into()],
                 placements: vec![
                     PlacementKind::Home,
                     PlacementKind::Search,
@@ -3071,6 +3111,8 @@ evaluation:
         assert!(rendered.contains("profile validate ok: profile_packs=1"));
         assert!(rendered.contains("profile_id=local-discovery-generic"));
         assert!(rendered.contains("compatibility_level=stable"));
+        assert!(rendered.contains("runtime_executable_content_kinds=school"));
+        assert!(rendered.contains("registry_only_content_kinds=event"));
     }
 
     #[test]
@@ -3085,6 +3127,7 @@ display_name: Local Discovery Generic
 compatibility_level: stable
 content_kinds:
   - school
+  - event
 supported_content_kinds:
   - school
 context_inputs:
@@ -3118,6 +3161,8 @@ article_support: reserved
                 .clone()
                 .unwrap_or_else(|| manifest.supported_content_kinds.clone()),
             supported_content_kinds: manifest.supported_content_kinds.clone(),
+            runtime_executable_content_kinds: manifest.supported_content_kinds.clone(),
+            registry_only_content_kinds: vec!["event".into()],
             placements: manifest.placements.clone(),
             reason_catalog_locale_count: 1,
             reason_count: 14,
@@ -3165,8 +3210,10 @@ article_support: reserved
             "runtime_reason_catalog_path={}",
             reason_catalog_path.display()
         )));
-        assert!(rendered.contains("content_kind_registry=school"));
+        assert!(rendered.contains("content_kind_registry=school,event"));
         assert!(rendered.contains("content_kinds=school"));
+        assert!(rendered.contains("runtime_executable_content_kinds=school"));
+        assert!(rendered.contains("registry_only_content_kinds=event"));
         assert!(rendered.contains(&format!(
             "runtime_ranking_config_dir={}",
             ranking_config_dir.display()

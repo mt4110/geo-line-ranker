@@ -427,11 +427,13 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
 
     for file in &summary.files {
         lines.push(format!(
-            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
             file.profile_id,
             file.compatibility_level,
             file.content_kind_registry.join(","),
             file.supported_content_kinds.join(","),
+            format_order(&file.runtime_executable_content_kinds),
+            format_order(&file.registry_only_content_kinds),
             file.placements.join(","),
             file.reason_catalog_locale_count,
             file.reason_count,
@@ -510,11 +512,13 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
     lines.push("profile packs:".to_string());
     lines.extend(summary.profiles.iter().map(|profile| {
         format!(
-            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
             profile.profile_id,
             profile.compatibility_level,
             profile.content_kind_registry.join(","),
             profile.supported_content_kinds.join(","),
+            format_order(&profile.runtime_executable_content_kinds),
+            format_order(&profile.registry_only_content_kinds),
             profile.placements.join(","),
             profile.reason_catalog_locale_count,
             profile.reason_count,
