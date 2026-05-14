@@ -13,6 +13,14 @@ fn non_empty_string(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn area_hint_is_usable(context: &context::RankingContext) -> bool {
+    context.area.is_some()
+        && !context
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "station_area_conflict")
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CandidateGraphExpansion {
     line: Option<LineGraphExpansion>,
@@ -183,7 +191,12 @@ impl CandidateGraph {
             .and_then(|context| context.line_name())
             .unwrap_or(target_station.line_name.as_str())
             .to_string();
-        let target_area_id = non_empty_string(target_station.area_id.as_deref());
+        let target_area_id = non_empty_string(target_station.area_id.as_deref()).or_else(|| {
+            context
+                .filter(|context| area_hint_is_usable(context))
+                .and(expansion.area.as_ref())
+                .map(|area| area.origin_area_id.clone())
+        });
         let line_expansion = expansion
             .line_for_origin(target_line_id.as_deref())
             .cloned();
@@ -717,5 +730,106 @@ mod tests {
         let evidence = graph.evidence(&target, &candidate, &link("st_neighbor", "Other Line", 1));
 
         assert!(evidence.area_match.is_adjacent_area);
+    }
+
+    #[test]
+    fn area_graph_expansion_uses_context_origin_when_target_area_is_missing() {
+        let target = station_in_area(
+            "st_target",
+            "Target",
+            "Target Line",
+            Some("line_target"),
+            None,
+        );
+        let candidate = station_in_area(
+            "st_neighbor",
+            "Neighbor",
+            "Other Line",
+            Some("line_other"),
+            Some("area_neighbor"),
+        );
+        let mut request = query("st_target", PlacementKind::Search);
+        request.context = Some(context::RankingContext {
+            context_source: context::ContextSource::RequestArea,
+            confidence: 0.95,
+            area: Some(context::AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: Some("Tokyo".to_string()),
+                city_code: None,
+                city_name: Some("Target Ward".to_string()),
+            }),
+            line: None,
+            station: None,
+            privacy_level: context::PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+        let expansion = CandidateGraphExpansion::from_parts(
+            None,
+            AreaGraphExpansion::new("area_context", vec!["area_neighbor".to_string()]),
+        );
+        let graph = CandidateGraph::new_with_expansion(&request, &target, 2_500.0, 3, &expansion);
+
+        let evidence = graph.evidence(&target, &candidate, &link("st_neighbor", "Other Line", 1));
+
+        assert_eq!(
+            evidence.area_match.target_area_id.as_deref(),
+            Some("area_context")
+        );
+        assert!(evidence.area_match.is_adjacent_area);
+    }
+
+    #[test]
+    fn area_graph_expansion_ignores_context_origin_after_area_conflict() {
+        let target = station_in_area(
+            "st_target",
+            "Target",
+            "Target Line",
+            Some("line_target"),
+            None,
+        );
+        let candidate = station_in_area(
+            "st_neighbor",
+            "Neighbor",
+            "Other Line",
+            Some("line_other"),
+            Some("area_neighbor"),
+        );
+        let mut request = query("st_target", PlacementKind::Search);
+        request.context = Some(context::RankingContext {
+            context_source: context::ContextSource::RequestStation,
+            confidence: 0.95,
+            area: Some(context::AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: Some("Tokyo".to_string()),
+                city_code: None,
+                city_name: Some("Target Ward".to_string()),
+            }),
+            line: None,
+            station: Some(context::StationContext {
+                station_id: "st_target".to_string(),
+                station_name: "Target".to_string(),
+            }),
+            privacy_level: context::PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: vec![context::ContextWarning {
+                code: "station_area_conflict".to_string(),
+                message: "station area took precedence".to_string(),
+            }],
+        });
+        let expansion = CandidateGraphExpansion::from_parts(
+            None,
+            AreaGraphExpansion::new("area_context", vec!["area_neighbor".to_string()]),
+        );
+        let graph = CandidateGraph::new_with_expansion(&request, &target, 2_500.0, 3, &expansion);
+
+        let evidence = graph.evidence(&target, &candidate, &link("st_neighbor", "Other Line", 1));
+
+        assert!(evidence.area_match.target_area_id.is_none());
+        assert!(!evidence.area_match.is_adjacent_area);
     }
 }
