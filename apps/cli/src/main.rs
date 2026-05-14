@@ -790,7 +790,7 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "storage-backends")]
         Command::Explain { target } => match target {
             ExplainCommand::Trace { id, json } => {
-                let settings = AppSettings::from_env_without_profile_pack()?;
+                let settings = explain_trace_settings()?;
                 let report = run_explain_trace(&settings, id).await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1085,6 +1085,24 @@ async fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "storage-backends")]
+fn explain_trace_settings() -> anyhow::Result<AppSettings> {
+    match AppSettings::from_env() {
+        Ok(settings) => Ok(settings),
+        Err(profile_error) => {
+            let settings = AppSettings::from_env_without_profile_pack().with_context(|| {
+                format!(
+                    "failed to load DB-only explain trace settings after profile-aware settings failed: {profile_error:#}"
+                )
+            })?;
+            eprintln!(
+                "warning: explain trace is using DB-only settings because profile pack resolution failed: {profile_error:#}"
+            );
+            Ok(settings)
+        }
+    }
+}
+
+#[cfg(feature = "storage-backends")]
 async fn run_replay_evaluate_command(
     limit: i64,
     fail_on_mismatch: bool,
@@ -1183,7 +1201,8 @@ fn resolve_eval_golden_scenario_selection(
             profile_id: Some(profile_id),
             profile_manifest: Some(profile_selection.profile_pack_manifest),
             ranking_config_dir: profile_selection.ranking_config_dir,
-            scenario_source: ReplayScenarioSource::explicit_path(scenario_path.clone()),
+            scenario_source: ReplayScenarioSource::explicit_path(scenario_path.clone())
+                .with_reason_catalog_path(profile_selection.reason_catalog_path),
         });
     }
 
@@ -1215,6 +1234,7 @@ fn resolve_eval_golden_scenario_selection(
             scenario_source: ReplayScenarioSource::profile_evaluation(
                 profile_selection.scenario_pack,
                 profile_selection.profile_pack_manifest,
+                profile_selection.reason_catalog_path,
                 profile_selection.pairwise_pack,
             ),
         });
@@ -1407,7 +1427,7 @@ fn profile_manifest_record(
             .iter()
             .map(|placement| placement.as_str().to_string())
             .collect(),
-        fallback_policy: manifest.fallback_policy.clone(),
+        fallback_policy: manifest.fallback_policy.display(),
         fixture_count: usize_to_i32("fixture_count", lint_file.fixture_count)?,
         connector_count: usize_to_i32("connector_count", lint_file.connector_count)?,
         evaluation_reference_count: usize_to_i32(
@@ -1798,7 +1818,7 @@ fn format_profile_inspect_summary(
         format!("content_kind_registry={content_kind_registry}"),
         format!("content_kinds={content_kinds}"),
         format!("context_inputs={context_inputs}"),
-        format!("fallback_policy={}", manifest.fallback_policy),
+        format!("fallback_policy={}", manifest.fallback_policy.display()),
         format!("ranking_config_dir={}", manifest.ranking_config_dir),
         format!(
             "reason_catalog={} reason_catalog_locales={} reasons={}",
@@ -1813,6 +1833,14 @@ fn format_profile_inspect_summary(
         format!(
             "runtime_ranking_config_dir={}",
             runtime_selection.ranking_config_dir.display()
+        ),
+        format!(
+            "runtime_fallback_config_path={}",
+            runtime_selection
+                .fallback_config_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "none".to_string())
         ),
         format!("article_support={}", manifest.article_support.as_str()),
         format!(
@@ -1962,6 +1990,24 @@ mod tests {
             fs::copy(repo_ranking_config_root().join(name), target.join(name))
                 .expect("copy ranking config");
         }
+    }
+
+    fn write_minimal_profile_reason_catalog(path: &Path, profile_id: &str) {
+        fs::write(
+            path,
+            format!(
+                r#"schema_version: 1
+kind: profile_reason_catalog
+profile_id: {profile_id}
+reasons:
+  - feature: direct_station_bonus
+    reason_code: geo.direct_station
+    label: Direct station
+    layer: core
+"#
+            ),
+        )
+        .expect("write profile reason catalog");
     }
 
     #[cfg(feature = "storage-backends")]
@@ -2194,6 +2240,7 @@ mod tests {
         fs::create_dir_all(&ranking_dir).expect("ranking dir");
         fs::create_dir_all(&profile_dir).expect("profile dir");
         copy_default_ranking_configs(&ranking_dir);
+        write_minimal_profile_reason_catalog(&profile_dir.join("reasons.yaml"), "override-profile");
         fs::write(
             profile_dir.join("profile.yaml"),
             r#"
@@ -2218,7 +2265,7 @@ placements:
   - mypage
 fallback_policy: override_default
 ranking_config_dir: ../../ranking
-reason_catalog: missing-reasons.yaml
+reason_catalog: reasons.yaml
 article_support: reserved
 "#,
         )
@@ -2252,6 +2299,7 @@ article_support: reserved
         fs::create_dir_all(&ranking_dir).expect("ranking dir");
         fs::create_dir_all(&profile_dir).expect("profile dir");
         copy_default_ranking_configs(&ranking_dir);
+        write_minimal_profile_reason_catalog(&profile_dir.join("reasons.yaml"), "override-profile");
         fs::write(
             profile_dir.join("profile.yaml"),
             r#"
@@ -2276,7 +2324,7 @@ placements:
   - mypage
 fallback_policy: override_default
 ranking_config_dir: ../../missing-ranking
-reason_catalog: missing-reasons.yaml
+reason_catalog: reasons.yaml
 article_support: reserved
 "#,
         )
@@ -2310,6 +2358,7 @@ article_support: reserved
         fs::create_dir_all(&ranking_dir).expect("ranking dir");
         fs::create_dir_all(&scenario_dir).expect("scenario dir");
         copy_default_ranking_configs(&ranking_dir);
+        write_minimal_profile_reason_catalog(&profile_dir.join("reasons.yaml"), "override-profile");
         fs::write(
             profile_dir.join("profile.yaml"),
             r#"
@@ -2334,7 +2383,7 @@ placements:
   - mypage
 fallback_policy: override_default
 ranking_config_dir: ../../missing-ranking
-reason_catalog: missing-reasons.yaml
+reason_catalog: reasons.yaml
 article_support: reserved
 evaluation:
   scenario_pack: eval
@@ -2723,6 +2772,7 @@ evaluation:
                 path: PathBuf::from("configs/profiles/school-event-jp/profile.yaml"),
                 profile_id: "school-event-jp".to_string(),
                 ranking_config_dir: PathBuf::from("configs/ranking"),
+                fallback_config_path: None,
                 reason_catalog_path: PathBuf::from("configs/profiles/school-event-jp/reasons.yaml"),
                 schema_version: 2,
                 kind: "profile_pack".to_string(),
@@ -2777,6 +2827,7 @@ evaluation:
         assert!(rendered.contains("manifest_kind=import_source"));
         assert!(rendered.contains("source_id=jp-rail"));
         assert!(rendered.contains("profile_id=school-event-jp"));
+        assert!(rendered.contains("fallback_config=none"));
         assert!(rendered.contains("compatibility_level=reference"));
 
         let json = serde_json::to_string(&summary).expect("json");
@@ -2815,6 +2866,7 @@ evaluation:
                 path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
                 profile_id: "local-discovery-generic".to_string(),
                 ranking_config_dir: PathBuf::from("configs/ranking"),
+                fallback_config_path: None,
                 reason_catalog_path: PathBuf::from(
                     "configs/profiles/local-discovery-generic/reasons.yaml",
                 ),
@@ -2851,6 +2903,7 @@ evaluation:
         assert!(rendered.contains("ranking_config_dir=configs/ranking"));
         assert!(rendered.contains("kind=ranking_schools"));
         assert!(rendered.contains("profile_id=local-discovery-generic"));
+        assert!(rendered.contains("fallback_config=none"));
         assert!(rendered.contains("compatibility_level=stable"));
     }
 
@@ -2892,6 +2945,7 @@ evaluation:
                     path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
                     profile_id: "local-discovery-generic".to_string(),
                     ranking_config_dir: PathBuf::from("configs/ranking"),
+                    fallback_config_path: None,
                     reason_catalog_path: PathBuf::from(
                         "configs/profiles/local-discovery-generic/reasons.yaml",
                     ),
@@ -2921,6 +2975,7 @@ evaluation:
                     path: PathBuf::from("configs/profiles/school-event-jp/profile.yaml"),
                     profile_id: "school-event-jp".to_string(),
                     ranking_config_dir: PathBuf::from("configs/ranking"),
+                    fallback_config_path: None,
                     reason_catalog_path: PathBuf::from(
                         "configs/profiles/local-discovery-generic/reasons.yaml",
                     ),
@@ -2982,6 +3037,7 @@ evaluation:
                 path: PathBuf::from("configs/profiles/local-discovery-generic/profile.yaml"),
                 profile_id: "local-discovery-generic".to_string(),
                 ranking_config_dir: PathBuf::from("configs/ranking"),
+                fallback_config_path: None,
                 reason_catalog_path: PathBuf::from(
                     "configs/profiles/local-discovery-generic/reasons.yaml",
                 ),
@@ -3049,6 +3105,7 @@ article_support: reserved
             path: manifest_path.clone(),
             profile_id: "local-discovery-generic".to_string(),
             ranking_config_dir: PathBuf::from("configs/ranking"),
+            fallback_config_path: None,
             reason_catalog_path: PathBuf::from(
                 "configs/profiles/local-discovery-generic/reasons.yaml",
             ),
@@ -3091,6 +3148,7 @@ article_support: reserved
             profile_id: "local-discovery-generic".to_string(),
             profile_pack_manifest: runtime_manifest_path,
             reason_catalog_path: reason_catalog_path.clone(),
+            fallback_config_path: None,
             ranking_config_dir: ranking_config_dir.clone(),
             fixture_set_id: Some("minimal".to_string()),
             fixture_dir: Some(fixture_dir.clone()),
@@ -3113,6 +3171,7 @@ article_support: reserved
             "runtime_ranking_config_dir={}",
             ranking_config_dir.display()
         )));
+        assert!(rendered.contains("runtime_fallback_config_path=none"));
         assert!(rendered.contains("runtime_fixture_set_id=minimal"));
         assert!(rendered.contains(&format!("runtime_fixture_dir={}", fixture_dir.display())));
         assert!(rendered.contains("connector_registry:"));

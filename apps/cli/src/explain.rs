@@ -10,8 +10,8 @@ use storage_postgres::RecommendationTraceReadRow;
 
 use crate::{
     explanation_integrity::{
-        check_recommendation_response_integrity, ExplanationIntegrityCheck, QualityCheckStatus,
-        QualitySeverity,
+        check_recommendation_response_integrity_with_catalog, ExplanationIntegrityCheck,
+        QualityCheckStatus, QualitySeverity,
     },
     repository::pg_repository,
 };
@@ -159,14 +159,23 @@ pub async fn run_explain_trace(
         .load_recommendation_trace(trace_id)
         .await?
         .with_context(|| format!("recommendation trace id {trace_id} was not found"))?;
+    let reason_catalog = runtime_reason_catalog(settings)?;
 
-    Ok(explain_trace_row(&trace))
+    Ok(explain_trace_row_with_catalog(&trace, &reason_catalog))
 }
 
+#[cfg(test)]
 pub fn explain_trace_row(trace: &RecommendationTraceReadRow) -> ExplainTraceReport {
+    explain_trace_row_with_catalog(trace, &ranking::ReasonCatalog::default_core())
+}
+
+pub fn explain_trace_row_with_catalog(
+    trace: &RecommendationTraceReadRow,
+    reason_catalog: &ranking::ReasonCatalog,
+) -> ExplainTraceReport {
     let mut warnings = Vec::new();
     let request = summarize_request(&trace.request_payload, &mut warnings);
-    let (response, parsed_response) = summarize_response(trace, &mut warnings);
+    let (response, parsed_response) = summarize_response(trace, &mut warnings, reason_catalog);
     let trace_payload = summarize_trace_payload(trace, &mut warnings);
 
     if let Some(response_stage) = response.response_fallback_stage.as_deref() {
@@ -194,7 +203,10 @@ pub fn explain_trace_row(trace: &RecommendationTraceReadRow) -> ExplainTraceRepo
     let integrity = parsed_response
         .as_ref()
         .map(|response| {
-            integrity_summary_from_checks(check_recommendation_response_integrity(response))
+            integrity_summary_from_checks(check_recommendation_response_integrity_with_catalog(
+                response,
+                reason_catalog,
+            ))
         })
         .unwrap_or_else(|| ExplainTraceIntegritySummary {
             passed: 0,
@@ -226,6 +238,22 @@ pub fn explain_trace_row(trace: &RecommendationTraceReadRow) -> ExplainTraceRepo
         integrity,
         warnings,
     }
+}
+
+fn runtime_reason_catalog(settings: &AppSettings) -> Result<ranking::ReasonCatalog> {
+    if settings.profile_reason_catalog_path.is_empty() {
+        return Ok(ranking::ReasonCatalog::default_core());
+    }
+    let profile_catalog =
+        config::load_profile_reason_catalog(&settings.profile_reason_catalog_path)?;
+    let reason_catalog = ranking::ReasonCatalog::from_profile_catalog(&profile_catalog)
+        .with_context(|| {
+            format!(
+                "failed to merge profile reason catalog from {}",
+                settings.profile_reason_catalog_path
+            )
+        })?;
+    Ok(reason_catalog)
 }
 
 fn summarize_request(
@@ -261,6 +289,7 @@ fn summarize_request(
 fn summarize_response(
     trace: &RecommendationTraceReadRow,
     warnings: &mut Vec<String>,
+    reason_catalog: &ranking::ReasonCatalog,
 ) -> (ExplainTraceResponseSummary, Option<RecommendationResponse>) {
     let db_fallback_stage = normalize_fallback_stage(&trace.fallback_stage);
     let fallback_stage = stored_response_fallback_stage(&trace.response_payload);
@@ -284,7 +313,7 @@ fn summarize_response(
                 response_fallback_stage: Some(response.fallback_stage.as_str().to_string()),
                 item_count: response.items.len(),
                 result_order,
-                top_reasons: reason_summaries(&response.score_breakdown),
+                top_reasons: reason_summaries(&response.score_breakdown, reason_catalog),
                 items: response
                     .items
                     .iter()
@@ -295,7 +324,7 @@ fn summarize_response(
                             .fallback_stage
                             .as_ref()
                             .map(|stage| stage.as_str().to_string()),
-                        reasons: reason_summaries(&item.score_breakdown),
+                        reasons: reason_summaries(&item.score_breakdown, reason_catalog),
                     })
                     .collect(),
             };
@@ -565,13 +594,17 @@ fn integrity_summary_from_checks(
     }
 }
 
-fn reason_summaries(components: &[ScoreComponentDto]) -> Vec<ExplainTraceReasonSummary> {
+fn reason_summaries(
+    components: &[ScoreComponentDto],
+    reason_catalog: &ranking::ReasonCatalog,
+) -> Vec<ExplainTraceReasonSummary> {
     components
         .iter()
         .map(|component| ExplainTraceReasonSummary {
             feature: component.feature.clone(),
             reason_code: component.reason_code.clone(),
-            label: ranking::reason_catalog_entry(&component.feature)
+            label: reason_catalog
+                .entry(&component.feature)
                 .map(|entry| entry.label.to_string())
                 .unwrap_or_else(|| "固定重み".to_string()),
             value: component.value,

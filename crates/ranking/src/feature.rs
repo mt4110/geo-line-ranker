@@ -61,7 +61,7 @@ const REASON_CATALOG: &[ReasonCatalogEntry] = &[
     ReasonCatalogEntry {
         feature: "content_kind_boost",
         reason_code: "placement.content_kind_boost",
-        label: "placement調整",
+        label: "配置調整",
     },
     ReasonCatalogEntry {
         feature: "neighbor_area_penalty",

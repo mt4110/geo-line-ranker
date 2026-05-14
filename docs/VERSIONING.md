@@ -84,10 +84,10 @@ Profile pack loading is strict:
 - `compatibility_level` must be one of `reference`, `stable`,
   `experimental`, or `deprecated`.
 - Unknown keys fail profile manifest and reason catalog loading.
-- Profile-owned references to ranking configs, fixture manifests, reason
-  catalog locale files, connector manifests, evaluation packs, source
-  manifests, crawler manifests, examples, and event CSV/NDJSON files must use
-  portable relative paths and resolve locally when linted.
+- Profile-owned references to ranking configs, fallback config files, fixture
+  manifests, reason catalog locale files, connector manifests, evaluation
+  packs, source manifests, crawler manifests, examples, and event CSV/NDJSON
+  files must use portable relative paths and resolve locally when linted.
 - Profile `connectors` support local `source_manifest`, `csv_import`,
   `ndjson_import`, and `crawler_manifest` references. CSV/NDJSON file imports
   must declare `field_mapping: event_v1`; arbitrary field mapping remains

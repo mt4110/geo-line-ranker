@@ -11,6 +11,8 @@ mod test_utils;
 
 pub use graph::{AreaGraphExpansion, CandidateGraphExpansion, LineGraphExpansion};
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use config::RankingProfiles;
 use thiserror::Error;
 
@@ -26,6 +28,7 @@ pub enum RankingError {
 pub struct RankingEngine {
     profiles: RankingProfiles,
     algorithm_version: String,
+    reason_catalog: ReasonCatalog,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,12 +38,159 @@ pub struct ReasonCatalogEntry {
     pub label: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeReasonCatalogEntry {
+    pub feature: String,
+    pub reason_code: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReasonCatalog {
+    entries: BTreeMap<String, RuntimeReasonCatalogEntry>,
+}
+
+#[derive(Debug, Error)]
+pub enum ReasonCatalogError {
+    #[error("profile reason catalog schema_version {actual} is unsupported; expected {expected}")]
+    UnsupportedSchemaVersion { actual: u32, expected: u32 },
+    #[error("profile reason catalog reasons must not be empty")]
+    EmptyCatalog,
+    #[error("profile reason catalog contains an empty feature")]
+    EmptyFeature,
+    #[error("profile reason catalog feature {feature} has an empty reason_code")]
+    EmptyReasonCode { feature: String },
+    #[error("profile reason catalog feature {feature} has an empty label")]
+    EmptyLabel { feature: String },
+    #[error("profile reason catalog contains duplicate feature {feature}")]
+    DuplicateFeature { feature: String },
+    #[error("profile reason catalog feature {feature} changes stable reason_code {expected} to {actual}")]
+    StableReasonCodeChanged {
+        feature: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("merged reason catalog assigns reason_code {reason_code} to both {first_feature} and {second_feature}")]
+    DuplicateReasonCode {
+        reason_code: String,
+        first_feature: String,
+        second_feature: String,
+    },
+}
+
 pub fn reason_catalog() -> &'static [ReasonCatalogEntry] {
     feature::reason_catalog()
 }
 
 pub fn reason_catalog_entry(feature: &str) -> Option<&'static ReasonCatalogEntry> {
     feature::reason_catalog_entry(feature)
+}
+
+impl ReasonCatalog {
+    pub fn default_core() -> Self {
+        let entries = reason_catalog()
+            .iter()
+            .map(|entry| {
+                (
+                    entry.feature.to_string(),
+                    RuntimeReasonCatalogEntry {
+                        feature: entry.feature.to_string(),
+                        reason_code: entry.reason_code.to_string(),
+                        label: entry.label.to_string(),
+                    },
+                )
+            })
+            .collect();
+        Self { entries }
+    }
+
+    pub fn from_profile_catalog(
+        catalog: &config::ProfileReasonCatalog,
+    ) -> Result<Self, ReasonCatalogError> {
+        if catalog.schema_version != config::PROFILE_REASON_CATALOG_SCHEMA_VERSION {
+            return Err(ReasonCatalogError::UnsupportedSchemaVersion {
+                actual: catalog.schema_version,
+                expected: config::PROFILE_REASON_CATALOG_SCHEMA_VERSION,
+            });
+        }
+        if catalog.reasons.is_empty() {
+            return Err(ReasonCatalogError::EmptyCatalog);
+        }
+
+        let mut merged = Self::default_core();
+        let mut profile_features = BTreeSet::<&str>::new();
+
+        for reason in &catalog.reasons {
+            if reason.feature.trim().is_empty() {
+                return Err(ReasonCatalogError::EmptyFeature);
+            }
+            if reason.reason_code.trim().is_empty() {
+                return Err(ReasonCatalogError::EmptyReasonCode {
+                    feature: reason.feature.clone(),
+                });
+            }
+            if reason.label.trim().is_empty() {
+                return Err(ReasonCatalogError::EmptyLabel {
+                    feature: reason.feature.clone(),
+                });
+            }
+            if !profile_features.insert(&reason.feature) {
+                return Err(ReasonCatalogError::DuplicateFeature {
+                    feature: reason.feature.clone(),
+                });
+            }
+            if let Some(core_entry) = reason_catalog_entry(&reason.feature) {
+                if reason.reason_code != core_entry.reason_code {
+                    return Err(ReasonCatalogError::StableReasonCodeChanged {
+                        feature: reason.feature.clone(),
+                        expected: core_entry.reason_code.to_string(),
+                        actual: reason.reason_code.clone(),
+                    });
+                }
+            }
+            merged.entries.insert(
+                reason.feature.clone(),
+                RuntimeReasonCatalogEntry {
+                    feature: reason.feature.clone(),
+                    reason_code: reason.reason_code.clone(),
+                    label: reason.label.clone(),
+                },
+            );
+        }
+
+        merged.validate_unique_reason_codes()?;
+        Ok(merged)
+    }
+
+    pub fn entry(&self, feature: &str) -> Option<&RuntimeReasonCatalogEntry> {
+        self.entries.get(feature)
+    }
+
+    pub fn contains_reason_code(&self, reason_code: &str) -> bool {
+        self.entries
+            .values()
+            .any(|entry| entry.reason_code == reason_code)
+    }
+
+    fn validate_unique_reason_codes(&self) -> Result<(), ReasonCatalogError> {
+        let mut seen = BTreeMap::<&str, &str>::new();
+        for entry in self.entries.values() {
+            if let Some(first_feature) = seen.insert(&entry.reason_code, &entry.feature) {
+                return Err(ReasonCatalogError::DuplicateReasonCode {
+                    reason_code: entry.reason_code.clone(),
+                    first_feature: first_feature.to_string(),
+                    second_feature: entry.feature.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for ReasonCatalog {
+    fn default() -> Self {
+        Self::default_core()
+    }
 }
 
 #[cfg(test)]

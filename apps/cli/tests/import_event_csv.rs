@@ -26,6 +26,7 @@ fn test_settings(raw_storage_dir: &std::path::Path, database_url: &str) -> AppSe
             .join("configs/profiles/local-discovery-generic/reasons.yaml")
             .display()
             .to_string(),
+        profile_fallback_config_path: String::new(),
         profile_fixture_set_id: Some("minimal".to_string()),
         ranking_config_dir: root.join("configs/ranking").display().to_string(),
         fixture_dir: root.join("storage/fixtures/minimal").display().to_string(),

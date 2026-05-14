@@ -427,7 +427,7 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
 
     for file in &summary.files {
         lines.push(format!(
-            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
             file.profile_id,
             file.compatibility_level,
             file.content_kind_registry.join(","),
@@ -443,6 +443,10 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
             file.optional_crawler_manifest_references,
             file.path.display(),
             file.ranking_config_dir.display(),
+            file.fallback_config_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "none".to_string()),
             file.reason_catalog_path.display()
         ));
         for connector in &file.connector_registry {
@@ -506,7 +510,7 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
     lines.push("profile packs:".to_string());
     lines.extend(summary.profiles.iter().map(|profile| {
         format!(
-            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
             profile.profile_id,
             profile.compatibility_level,
             profile.content_kind_registry.join(","),
@@ -522,6 +526,10 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
             profile.optional_crawler_manifest_references,
             profile.path.display(),
             profile.ranking_config_dir.display(),
+            profile.fallback_config_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "none".to_string()),
             profile.reason_catalog_path.display()
         )
     }));

@@ -14,7 +14,7 @@ use crate::feature::{component, debug_details};
 use crate::graph::{
     CandidateGraph, CandidateGraphEvidence, CandidateGraphExpansion, LineMatchKind,
 };
-use crate::RankingEngine;
+use crate::{RankingEngine, ReasonCatalog};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScoredCandidate {
@@ -147,6 +147,7 @@ impl RankingEngine {
                     candidate_station,
                     breakdown,
                     fallback_stage,
+                    self.reason_catalog(),
                 );
                 upsert_best_candidate(
                     &mut best_candidates,
@@ -233,6 +234,7 @@ impl RankingEngine {
                     candidate_station,
                     breakdown,
                     fallback_stage,
+                    self.reason_catalog(),
                 );
                 upsert_best_candidate(
                     &mut best_candidates,
@@ -412,12 +414,18 @@ fn build_item(
     candidate_station: &Station,
     score_breakdown: Vec<ScoreComponent>,
     fallback_stage: &FallbackStage,
+    reason_catalog: &ReasonCatalog,
 ) -> RecommendationItem {
     let score = score_breakdown
         .iter()
         .map(|component| component.value)
         .sum::<f64>();
-    let explanation = build_item_explanation(content_kind, &score_breakdown, fallback_stage);
+    let explanation = build_item_explanation(
+        content_kind,
+        &score_breakdown,
+        fallback_stage,
+        reason_catalog,
+    );
 
     RecommendationItem {
         content_kind,

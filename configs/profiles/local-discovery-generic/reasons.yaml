@@ -4,57 +4,57 @@ profile_id: local-discovery-generic
 reasons:
   - feature: direct_station_bonus
     reason_code: geo.direct_station
-    label: Direct station
+    label: 直結条件
     layer: core
   - feature: line_match_bonus
     reason_code: geo.line_match
-    label: Line match
+    label: 沿線一致
     layer: core
   - feature: school_station_distance
     reason_code: geo.station_distance
-    label: Station distance
+    label: 駅からの近さ
     layer: core
   - feature: walking_minutes
     reason_code: geo.walking_minutes
-    label: Walking minutes
+    label: 徒歩分数
     layer: core
   - feature: neighbor_station_proximity
     reason_code: geo.neighbor_station_proximity
-    label: Neighbor station proximity
+    label: 近傍駅との距離
     layer: core
   - feature: open_day_bonus
     reason_code: event.open_day
-    label: Open local event
+    label: 地域公開イベント
     layer: profile
   - feature: featured_event_bonus
     reason_code: event.featured
-    label: Featured local event
+    label: 注目地域イベント
     layer: profile
   - feature: event_priority_boost
     reason_code: event.priority
-    label: Event priority
+    label: イベント優先度
     layer: profile
   - feature: popularity_snapshot_bonus
     reason_code: behavior.popularity
-    label: Recent popularity
+    label: 最近の人気
     layer: core
   - feature: area_affinity_bonus
     reason_code: behavior.area_affinity
-    label: Area affinity
+    label: エリア需要
     layer: core
   - feature: user_affinity_bonus
     reason_code: behavior.user_affinity
-    label: User affinity
+    label: ユーザー反応
     layer: core
   - feature: content_kind_boost
     reason_code: placement.content_kind_boost
-    label: Placement adjustment
+    label: 配置調整
     layer: core
   - feature: neighbor_area_penalty
     reason_code: fallback.neighbor_area_penalty
-    label: Neighbor area adjustment
+    label: 近隣エリア調整
     layer: core
   - feature: safe_global_distance_penalty
     reason_code: fallback.safe_global_distance_penalty
-    label: Safe global distance penalty
+    label: 遠距離抑制
     layer: core

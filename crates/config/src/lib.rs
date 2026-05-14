@@ -94,6 +94,8 @@ pub struct AppSettings {
     pub profile_pack_manifest: String,
     #[serde(default)]
     pub profile_reason_catalog_path: String,
+    #[serde(default)]
+    pub profile_fallback_config_path: String,
     pub profile_fixture_set_id: Option<String>,
     pub ranking_config_dir: String,
     pub fixture_dir: String,
@@ -223,6 +225,11 @@ impl AppSettings {
             profile_reason_catalog_path: runtime_profile
                 .as_ref()
                 .map(|profile| profile.reason_catalog_path.display().to_string())
+                .unwrap_or_default(),
+            profile_fallback_config_path: runtime_profile
+                .as_ref()
+                .and_then(|profile| profile.fallback_config_path.as_ref())
+                .map(|path| path.display().to_string())
                 .unwrap_or_default(),
             profile_fixture_set_id: runtime_profile
                 .as_ref()
@@ -557,6 +564,35 @@ pub struct ProfileEvaluationRef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ProfileFallbackPolicyRef {
+    Name(String),
+    ConfigFile(ProfileFallbackPolicyConfigFileRef),
+}
+
+impl ProfileFallbackPolicyRef {
+    pub fn display(&self) -> String {
+        match self {
+            Self::Name(name) => name.clone(),
+            Self::ConfigFile(config) => format!("config_file:{}", config.config_file),
+        }
+    }
+
+    fn config_file(&self) -> Option<&str> {
+        match self {
+            Self::Name(_) => None,
+            Self::ConfigFile(config) => Some(config.config_file.as_str()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileFallbackPolicyConfigFileRef {
+    pub config_file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProfilePackManifest {
     pub schema_version: u32,
@@ -574,7 +610,7 @@ pub struct ProfilePackManifest {
     pub supported_content_kinds: Vec<ContentKindRef>,
     pub context_inputs: Vec<ProfileContextInput>,
     pub placements: Vec<PlacementKind>,
-    pub fallback_policy: String,
+    pub fallback_policy: ProfileFallbackPolicyRef,
     pub ranking_config_dir: String,
     pub reason_catalog: ProfileReasonCatalogRef,
     pub article_support: ArticleSupport,
@@ -669,6 +705,7 @@ pub struct ProfilePackLintFile {
     pub path: PathBuf,
     pub profile_id: String,
     pub ranking_config_dir: PathBuf,
+    pub fallback_config_path: Option<PathBuf>,
     pub reason_catalog_path: PathBuf,
     pub schema_version: u32,
     pub kind: ProfilePackKind,
@@ -699,6 +736,7 @@ pub struct ProfilePackRuntimeSelection {
     pub profile_id: String,
     pub profile_pack_manifest: PathBuf,
     pub reason_catalog_path: PathBuf,
+    pub fallback_config_path: Option<PathBuf>,
     pub ranking_config_dir: PathBuf,
     pub fixture_set_id: Option<String>,
     pub fixture_dir: Option<PathBuf>,
@@ -708,6 +746,8 @@ pub struct ProfilePackRuntimeSelection {
 pub struct ProfileRankingRuntimeSelection {
     pub profile_id: String,
     pub profile_pack_manifest: PathBuf,
+    pub reason_catalog_path: PathBuf,
+    pub fallback_config_path: Option<PathBuf>,
     pub ranking_config_dir: PathBuf,
 }
 
@@ -715,6 +755,8 @@ pub struct ProfileRankingRuntimeSelection {
 pub struct ProfileEvaluationRuntimeSelection {
     pub profile_id: String,
     pub profile_pack_manifest: PathBuf,
+    pub reason_catalog_path: PathBuf,
+    pub fallback_config_path: Option<PathBuf>,
     pub ranking_config_dir: PathBuf,
     pub scenario_pack: PathBuf,
     pub pairwise_pack: Option<PathBuf>,
@@ -1129,6 +1171,8 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
 
     let reason_catalog_path =
         resolve_runtime_reason_catalog_path(&profile_pack_manifest, &manifest)?;
+    let fallback_config_path =
+        resolve_runtime_fallback_config_path(&profile_pack_manifest, &manifest)?;
 
     let ranking_config_dir =
         resolve_runtime_ranking_config_dir(&profile_pack_manifest, &manifest, None)?;
@@ -1137,6 +1181,7 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
         profile_pack_manifest,
         &manifest,
         reason_catalog_path,
+        fallback_config_path,
         ranking_config_dir,
         fixture_set_id,
     )
@@ -1160,6 +1205,10 @@ fn resolve_profile_pack_evaluation_selection_from_manifest(
             profile_pack_manifest.display()
         )
     })?;
+    let reason_catalog_path =
+        resolve_runtime_reason_catalog_path(&profile_pack_manifest, &manifest)?;
+    let fallback_config_path =
+        resolve_runtime_fallback_config_path(&profile_pack_manifest, &manifest)?;
 
     let ranking_config_dir = resolve_runtime_ranking_config_dir(
         &profile_pack_manifest,
@@ -1187,6 +1236,8 @@ fn resolve_profile_pack_evaluation_selection_from_manifest(
     Ok(ProfileEvaluationRuntimeSelection {
         profile_id: manifest.profile_id,
         profile_pack_manifest,
+        reason_catalog_path,
+        fallback_config_path,
         ranking_config_dir,
         scenario_pack,
         pairwise_pack,
@@ -1205,6 +1256,10 @@ fn resolve_profile_pack_ranking_selection_from_manifest(
         )
     })?;
     let manifest = load_profile_pack_manifest(&profile_pack_manifest)?;
+    let reason_catalog_path =
+        resolve_runtime_reason_catalog_path(&profile_pack_manifest, &manifest)?;
+    let fallback_config_path =
+        resolve_runtime_fallback_config_path(&profile_pack_manifest, &manifest)?;
     let ranking_config_dir = resolve_runtime_ranking_config_dir(
         &profile_pack_manifest,
         &manifest,
@@ -1214,6 +1269,8 @@ fn resolve_profile_pack_ranking_selection_from_manifest(
     Ok(ProfileRankingRuntimeSelection {
         profile_id: manifest.profile_id,
         profile_pack_manifest,
+        reason_catalog_path,
+        fallback_config_path,
         ranking_config_dir,
     })
 }
@@ -1241,6 +1298,7 @@ pub fn resolve_linted_profile_pack_runtime_selection(
         profile_pack_manifest,
         manifest,
         lint_file.reason_catalog_path.clone(),
+        lint_file.fallback_config_path.clone(),
         lint_file.ranking_config_dir.clone(),
         fixture_set_id,
     )
@@ -1250,6 +1308,7 @@ fn build_profile_pack_runtime_selection(
     profile_pack_manifest: PathBuf,
     manifest: &ProfilePackManifest,
     reason_catalog_path: PathBuf,
+    fallback_config_path: Option<PathBuf>,
     ranking_config_dir: PathBuf,
     fixture_set_id: Option<&str>,
 ) -> Result<ProfilePackRuntimeSelection> {
@@ -1287,6 +1346,7 @@ fn build_profile_pack_runtime_selection(
         profile_id: manifest.profile_id.clone(),
         profile_pack_manifest,
         reason_catalog_path,
+        fallback_config_path,
         ranking_config_dir,
         fixture_set_id,
         fixture_dir,
@@ -1306,6 +1366,33 @@ fn resolve_runtime_reason_catalog_path(
         )
     })?;
     Ok(reason_catalog_path)
+}
+
+fn resolve_runtime_fallback_config_path(
+    profile_pack_manifest: &Path,
+    manifest: &ProfilePackManifest,
+) -> Result<Option<PathBuf>> {
+    let Some(raw_path) = manifest.fallback_policy.config_file() else {
+        return Ok(None);
+    };
+    let fallback_config_path = resolve_profile_ref(
+        profile_pack_manifest,
+        "fallback_policy.config_file",
+        raw_path,
+    )?;
+    ensure!(
+        fallback_config_path.is_file(),
+        "profile pack {} fallback_policy.config_file {} is missing or not a file",
+        profile_pack_manifest.display(),
+        fallback_config_path.display()
+    );
+    let fallback_config_path = fallback_config_path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize fallback config {}",
+            fallback_config_path.display()
+        )
+    })?;
+    Ok(Some(fallback_config_path))
 }
 
 fn resolve_runtime_ranking_config_dir(
@@ -1511,6 +1598,7 @@ fn lint_loaded_profile_pack_file(
             ranking_config_dir.display()
         )
     })?;
+    let fallback_config_path = resolve_runtime_fallback_config_path(path, manifest)?;
 
     let (reason_catalog_path, reason_catalog, reason_catalog_locale_count) =
         load_profile_reason_catalog_for_manifest(path, manifest)?;
@@ -1611,6 +1699,7 @@ fn lint_loaded_profile_pack_file(
         path: path.to_path_buf(),
         profile_id: manifest.profile_id.clone(),
         ranking_config_dir,
+        fallback_config_path,
         reason_catalog_path,
         schema_version: manifest.schema_version,
         kind: manifest.kind,
@@ -1773,7 +1862,8 @@ pub fn lint_profile_pack_dir(path: impl AsRef<Path>) -> Result<ProfilePackLintSu
     })
 }
 
-fn load_profile_reason_catalog(path: &Path) -> Result<ProfileReasonCatalog> {
+pub fn load_profile_reason_catalog(path: impl AsRef<Path>) -> Result<ProfileReasonCatalog> {
+    let path = path.as_ref();
     let raw = read_raw(path)
         .with_context(|| format!("failed to read profile reason catalog {}", path.display()))?;
     let catalog: ProfileReasonCatalog = serde_yaml::from_str(&raw)
@@ -1809,11 +1899,25 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
         "profile pack {} display_name must not be empty",
         path.display()
     );
-    ensure!(
-        !manifest.fallback_policy.trim().is_empty(),
-        "profile pack {} fallback_policy must not be empty",
-        path.display()
-    );
+    match &manifest.fallback_policy {
+        ProfileFallbackPolicyRef::Name(name) => ensure!(
+            !name.trim().is_empty(),
+            "profile pack {} fallback_policy must not be empty",
+            path.display()
+        ),
+        ProfileFallbackPolicyRef::ConfigFile(config) => {
+            ensure!(
+                !config.config_file.trim().is_empty(),
+                "profile pack {} fallback_policy.config_file must not be empty",
+                path.display()
+            );
+            validate_portable_relative_path(
+                path,
+                "fallback_policy.config_file",
+                &config.config_file,
+            )?;
+        }
+    }
     validate_portable_relative_path(path, "ranking_config_dir", &manifest.ranking_config_dir)?;
     if let Some(default_locale) = manifest.default_locale.as_deref() {
         ensure!(
@@ -2417,9 +2521,10 @@ mod tests {
         validate_portable_relative_path, validate_profile_pack_contract,
         validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
         ProfileCompatibilityLevel, ProfileConnectorFieldMapping, ProfileConnectorType,
-        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfilePackRegistry,
-        ProfileReasonCatalog, ProfileReasonCatalogKind, ProfileReasonCatalogRef,
-        ProfileSourceClass, RankingConfigKind, RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        ProfileContextInput, ProfileFallbackPolicyRef, ProfilePackKind, ProfilePackManifest,
+        ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind,
+        ProfileReasonCatalogRef, ProfileSourceClass, RankingConfigKind, RankingProfiles,
+        DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     use domain::{ContentKind, PlacementKind};
@@ -2614,6 +2719,7 @@ files: []
         fs::create_dir_all(&ranking_dir).expect("ranking dir");
         fs::create_dir_all(&profile_dir).expect("profile dir");
         copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
         write_minimal_profile_manifest(
             &profile_dir.join("profile.yaml"),
             "example-profile",
@@ -2636,6 +2742,7 @@ files: []
         let temp = tempdir().expect("tempdir");
         let profile_dir = temp.path().join("profiles").join("example-profile");
         fs::create_dir_all(&profile_dir).expect("profile dir");
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
         write_minimal_profile_manifest(
             &profile_dir.join("profile.yaml"),
             "example-profile",
@@ -3843,6 +3950,125 @@ article_support: reserved
     }
 
     #[test]
+    fn resolves_nested_fallback_policy_config_file() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let fallback_dir = profile_dir.join("fallback");
+        let ranking_dir = temp.path().join("ranking");
+        let fixture_dir = temp.path().join("fixtures").join("minimal");
+        fs::create_dir_all(&fallback_dir).expect("fallback dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir");
+        copy_default_configs(&ranking_dir);
+        fs::write(fallback_dir.join("default.yaml"), "schema_version: 1\n")
+            .expect("fallback config");
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        write_minimal_fixture_manifest(
+            &fixture_dir.join("fixture_manifest.yaml"),
+            "minimal",
+            "example-profile",
+        );
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy:
+  config_file: fallback/default.yaml
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+fixtures:
+  - fixture_set_id: minimal
+    path: ../../fixtures/minimal
+"#,
+        )
+        .expect("profile");
+
+        let lint = lint_profile_pack_file(profile_dir.join("profile.yaml")).expect("profile lint");
+        let expected_fallback_config = fallback_dir
+            .join("default.yaml")
+            .canonicalize()
+            .expect("fallback config");
+        assert_eq!(
+            lint.fallback_config_path.as_deref(),
+            Some(expected_fallback_config.as_path())
+        );
+
+        let selection =
+            resolve_profile_pack_runtime_selection(&profiles_dir, "example-profile", None)
+                .expect("runtime selection");
+        assert_eq!(
+            selection.fallback_config_path.as_deref(),
+            Some(expected_fallback_config.as_path())
+        );
+    }
+
+    #[test]
+    fn nested_fallback_policy_config_file_must_exist() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy:
+  config_file: fallback/missing.yaml
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("missing fallback");
+        let rendered = format!("{error:#}");
+
+        assert!(rendered.contains("fallback_policy.config_file"));
+        assert!(rendered.contains("missing or not a file"));
+    }
+
+    #[test]
     fn resolves_runtime_selection_from_profile_yaml_file() {
         let temp = tempdir().expect("tempdir");
         let profile_dir = temp.path().join("profiles").join("example-profile");
@@ -3944,6 +4170,7 @@ article_support: reserved
         assert_eq!(settings.profile_id, super::DEFAULT_PROFILE_ID);
         assert!(settings.profile_pack_manifest.is_empty());
         assert!(settings.profile_reason_catalog_path.is_empty());
+        assert!(settings.profile_fallback_config_path.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();
     }
@@ -3970,6 +4197,7 @@ article_support: reserved
         assert!(Path::new(&settings.fixture_dir).ends_with(super::DEFAULT_FIXTURE_DIR));
         assert!(settings.profile_pack_manifest.is_empty());
         assert!(settings.profile_reason_catalog_path.is_empty());
+        assert!(settings.profile_fallback_config_path.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();
     }
@@ -3992,6 +4220,7 @@ article_support: reserved
         assert!(Path::new(&settings.fixture_dir).ends_with(super::DEFAULT_FIXTURE_DIR));
         assert!(settings.profile_pack_manifest.is_empty());
         assert!(settings.profile_reason_catalog_path.is_empty());
+        assert!(settings.profile_fallback_config_path.is_empty());
         assert!(settings.profile_fixture_set_id.is_none());
         clear_app_env();
     }
@@ -4027,6 +4256,7 @@ worker_max_attempts: 3
         .expect("legacy settings payload");
 
         assert!(settings.profile_reason_catalog_path.is_empty());
+        assert!(settings.profile_fallback_config_path.is_empty());
     }
 
     #[test]
@@ -4053,6 +4283,7 @@ worker_max_attempts: 3
                 .join("local-discovery-generic")
                 .join("reasons.yaml")
         ));
+        assert!(settings.profile_fallback_config_path.is_empty());
         assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
         clear_app_env();
     }
@@ -4097,6 +4328,7 @@ worker_max_attempts: 3
                 .join("example-profile")
                 .join("reasons.yaml")
         ));
+        assert!(settings.profile_fallback_config_path.is_empty());
         assert_eq!(settings.profile_fixture_set_id.as_deref(), Some("minimal"));
         clear_app_env();
     }
@@ -4168,6 +4400,7 @@ article_support: reserved
                 .to_string()
         );
         assert!(settings.fixture_dir.is_empty());
+        assert!(settings.profile_fallback_config_path.is_empty());
 
         let error =
             AppSettings::from_env_requiring_fixture().expect_err("fixture override required");
@@ -4311,7 +4544,7 @@ article_support: reserved
             supported_content_kinds: vec![ContentKind::School.into()],
             context_inputs: vec![ProfileContextInput::Station],
             placements: vec![PlacementKind::Home],
-            fallback_policy: "example_default".to_string(),
+            fallback_policy: ProfileFallbackPolicyRef::Name("example_default".to_string()),
             ranking_config_dir: "../../ranking".to_string(),
             reason_catalog: ProfileReasonCatalogRef::Path("reasons.yaml".to_string()),
             article_support: ArticleSupport::Reserved,
