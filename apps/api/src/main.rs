@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use api::AppState;
 use cache::RecommendationCache;
 use clap::{Parser, Subcommand};
@@ -39,7 +40,14 @@ async fn serve() -> anyhow::Result<()> {
     let mut engine = RankingEngine::new(profiles, settings.algorithm_version.clone());
     if !settings.profile_reason_catalog_path.is_empty() {
         let profile_catalog = load_profile_reason_catalog(&settings.profile_reason_catalog_path)?;
-        engine = engine.with_profile_reason_catalog(&profile_catalog)?;
+        engine = engine
+            .with_profile_reason_catalog(&profile_catalog)
+            .with_context(|| {
+                format!(
+                    "failed to merge profile reason catalog from {}",
+                    settings.profile_reason_catalog_path
+                )
+            })?;
     }
     let candidate_backend = if settings.candidate_retrieval_mode.is_full() {
         api::CandidateBackend::Full(OpenSearchStore::new(&settings.opensearch)?)

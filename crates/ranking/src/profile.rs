@@ -20,6 +20,11 @@ impl RankingEngine {
         Ok(self)
     }
 
+    pub fn with_reason_catalog(mut self, reason_catalog: ReasonCatalog) -> Self {
+        self.reason_catalog = reason_catalog;
+        self
+    }
+
     pub fn reason_catalog(&self) -> &ReasonCatalog {
         &self.reason_catalog
     }

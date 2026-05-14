@@ -166,6 +166,12 @@ impl ReasonCatalog {
         self.entries.get(feature)
     }
 
+    pub fn contains_reason_code(&self, reason_code: &str) -> bool {
+        self.entries
+            .values()
+            .any(|entry| entry.reason_code == reason_code)
+    }
+
     fn validate_unique_reason_codes(&self) -> Result<(), ReasonCatalogError> {
         let mut seen = BTreeMap::<&str, &str>::new();
         for entry in self.entries.values() {

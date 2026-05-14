@@ -308,22 +308,36 @@ fn is_default_replay_scenario_path(scenario_path: &Path) -> bool {
     }
 }
 
+fn runtime_reason_catalog_from_path(
+    reason_catalog_path: Option<&Path>,
+) -> Result<ranking::ReasonCatalog> {
+    let Some(reason_catalog_path) = reason_catalog_path else {
+        return Ok(ranking::ReasonCatalog::default_core());
+    };
+    let profile_catalog = config::load_profile_reason_catalog(reason_catalog_path)?;
+    ranking::ReasonCatalog::from_profile_catalog(&profile_catalog).with_context(|| {
+        format!(
+            "failed to merge profile reason catalog from {}",
+            reason_catalog_path.display()
+        )
+    })
+}
+
 pub fn run_replay_scenarios_with_source(
     ranking_config_dir: impl AsRef<Path>,
     algorithm_version: &str,
     profile_id: Option<String>,
     scenario_source: ReplayScenarioSource,
 ) -> Result<ReplayScenarioSummary> {
-    let mut scenarios = load_replay_scenarios(&scenario_source.path)?;
+    let reason_catalog =
+        runtime_reason_catalog_from_path(scenario_source.reason_catalog_path.as_deref())?;
+    let mut scenarios = load_replay_scenarios_with_catalog(&scenario_source.path, &reason_catalog)?;
     if let Some(pairwise_pack) = scenario_source.pairwise_pack.as_deref() {
         apply_replay_pairwise_pack(&mut scenarios, pairwise_pack)?;
     }
     let profiles = RankingProfiles::load_from_dir(ranking_config_dir)?;
-    let mut engine = RankingEngine::new(profiles, algorithm_version.to_string());
-    if let Some(reason_catalog_path) = scenario_source.reason_catalog_path.as_deref() {
-        let profile_catalog = config::load_profile_reason_catalog(reason_catalog_path)?;
-        engine = engine.with_profile_reason_catalog(&profile_catalog)?;
-    }
+    let engine = RankingEngine::new(profiles, algorithm_version.to_string())
+        .with_reason_catalog(reason_catalog);
     let cases = scenarios
         .iter()
         .map(|(path, scenario)| evaluate_replay_scenario(path, scenario, &engine))
@@ -381,6 +395,13 @@ pub fn run_replay_scenarios_with_source(
 pub(crate) fn load_replay_scenarios(
     path: impl AsRef<Path>,
 ) -> Result<Vec<(PathBuf, ReplayScenario)>> {
+    load_replay_scenarios_with_catalog(path, &ranking::ReasonCatalog::default_core())
+}
+
+fn load_replay_scenarios_with_catalog(
+    path: impl AsRef<Path>,
+    reason_catalog: &ranking::ReasonCatalog,
+) -> Result<Vec<(PathBuf, ReplayScenario)>> {
     let path = path.as_ref();
     let mut scenario_paths = Vec::new();
     if path.is_dir() {
@@ -418,7 +439,7 @@ pub(crate) fn load_replay_scenarios(
             .with_context(|| format!("failed to read scenario {}", scenario_path.display()))?;
         let scenario = serde_yaml::from_str::<ReplayScenario>(&raw)
             .with_context(|| format!("failed to parse scenario {}", scenario_path.display()))?;
-        validate_replay_scenario(&scenario_path, &scenario)?;
+        validate_replay_scenario_with_catalog(&scenario_path, &scenario, reason_catalog)?;
         ensure!(
             seen_ids.insert(scenario.id.clone()),
             "duplicate replay scenario id {} in {}",
@@ -550,7 +571,16 @@ fn is_yaml_path(path: &Path) -> bool {
     )
 }
 
+#[cfg(test)]
 fn validate_replay_scenario(path: &Path, scenario: &ReplayScenario) -> Result<()> {
+    validate_replay_scenario_with_catalog(path, scenario, &ranking::ReasonCatalog::default_core())
+}
+
+fn validate_replay_scenario_with_catalog(
+    path: &Path,
+    scenario: &ReplayScenario,
+    reason_catalog: &ranking::ReasonCatalog,
+) -> Result<()> {
     ensure!(
         scenario.schema_version == REPLAY_SCENARIO_SCHEMA_VERSION,
         "scenario {} has schema_version={}, expected {}",
@@ -612,9 +642,7 @@ fn validate_replay_scenario(path: &Path, scenario: &ReplayScenario) -> Result<()
         );
         for reason_code in reason_codes {
             ensure!(
-                ranking::reason_catalog()
-                    .iter()
-                    .any(|entry| entry.reason_code == reason_code),
+                reason_catalog.contains_reason_code(reason_code),
                 "scenario {} expects unknown reason_code {} for {}",
                 scenario.id,
                 reason_code,
@@ -1123,7 +1151,14 @@ pub async fn run_replay_evaluate(
     if !settings.profile_reason_catalog_path.is_empty() {
         let profile_catalog =
             config::load_profile_reason_catalog(&settings.profile_reason_catalog_path)?;
-        engine = engine.with_profile_reason_catalog(&profile_catalog)?;
+        engine = engine
+            .with_profile_reason_catalog(&profile_catalog)
+            .with_context(|| {
+                format!(
+                    "failed to merge profile reason catalog from {}",
+                    settings.profile_reason_catalog_path
+                )
+            })?;
     }
     let repository = pg_repository(settings)?;
     let traces = repository
@@ -1428,11 +1463,15 @@ mod tests {
 
     use super::{
         check_max_items_per_school, run_replay_scenarios, run_replay_scenarios_with_source,
-        validate_replay_scenario, ReplayScenario, ReplayScenarioCase, ReplayScenarioSource,
-        ReplayScenarioSourceKind, ReplayScenarioStatus, DEFAULT_REPLAY_SCENARIO_PATH,
+        validate_replay_scenario, validate_replay_scenario_with_catalog, ReplayScenario,
+        ReplayScenarioCase, ReplayScenarioSource, ReplayScenarioSourceKind, ReplayScenarioStatus,
+        DEFAULT_REPLAY_SCENARIO_PATH,
     };
     #[cfg(feature = "storage-backends")]
     use super::{normalize_fallback_stage, stored_response_order};
+    use config::{
+        ProfileReason, ProfileReasonCatalog, ProfileReasonCatalogKind, ProfileReasonLayer,
+    };
     use domain::{ContentKind, FallbackStage, RecommendationItem, RecommendationResult};
 
     #[cfg(feature = "storage-backends")]
@@ -1537,6 +1576,42 @@ mod tests {
         assert!(error
             .to_string()
             .contains("must use <content_kind>:<content_id>"));
+    }
+
+    #[test]
+    fn replay_scenario_validation_accepts_profile_reason_codes() {
+        let yaml = minimal_scenario_yaml("{}");
+        let mut scenario: ReplayScenario = serde_yaml::from_str(&yaml).expect("scenario yaml");
+        scenario.expectations.required_reason_codes.insert(
+            "school:school_test".to_string(),
+            vec!["profile.custom".to_string()],
+        );
+        let profile_catalog = ProfileReasonCatalog {
+            schema_version: config::PROFILE_REASON_CATALOG_SCHEMA_VERSION,
+            kind: ProfileReasonCatalogKind::ProfileReasonCatalog,
+            profile_id: "local-discovery-generic".to_string(),
+            reasons: vec![ProfileReason {
+                feature: "custom_profile_bonus".to_string(),
+                reason_code: "profile.custom".to_string(),
+                label: "Profile custom".to_string(),
+                layer: ProfileReasonLayer::Profile,
+            }],
+        };
+        let reason_catalog = ranking::ReasonCatalog::from_profile_catalog(&profile_catalog)
+            .expect("profile reason catalog");
+
+        let error = validate_replay_scenario(Path::new("scenario.yaml"), &scenario)
+            .expect_err("core catalog should reject profile reason code");
+        assert!(error
+            .to_string()
+            .contains("expects unknown reason_code profile.custom"));
+
+        validate_replay_scenario_with_catalog(
+            Path::new("scenario.yaml"),
+            &scenario,
+            &reason_catalog,
+        )
+        .expect("profile reason code should be accepted");
     }
 
     #[test]

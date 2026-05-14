@@ -790,7 +790,7 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "storage-backends")]
         Command::Explain { target } => match target {
             ExplainCommand::Trace { id, json } => {
-                let settings = AppSettings::from_env_without_profile_pack()?;
+                let settings = AppSettings::from_env()?;
                 let report = run_explain_trace(&settings, id).await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&report)?);

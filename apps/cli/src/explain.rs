@@ -246,7 +246,13 @@ fn runtime_reason_catalog(settings: &AppSettings) -> Result<ranking::ReasonCatal
     }
     let profile_catalog =
         config::load_profile_reason_catalog(&settings.profile_reason_catalog_path)?;
-    let reason_catalog = ranking::ReasonCatalog::from_profile_catalog(&profile_catalog)?;
+    let reason_catalog = ranking::ReasonCatalog::from_profile_catalog(&profile_catalog)
+        .with_context(|| {
+            format!(
+                "failed to merge profile reason catalog from {}",
+                settings.profile_reason_catalog_path
+            )
+        })?;
     Ok(reason_catalog)
 }
 
