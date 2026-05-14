@@ -30,6 +30,15 @@ article_support: reserved
 fixtures:
   - fixture_set_id: minimal
     path: ../../../storage/fixtures/minimal
+connectors:
+  - type: csv_import
+    manifest: ../../../examples/import/events.sample.csv
+    source_id: event-csv
+    field_mapping: event_v1
+  - type: ndjson_import
+    manifest: ../../../examples/import/events.sample.ndjson
+    source_id: event-ndjson
+    field_mapping: event_v1
 evaluation:
   scenario_pack: ../../evaluation/scenarios
 examples:

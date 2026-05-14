@@ -74,10 +74,12 @@ Each `profile.yaml` declares:
   catalog path.
 - `fixtures`: committed fixture sets that exercise the profile.
 - `connectors`: optional registry-facing local connector references. Supported
-  connector types are `source_manifest`, `csv_import`, and
-  `crawler_manifest`. Validation resolves each manifest path, derives source
-  class, manifest kind, profile compatibility, and safety metadata, and keeps
-  the references local. This is not dynamic runtime connector loading.
+  connector types are `source_manifest`, `csv_import`, `ndjson_import`, and
+  `crawler_manifest`. File import connectors must declare the deterministic
+  `field_mapping: event_v1` mapping. Validation resolves each manifest path,
+  derives source class, manifest kind, profile compatibility, field mapping,
+  and safety metadata, and keeps the references local. This is not dynamic
+  runtime connector loading.
 - `evaluation`: optional committed evaluation references such as the golden
   scenario pack and an optional pairwise pack.
 - `source_manifests`, `event_csv_examples`, and `optional_crawler_manifests`:
@@ -99,19 +101,24 @@ syntax, supported content-kind refs, ranking-config content-kind refs,
 placement declarations, path syntax, referenced files, fixture manifest
 identity, compatibility level, the active ranking config, all declared reason
 catalog locale files, connector manifest refs, connector type / manifest-kind
-consistency, and evaluation refs. `source_manifest` refs must point to YAML
-with `kind: import_source`, `crawler_manifest` refs must point to YAML with
-`kind: crawler_source`, and `csv_import` refs must point to a CSV file with a
-profile-declared `source_id`. Optional `source_id` values on YAML-backed
-connectors must match the referenced manifest's `source_id`. For legacy
-schema-2 manifests that omit `content_kinds`, the validator treats
-`supported_content_kinds` as the inline registry; new profile packs should
-declare `content_kinds` explicitly.
+consistency, file-import field mapping, and evaluation refs.
+`source_manifest` refs must point to YAML with `kind: import_source`,
+`crawler_manifest` refs must point to YAML with `kind: crawler_source`,
+`csv_import` refs must point to a CSV file, and `ndjson_import` refs must point
+to an NDJSON file. CSV/NDJSON file import refs must declare both a profile
+`source_id` and `field_mapping: event_v1`. Connector `source_id` values use
+the same portable lowercase letters, digits, and hyphens rule as `profile_id`.
+Optional `source_id` values on YAML-backed connectors must match the referenced
+manifest's `source_id`. For legacy schema-2 manifests that omit
+`content_kinds`, the validator treats `supported_content_kinds` as the inline
+registry; new profile packs should declare `content_kinds` explicitly.
 
 The manifest spec draft also sketches a nested fallback config object, richer
 connector families, and per-profile evaluation packs. This repository has
 adopted the local-reference contract above, a small source connector registry
-metadata surface, and the `eval golden --profile-id <id>` execution path for
+metadata surface, `csv_import` / `ndjson_import` event file mappings, the
+`import profile-source --source-id <id>` path for profile-declared one-shot
+imports, and the `eval golden --profile-id <id>` execution path for
 `evaluation.scenario_pack`. When a profile declares `evaluation.pairwise_pack`,
 the same golden runner loads those pairwise expectations into the selected
 scenario run and reports the pack path in the summary metadata. Pairwise packs
@@ -119,8 +126,8 @@ use `schema_version: 1`, `kind: replay_pairwise_pack`, and `expectations`
 entries keyed by `scenario_id`. It has adopted profile-defined content-kind
 identifiers in manifests, while the current ranking runtime still emits the
 implemented school/event response shape. It has not adopted dynamic connector
-loading, locale-specific explanation rendering, profile-specific field mapping
-layers, or a replacement ranking engine.
+loading, locale-specific explanation rendering, arbitrary field mapping layers,
+or a replacement ranking engine.
 
 Compatibility levels are profile-pack contract labels, not storage parity
 claims:
@@ -155,6 +162,14 @@ Use the profile CLI when you only need the profile-pack surface:
 cargo run -p cli -- profile list
 cargo run -p cli -- profile validate
 cargo run -p cli -- profile inspect --profile-id local-discovery-generic
+```
+
+Run a profile-declared one-shot import by source id when you want the profile
+manifest to choose the local source path and deterministic field mapping:
+
+```bash
+cargo run -p cli -- import profile-source --source-id event-ndjson
+cargo run -p cli -- import profile-source --profile-id school-event-jp --source-id jp-rail
 ```
 
 `profile list`, `profile validate`, and `profile inspect` reuse the same

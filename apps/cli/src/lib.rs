@@ -58,8 +58,9 @@ pub use formatting::{
 };
 #[cfg(feature = "storage-backends")]
 pub use import::{
-    run_derive_school_station_links, run_event_csv_import, run_import_command, CommandSummary,
-    ImportTarget,
+    run_derive_school_station_links, run_event_csv_import, run_event_ndjson_import,
+    run_import_command, run_profile_source_import, CommandSummary, ImportTarget,
+    DEFAULT_EVENT_NDJSON_SOURCE_ID,
 };
 #[cfg(feature = "storage-backends")]
 pub use jobs::{

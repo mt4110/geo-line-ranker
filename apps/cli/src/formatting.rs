@@ -447,11 +447,15 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
         ));
         for connector in &file.connector_registry {
             lines.push(format!(
-                "    connector type={} source_class={} manifest_kind={} source_id={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
+                "    connector type={} source_class={} manifest_kind={} source_id={} field_mapping={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
                 connector.connector_type.as_str(),
                 connector.source_class.as_str(),
                 connector.manifest_kind,
                 connector.source_id.as_deref().unwrap_or("none"),
+                connector
+                    .field_mapping
+                    .map(|mapping| mapping.as_str())
+                    .unwrap_or("none"),
                 connector.profile_compatibility.as_str(),
                 connector.safety.local_reference_only,
                 connector.safety.dynamic_loading_enabled,

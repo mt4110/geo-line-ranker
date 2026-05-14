@@ -5146,12 +5146,38 @@ pub async fn import_jp_postal(
     })
 }
 
+const EVENT_FILE_SOURCE_TYPE: &str = "event_csv";
+
 pub async fn import_event_csv(
     database_url: &str,
     source_key: &str,
     records: &[EventCsvRecord],
 ) -> Result<ImportSummary> {
-    import_event_records(database_url, "event_csv", source_key, records, true).await
+    import_event_records(
+        database_url,
+        EVENT_FILE_SOURCE_TYPE,
+        source_key,
+        records,
+        true,
+    )
+    .await
+}
+
+pub async fn import_event_ndjson(
+    database_url: &str,
+    source_key: &str,
+    records: &[EventCsvRecord],
+) -> Result<ImportSummary> {
+    // Keep CSV and NDJSON one-shot event imports in the same source scope so
+    // format migrations deactivate stale rows for the same logical feed.
+    import_event_records(
+        database_url,
+        EVENT_FILE_SOURCE_TYPE,
+        source_key,
+        records,
+        true,
+    )
+    .await
 }
 
 pub async fn import_crawled_events(

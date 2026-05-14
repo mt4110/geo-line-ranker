@@ -2,10 +2,14 @@ use std::{fs, path::Path};
 
 use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use config::AppSettings;
+use config::{
+    load_and_lint_profile_pack_file, AppSettings, ProfileConnectorFieldMapping,
+    ProfileConnectorRegistryEntry, ProfileConnectorType, ProfilePackRegistry, DEFAULT_PROFILE_ID,
+};
 use generic_csv::{
-    count_csv_rows, load_manifest, read_csv_rows, stage_raw_files, stage_single_csv_file,
-    SourceFileSpec, SourceManifest, SourceManifestKind, SOURCE_MANIFEST_SCHEMA_VERSION,
+    count_csv_rows, is_source_id, load_manifest, read_csv_rows, stage_raw_files,
+    stage_single_csv_file, stage_single_source_file, SourceFileSpec, SourceManifest,
+    SourceManifestKind, SOURCE_ID_RULE_DESCRIPTION, SOURCE_MANIFEST_SCHEMA_VERSION,
 };
 use jp_postal::{parse_postal_codes, PARSER_VERSION as JP_POSTAL_PARSER_VERSION};
 use jp_rail::{parse_rail_stations, PARSER_VERSION as JP_RAIL_PARSER_VERSION};
@@ -13,17 +17,20 @@ use jp_school::{
     parse_school_codes, parse_school_geodata, SCHOOL_CODES_PARSER_VERSION,
     SCHOOL_GEODATA_PARSER_VERSION,
 };
-use serde_json::json;
+use serde::{de, Deserialize};
+use serde_json::{json, Value};
 use storage_postgres::{
     begin_import_run, derive_school_station_links, finish_import_run, import_event_csv,
-    import_jp_postal, import_jp_rail, import_jp_school_codes, import_jp_school_geodata,
-    record_import_report, EventCsvRecord, ImportReportEntry,
+    import_event_ndjson, import_jp_postal, import_jp_rail, import_jp_school_codes,
+    import_jp_school_geodata, record_import_report, EventCsvRecord, ImportReportEntry,
 };
 
 use crate::repository::{persist_success_reports, register_staged_files, update_file_row_counts};
 
 const EVENT_CSV_PARSER_VERSION: &str = "event-csv-v1";
 const EVENT_CSV_SOURCE_ID: &str = "event-csv";
+const EVENT_NDJSON_PARSER_VERSION: &str = "event-ndjson-v1";
+pub const DEFAULT_EVENT_NDJSON_SOURCE_ID: &str = "event-ndjson";
 
 #[derive(Debug, Clone, Copy)]
 pub enum ImportTarget {
@@ -197,10 +204,63 @@ pub async fn run_derive_school_station_links(settings: &AppSettings) -> Result<C
     })
 }
 
+pub async fn run_profile_source_import(
+    settings: &AppSettings,
+    profiles_path: impl AsRef<Path>,
+    profile_id: Option<&str>,
+    source_id: &str,
+) -> Result<CommandSummary> {
+    ensure_import_source_id("profile source", source_id)?;
+    let registry = ProfilePackRegistry::new(profiles_path.as_ref());
+    let selected_profile_id = registry.selected_profile_id(profile_id, DEFAULT_PROFILE_ID)?;
+    let manifest_path = registry.manifest_path_for_profile_id(&selected_profile_id)?;
+    let (_manifest, lint_file) = load_and_lint_profile_pack_file(&manifest_path)?;
+    let connector = select_profile_source_connector(
+        &lint_file.connector_registry,
+        &selected_profile_id,
+        source_id,
+    )?;
+
+    match connector.connector_type {
+        ProfileConnectorType::SourceManifest => {
+            let source_id = connector.source_id.as_deref().unwrap_or(source_id);
+            let target = import_target_for_source_id(source_id)?;
+            run_import_command(settings, target, &connector.manifest_path).await
+        }
+        ProfileConnectorType::CsvImport => {
+            ensure_event_v1_mapping(connector)?;
+            let source_id = connector.source_id.as_deref().unwrap_or(source_id);
+            run_event_csv_import_with_source_id(settings, source_id, &connector.manifest_path).await
+        }
+        ProfileConnectorType::NdjsonImport => {
+            ensure_event_v1_mapping(connector)?;
+            let source_id = connector.source_id.as_deref().unwrap_or(source_id);
+            run_event_ndjson_import(settings, &connector.manifest_path, source_id).await
+        }
+        ProfileConnectorType::CrawlerManifest => {
+            anyhow::bail!(
+                "profile {} source_id {} points to crawler_manifest {}; use crawler fetch/parse commands for crawler sources",
+                selected_profile_id,
+                source_id,
+                connector.manifest_path.display()
+            )
+        }
+    }
+}
+
 pub async fn run_event_csv_import(
     settings: &AppSettings,
     file_path: impl AsRef<Path>,
 ) -> Result<CommandSummary> {
+    run_event_csv_import_with_source_id(settings, EVENT_CSV_SOURCE_ID, file_path).await
+}
+
+async fn run_event_csv_import_with_source_id(
+    settings: &AppSettings,
+    source_id: &str,
+    file_path: impl AsRef<Path>,
+) -> Result<CommandSummary> {
+    ensure_import_source_id("event CSV", source_id)?;
     let file_path = fs::canonicalize(file_path.as_ref()).with_context(|| {
         format!(
             "failed to resolve event CSV {}",
@@ -210,7 +270,7 @@ pub async fn run_event_csv_import(
     let manifest = SourceManifest {
         schema_version: SOURCE_MANIFEST_SCHEMA_VERSION,
         kind: SourceManifestKind::ImportSource,
-        source_id: EVENT_CSV_SOURCE_ID.to_string(),
+        source_id: source_id.to_string(),
         source_name: "Operational event CSV".to_string(),
         manifest_version: 1,
         parser_version: Some(EVENT_CSV_PARSER_VERSION.to_string()),
@@ -230,12 +290,8 @@ pub async fn run_event_csv_import(
     .await?;
 
     let result: Result<CommandSummary> = async {
-        let prepared_file = stage_single_csv_file(
-            EVENT_CSV_SOURCE_ID,
-            "events",
-            &file_path,
-            &settings.raw_storage_dir,
-        )?;
+        let prepared_file =
+            stage_single_csv_file(source_id, "events", &file_path, &settings.raw_storage_dir)?;
         register_staged_files(
             settings,
             import_run_id,
@@ -252,8 +308,7 @@ pub async fn run_event_csv_import(
         .await?;
         let records = read_csv_rows::<EventCsvRecord>(&prepared_file)?;
         validate_event_csv_records(&records)?;
-        let summary =
-            import_event_csv(&settings.database_url, EVENT_CSV_SOURCE_ID, &records).await?;
+        let summary = import_event_csv(&settings.database_url, source_id, &records).await?;
 
         persist_success_reports(
             &settings.database_url,
@@ -271,7 +326,7 @@ pub async fn run_event_csv_import(
         .await?;
 
         Ok(CommandSummary {
-            label: EVENT_CSV_SOURCE_ID.to_string(),
+            label: source_id.to_string(),
             import_run_id: Some(import_run_id),
             row_count: summary.core_rows,
             report_count: summary.report_entries.len() + 1,
@@ -291,7 +346,7 @@ pub async fn run_event_csv_import(
                     message: error.to_string(),
                     row_count: None,
                     details: json!({
-                        "source_id": EVENT_CSV_SOURCE_ID,
+                        "source_id": source_id,
                         "file_path": file_path.display().to_string()
                     }),
                 },
@@ -301,6 +356,197 @@ pub async fn run_event_csv_import(
             Err(error)
         }
     }
+}
+
+pub async fn run_event_ndjson_import(
+    settings: &AppSettings,
+    file_path: impl AsRef<Path>,
+    source_id: &str,
+) -> Result<CommandSummary> {
+    ensure_import_source_id("event NDJSON", source_id)?;
+    let file_path = fs::canonicalize(file_path.as_ref()).with_context(|| {
+        format!(
+            "failed to resolve event NDJSON {}",
+            file_path.as_ref().display()
+        )
+    })?;
+    let manifest = SourceManifest {
+        schema_version: SOURCE_MANIFEST_SCHEMA_VERSION,
+        kind: SourceManifestKind::ImportSource,
+        source_id: source_id.to_string(),
+        source_name: "Operational event NDJSON".to_string(),
+        manifest_version: 1,
+        parser_version: Some(EVENT_NDJSON_PARSER_VERSION.to_string()),
+        description: Some("Direct NDJSON import for placement-aware events.".to_string()),
+        files: vec![SourceFileSpec {
+            logical_name: "events".to_string(),
+            path: file_path.display().to_string(),
+            format: "ndjson".to_string(),
+        }],
+    };
+    let import_run_id = begin_import_run(
+        &settings.database_url,
+        &file_path,
+        &manifest,
+        EVENT_NDJSON_PARSER_VERSION,
+    )
+    .await?;
+
+    let result: Result<CommandSummary> = async {
+        let prepared_file = stage_single_source_file(
+            source_id,
+            "events",
+            "ndjson",
+            &file_path,
+            &settings.raw_storage_dir,
+        )?;
+        register_staged_files(
+            settings,
+            import_run_id,
+            std::slice::from_ref(&prepared_file),
+        )
+        .await?;
+        let records = read_event_ndjson_records(&prepared_file.staged_path)?;
+        let row_count = records.len() as i64;
+        update_file_row_counts(
+            settings,
+            import_run_id,
+            std::slice::from_ref(&prepared_file),
+            &[("events", row_count)],
+        )
+        .await?;
+        validate_event_csv_records(&records)?;
+        let summary = import_event_ndjson(&settings.database_url, source_id, &records).await?;
+
+        persist_success_reports(
+            &settings.database_url,
+            import_run_id,
+            EVENT_NDJSON_PARSER_VERSION,
+            &summary,
+        )
+        .await?;
+        finish_import_run(
+            &settings.database_url,
+            import_run_id,
+            "succeeded",
+            summary.normalized_rows,
+        )
+        .await?;
+
+        Ok(CommandSummary {
+            label: source_id.to_string(),
+            import_run_id: Some(import_run_id),
+            row_count: summary.core_rows,
+            report_count: summary.report_entries.len() + 1,
+        })
+    }
+    .await;
+
+    match result {
+        Ok(summary) => Ok(summary),
+        Err(error) => {
+            let _ = record_import_report(
+                &settings.database_url,
+                import_run_id,
+                &ImportReportEntry {
+                    level: "error".to_string(),
+                    code: "event_ndjson_import_failed".to_string(),
+                    message: error.to_string(),
+                    row_count: None,
+                    details: json!({
+                        "source_id": source_id,
+                        "file_path": file_path.display().to_string()
+                    }),
+                },
+            )
+            .await;
+            let _ = finish_import_run(&settings.database_url, import_run_id, "failed", 0).await;
+            Err(error)
+        }
+    }
+}
+
+fn select_profile_source_connector<'a>(
+    connectors: &'a [ProfileConnectorRegistryEntry],
+    profile_id: &str,
+    source_id: &str,
+) -> Result<&'a ProfileConnectorRegistryEntry> {
+    let matches = connectors
+        .iter()
+        .filter(|connector| connector.source_id.as_deref() == Some(source_id))
+        .collect::<Vec<_>>();
+    ensure!(
+        !matches.is_empty(),
+        "profile {} does not declare a connector with source_id {}",
+        profile_id,
+        source_id
+    );
+    ensure!(
+        matches.len() == 1,
+        "profile {} declares multiple connectors with source_id {}",
+        profile_id,
+        source_id
+    );
+    Ok(matches[0])
+}
+
+fn import_target_for_source_id(source_id: &str) -> Result<ImportTarget> {
+    match source_id {
+        "jp-rail" => Ok(ImportTarget::JpRail),
+        "jp-postal" => Ok(ImportTarget::JpPostal),
+        "jp-school-codes" => Ok(ImportTarget::JpSchoolCodes),
+        "jp-school-geodata" => Ok(ImportTarget::JpSchoolGeodata),
+        other => anyhow::bail!(
+            "profile source_id {} uses source_manifest but has no CLI importer mapping",
+            other
+        ),
+    }
+}
+
+fn ensure_event_v1_mapping(connector: &ProfileConnectorRegistryEntry) -> Result<()> {
+    ensure!(
+        connector.field_mapping == Some(ProfileConnectorFieldMapping::EventV1),
+        "profile source_id {} connector {} must use field_mapping event_v1",
+        connector.source_id.as_deref().unwrap_or("unknown"),
+        connector.connector_type.as_str()
+    );
+    Ok(())
+}
+
+fn ensure_import_source_id(label: &str, source_id: &str) -> Result<()> {
+    ensure!(
+        is_source_id(source_id),
+        "{label} source_id '{}' is invalid; {}",
+        source_id,
+        SOURCE_ID_RULE_DESCRIPTION
+    );
+    Ok(())
+}
+
+fn read_event_ndjson_records(path: &Path) -> Result<Vec<EventCsvRecord>> {
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("failed to read event NDJSON {}", path.display()))?;
+    let mut records = Vec::new();
+    for (index, line) in raw.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let record: EventNdjsonRecord = serde_json::from_str(line).with_context(|| {
+            format!(
+                "failed to parse event NDJSON {} line {}",
+                path.display(),
+                index + 1
+            )
+        })?;
+        records.push(record.into());
+    }
+    ensure!(
+        !records.is_empty(),
+        "event NDJSON {} did not contain any records",
+        path.display()
+    );
+    Ok(records)
 }
 
 fn validate_event_csv_records(records: &[EventCsvRecord]) -> Result<()> {
@@ -327,8 +573,97 @@ fn validate_event_csv_records(records: &[EventCsvRecord]) -> Result<()> {
             validate_starts_at(starts_at)?;
         }
         let _ = record.normalized_placement_tags()?;
+        ensure!(
+            record.details.is_object(),
+            "details must be a JSON object in event import records"
+        );
     }
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct EventNdjsonRecord {
+    event_id: String,
+    school_id: String,
+    title: String,
+    #[serde(default = "default_event_category")]
+    event_category: String,
+    #[serde(default)]
+    is_open_day: bool,
+    #[serde(default)]
+    is_featured: bool,
+    #[serde(default)]
+    priority_weight: f64,
+    #[serde(default)]
+    starts_at: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_ndjson_placement_tags")]
+    placement_tags: String,
+    #[serde(
+        default = "default_event_details",
+        deserialize_with = "deserialize_ndjson_event_details"
+    )]
+    details: Value,
+}
+
+impl From<EventNdjsonRecord> for EventCsvRecord {
+    fn from(record: EventNdjsonRecord) -> Self {
+        Self {
+            event_id: record.event_id,
+            school_id: record.school_id,
+            title: record.title,
+            event_category: record.event_category,
+            is_open_day: record.is_open_day,
+            is_featured: record.is_featured,
+            priority_weight: record.priority_weight,
+            starts_at: record.starts_at,
+            placement_tags: record.placement_tags,
+            details: record.details,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum PlacementTagValue {
+    PipeDelimited(String),
+    List(Vec<String>),
+}
+
+fn deserialize_ndjson_placement_tags<'de, D>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(value) = Option::<PlacementTagValue>::deserialize(deserializer)? else {
+        return Ok(String::new());
+    };
+    Ok(match value {
+        PlacementTagValue::PipeDelimited(value) => value,
+        PlacementTagValue::List(values) => values.join("|"),
+    })
+}
+
+fn deserialize_ndjson_event_details<'de, D>(deserializer: D) -> std::result::Result<Value, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(value) = Option::<Value>::deserialize(deserializer)? else {
+        return Ok(default_event_details());
+    };
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err(de::Error::custom("details must be a JSON object"))
+    }
+}
+
+fn default_event_category() -> String {
+    "general".to_string()
+}
+
+fn default_event_details() -> Value {
+    Value::Object(Default::default())
 }
 
 fn validate_starts_at(raw: &str) -> Result<()> {
@@ -349,10 +684,22 @@ fn validate_starts_at(raw: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use serde_json::json;
     use storage_postgres::EventCsvRecord;
 
-    use super::validate_event_csv_records;
+    use super::{ensure_import_source_id, read_event_ndjson_records, validate_event_csv_records};
+
+    #[test]
+    fn import_source_id_rejects_path_like_values() {
+        let error = ensure_import_source_id("event NDJSON", "../bad-source")
+            .expect_err("invalid source_id");
+
+        assert!(error
+            .to_string()
+            .contains("event NDJSON source_id '../bad-source' is invalid"));
+    }
 
     #[test]
     fn event_csv_accepts_date_or_rfc3339_starts_at() {
@@ -405,5 +752,63 @@ mod tests {
         assert!(error
             .to_string()
             .contains("starts_at must be ISO-8601 date"));
+    }
+
+    #[test]
+    fn event_ndjson_accepts_event_v1_mapping() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("events.ndjson");
+        fs::write(
+            &path,
+            r#"{"event_id":"event-array","school_id":"school-a","title":"Array Tags","placement_tags":["home","detail"],"details":{"detail_url":"https://example.com/detail"}}
+{"event_id":"event-pipe","school_id":"school-a","title":"Pipe Tags","placement_tags":"search|mypage","starts_at":"2026-05-10"}
+"#,
+        )
+        .expect("ndjson");
+
+        let records = read_event_ndjson_records(&path).expect("records");
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].placement_tags, "home|detail");
+        assert_eq!(
+            records[0].details["detail_url"],
+            "https://example.com/detail"
+        );
+        assert_eq!(records[1].event_category, "general");
+        validate_event_csv_records(&records).expect("valid event records");
+    }
+
+    #[test]
+    fn event_ndjson_rejects_non_object_details() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("events.ndjson");
+        fs::write(
+            &path,
+            r#"{"event_id":"event-bad-details","school_id":"school-a","title":"Bad Details","details":"not-an-object"}
+"#,
+        )
+        .expect("ndjson");
+
+        let error = read_event_ndjson_records(&path).expect_err("details object");
+
+        assert!(format!("{error:#}").contains("details must be a JSON object"));
+        assert!(format!("{error:#}").contains("line 1"));
+    }
+
+    #[test]
+    fn event_ndjson_treats_null_details_as_empty_object() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("events.ndjson");
+        fs::write(
+            &path,
+            r#"{"event_id":"event-null-details","school_id":"school-a","title":"Null Details","details":null}
+"#,
+        )
+        .expect("ndjson");
+
+        let records = read_event_ndjson_records(&path).expect("records");
+
+        assert!(records[0].details.is_object());
+        validate_event_csv_records(&records).expect("valid event records");
     }
 }
