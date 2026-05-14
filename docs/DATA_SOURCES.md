@@ -60,11 +60,27 @@ Profile connector registry model:
 3. `source_manifest` entries must point to `kind: import_source` YAML and are
    classified as `csv_import`.
 4. `csv_import` entries point directly to CSV files, declare their profile
-   source id, and are classified as `csv_import`.
-5. `crawler_manifest` entries must point to `kind: crawler_source` YAML and
+   source id plus `field_mapping: event_v1`, and are classified as
+   `csv_import`.
+5. `ndjson_import` entries point directly to NDJSON files, declare their
+   profile source id plus `field_mapping: event_v1`, and are classified as
+   `ndjson_import`.
+6. `crawler_manifest` entries must point to `kind: crawler_source` YAML and
    are classified as `html_crawl`; registry metadata marks them as
    allowlist-required and live-fetch disabled by default at the profile
    boundary.
+7. `cargo run -p cli -- import profile-source --source-id <id>` resolves the
+   selected profile connector and runs the matching one-shot importer for JP
+   source manifests, event CSV, or event NDJSON. Crawler manifests still use
+   the crawler commands.
+
+Connector and import `source_id` values must be portable path segments: lowercase
+letters, digits, and hyphens, with no leading or trailing hyphen.
+
+The current `event_v1` file mapping accepts event rows with `event_id`,
+`school_id`, `title`, optional event metadata, pipe-delimited or array
+`placement_tags`, and an optional object `details` payload. `details: null` is
+normalized to an empty object; scalar or array `details` values are rejected.
 
 ## Notes
 

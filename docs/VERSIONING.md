@@ -86,8 +86,12 @@ Profile pack loading is strict:
 - Unknown keys fail profile manifest and reason catalog loading.
 - Profile-owned references to ranking configs, fixture manifests, reason
   catalog locale files, connector manifests, evaluation packs, source
-  manifests, crawler manifests, examples, and event CSV files must use portable
-  relative paths and resolve locally when linted.
+  manifests, crawler manifests, examples, and event CSV/NDJSON files must use
+  portable relative paths and resolve locally when linted.
+- Profile `connectors` support local `source_manifest`, `csv_import`,
+  `ndjson_import`, and `crawler_manifest` references. CSV/NDJSON file imports
+  must declare `field_mapping: event_v1`; arbitrary field mapping remains
+  outside the current schema-2 runtime slice.
 
 Run profile pack contract lint together with ranking config lint:
 
@@ -142,6 +146,8 @@ manifest_version: 1
 remains the source-authored manifest revision recorded in import and crawler
 audit tables. Committed manifests must declare these fields explicitly so lint
 can catch partially migrated files.
+Import `source_id` values must be portable path segments: lowercase letters,
+digits, and hyphens, with no leading or trailing hyphen.
 
 Import source lint also checks that committed manifest file paths resolve to
 local CSV files. Crawler manifest lint checks parser registration,

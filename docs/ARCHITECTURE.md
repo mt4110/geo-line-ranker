@@ -145,8 +145,13 @@ The ranker may return fewer than the requested limit when the hard caps would ot
 
 - JP importers still use source manifests plus normalized tables.
 - Operational event CSV uses direct file import through `cargo run -p cli -- import event-csv --file ...`.
-- Raw CSV is checksum-staged under `.storage/raw/event-csv/...`.
-- The importer uses a stable logical source key (`event-csv`) so renamed operational exports still deactivate stale rows from the same feed.
+- Operational event NDJSON uses direct file import through `cargo run -p cli -- import event-ndjson --file ...`.
+- Profile-declared one-shot imports can be run through
+  `cargo run -p cli -- import profile-source --source-id ...`, which resolves
+  local connector paths and the deterministic `event_v1` field mapping from the
+  selected profile pack.
+- Raw CSV/NDJSON files are checksum-staged under `.storage/raw/<source-id>/...`.
+- The importer uses stable logical source keys such as `event-csv` and `event-ndjson` so renamed operational exports still deactivate stale rows from the same feed.
 - Import success and failure are recorded in `import_runs`, `import_run_files`, and `import_reports`.
 - Allowlist crawl uses `cargo run -p crawler -- fetch|parse --manifest ...`.
 - Fetch writes raw HTML into `.storage/raw/<source_id>/<checksum>/...`.

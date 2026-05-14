@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fmt,
     path::{Path, PathBuf},
 };
@@ -7,7 +8,8 @@ use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    read_raw, validate_portable_relative_path, ProfileCompatibilityLevel, ProfilePackManifest,
+    is_source_id, read_raw, validate_portable_relative_path, ProfileCompatibilityLevel,
+    ProfilePackManifest, SOURCE_ID_RULE_DESCRIPTION,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -15,6 +17,7 @@ use crate::{
 pub enum ProfileConnectorType {
     SourceManifest,
     CsvImport,
+    NdjsonImport,
     CrawlerManifest,
 }
 
@@ -23,6 +26,7 @@ impl ProfileConnectorType {
         match self {
             Self::SourceManifest => "source_manifest",
             Self::CsvImport => "csv_import",
+            Self::NdjsonImport => "ndjson_import",
             Self::CrawlerManifest => "crawler_manifest",
         }
     }
@@ -30,6 +34,7 @@ impl ProfileConnectorType {
     pub fn source_class(self) -> ProfileSourceClass {
         match self {
             Self::SourceManifest | Self::CsvImport => ProfileSourceClass::CsvImport,
+            Self::NdjsonImport => ProfileSourceClass::NdjsonImport,
             Self::CrawlerManifest => ProfileSourceClass::HtmlCrawl,
         }
     }
@@ -38,7 +43,16 @@ impl ProfileConnectorType {
         match self {
             Self::SourceManifest => "import_source",
             Self::CsvImport => "csv_file",
+            Self::NdjsonImport => "ndjson_file",
             Self::CrawlerManifest => "crawler_source",
+        }
+    }
+
+    fn expected_extension(self) -> Option<&'static str> {
+        match self {
+            Self::CsvImport => Some("csv"),
+            Self::NdjsonImport => Some("ndjson"),
+            Self::SourceManifest | Self::CrawlerManifest => None,
         }
     }
 }
@@ -53,6 +67,7 @@ impl fmt::Display for ProfileConnectorType {
 #[serde(rename_all = "snake_case")]
 pub enum ProfileSourceClass {
     CsvImport,
+    NdjsonImport,
     HtmlCrawl,
 }
 
@@ -60,6 +75,7 @@ impl ProfileSourceClass {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::CsvImport => "csv_import",
+            Self::NdjsonImport => "ndjson_import",
             Self::HtmlCrawl => "html_crawl",
         }
     }
@@ -90,6 +106,26 @@ impl ProfileConnectorSafetyMetadata {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileConnectorFieldMapping {
+    EventV1,
+}
+
+impl ProfileConnectorFieldMapping {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::EventV1 => "event_v1",
+        }
+    }
+}
+
+impl fmt::Display for ProfileConnectorFieldMapping {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProfileConnectorRegistryEntry {
     pub connector_type: ProfileConnectorType,
@@ -98,6 +134,8 @@ pub struct ProfileConnectorRegistryEntry {
     pub manifest_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_mapping: Option<ProfileConnectorFieldMapping>,
     pub profile_compatibility: ProfileCompatibilityLevel,
     pub safety: ProfileConnectorSafetyMetadata,
 }
@@ -110,6 +148,8 @@ pub struct ProfileConnectorRef {
     pub manifest: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_mapping: Option<ProfileConnectorFieldMapping>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -125,11 +165,13 @@ pub(crate) fn build_profile_connector_registry(
     manifest: &ProfilePackManifest,
     manifest_dir: &Path,
 ) -> Result<Vec<ProfileConnectorRegistryEntry>> {
-    manifest
+    let entries = manifest
         .connectors
         .iter()
         .map(|connector| profile_connector_registry_entry(path, manifest, manifest_dir, connector))
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    ensure_unique_connector_source_ids(path, &entries)?;
+    Ok(entries)
 }
 
 fn profile_connector_registry_entry(
@@ -151,41 +193,50 @@ fn profile_connector_registry_entry(
         resolved.display()
     );
 
-    let (manifest_kind, source_id) = match connector.connector_type {
+    let (manifest_kind, source_id, field_mapping) = match connector.connector_type {
         ProfileConnectorType::SourceManifest => {
+            ensure_no_file_field_mapping(path, connector)?;
             let header = load_connector_manifest_header(path, &resolved)?;
             ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
             let source_id =
                 require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
             validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
-            (header.kind, Some(source_id))
+            (header.kind, Some(source_id), None)
         }
         ProfileConnectorType::CrawlerManifest => {
+            ensure_no_file_field_mapping(path, connector)?;
             let header = load_connector_manifest_header(path, &resolved)?;
             ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
             let source_id =
                 require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
             validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
-            (header.kind, Some(source_id))
+            (header.kind, Some(source_id), None)
         }
-        ProfileConnectorType::CsvImport => {
+        ProfileConnectorType::CsvImport | ProfileConnectorType::NdjsonImport => {
+            let expected_extension = connector
+                .connector_type
+                .expected_extension()
+                .expect("file connector extension");
             let extension = resolved
                 .extension()
                 .and_then(|value| value.to_str())
                 .unwrap_or_default();
             ensure!(
-                extension.eq_ignore_ascii_case("csv"),
-                "profile pack {} connector {} manifest {} must point to a CSV file",
+                extension.eq_ignore_ascii_case(expected_extension),
+                "profile pack {} connector {} manifest {} must point to a .{} file",
                 path.display(),
                 connector.connector_type.as_str(),
-                resolved.display()
+                resolved.display(),
+                expected_extension
             );
+            let field_mapping = require_event_file_field_mapping(path, manifest, connector)?;
             (
                 connector
                     .connector_type
                     .expected_manifest_kind()
                     .to_string(),
                 Some(require_profile_connector_source_id(path, connector)?),
+                Some(field_mapping),
             )
         }
     };
@@ -203,6 +254,7 @@ fn profile_connector_registry_entry(
         })?,
         manifest_kind,
         source_id,
+        field_mapping,
         profile_compatibility: manifest.compatibility_level,
         safety: ProfileConnectorSafetyMetadata::for_connector_type(connector.connector_type),
     })
@@ -239,10 +291,12 @@ fn require_connector_source_id(
         )
     })?;
     ensure!(
-        !source_id.trim().is_empty(),
-        "profile pack {} connector manifest {} source_id must not be empty",
+        is_source_id(source_id),
+        "profile pack {} connector manifest {} source_id '{}' is invalid; {}",
         profile_path.display(),
-        connector_manifest_path.display()
+        connector_manifest_path.display(),
+        source_id,
+        SOURCE_ID_RULE_DESCRIPTION
     );
     Ok(source_id.to_string())
 }
@@ -289,11 +343,75 @@ fn ensure_profile_connector_source_id(
     source_id: &str,
 ) -> Result<()> {
     ensure!(
-        !source_id.trim().is_empty(),
-        "profile pack {} connector {} source_id must not be empty",
+        is_source_id(source_id),
+        "profile pack {} connector {} source_id '{}' is invalid; {}",
+        profile_path.display(),
+        connector.connector_type.as_str(),
+        source_id,
+        SOURCE_ID_RULE_DESCRIPTION
+    );
+    Ok(())
+}
+
+fn ensure_no_file_field_mapping(
+    profile_path: &Path,
+    connector: &ProfileConnectorRef,
+) -> Result<()> {
+    ensure!(
+        connector.field_mapping.is_none(),
+        "profile pack {} connector {} must not declare field_mapping; field_mapping is only supported for file import connectors",
         profile_path.display(),
         connector.connector_type.as_str()
     );
+    Ok(())
+}
+
+fn require_event_file_field_mapping(
+    profile_path: &Path,
+    manifest: &ProfilePackManifest,
+    connector: &ProfileConnectorRef,
+) -> Result<ProfileConnectorFieldMapping> {
+    let field_mapping = connector.field_mapping.with_context(|| {
+        format!(
+            "profile pack {} connector {} must declare field_mapping",
+            profile_path.display(),
+            connector.connector_type.as_str()
+        )
+    })?;
+    ensure!(
+        field_mapping == ProfileConnectorFieldMapping::EventV1,
+        "profile pack {} connector {} field_mapping {} is unsupported; expected event_v1",
+        profile_path.display(),
+        connector.connector_type.as_str(),
+        field_mapping.as_str()
+    );
+    ensure!(
+        manifest
+            .supported_content_kinds
+            .iter()
+            .any(|kind| kind.as_str() == "event"),
+        "profile pack {} connector {} field_mapping event_v1 requires supported_content_kinds to include event",
+        profile_path.display(),
+        connector.connector_type.as_str()
+    );
+    Ok(field_mapping)
+}
+
+fn ensure_unique_connector_source_ids(
+    profile_path: &Path,
+    entries: &[ProfileConnectorRegistryEntry],
+) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for entry in entries {
+        if let Some(source_id) = entry.source_id.as_deref() {
+            ensure!(
+                seen.insert(source_id.to_string()),
+                "profile pack {} connectors contain duplicate source_id {}",
+                profile_path.display(),
+                source_id
+            );
+        }
+    }
     Ok(())
 }
 

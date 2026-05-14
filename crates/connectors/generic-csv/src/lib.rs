@@ -9,6 +9,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const SOURCE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const SOURCE_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -100,6 +101,13 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<SourceManifest> {
         path.display(),
         manifest.kind.as_str(),
         SourceManifestKind::ImportSource.as_str()
+    );
+    ensure!(
+        is_source_id(&manifest.source_id),
+        "source manifest {} source_id '{}' is invalid; {}",
+        path.display(),
+        manifest.source_id,
+        SOURCE_ID_RULE_DESCRIPTION
     );
     ensure!(
         !manifest.files.is_empty(),
@@ -218,7 +226,7 @@ pub fn stage_raw_files(
         .files
         .iter()
         .map(|file| {
-            prepare_csv_file(
+            prepare_source_file(
                 &manifest.source_id,
                 &file.logical_name,
                 &file.format,
@@ -235,13 +243,39 @@ pub fn stage_single_csv_file(
     source_path: impl AsRef<Path>,
     raw_root: impl AsRef<Path>,
 ) -> Result<PreparedSourceFile> {
-    prepare_csv_file(
+    prepare_source_file(
         source_id,
         logical_name,
         "csv",
         source_path.as_ref(),
         raw_root.as_ref(),
     )
+}
+
+pub fn stage_single_source_file(
+    source_id: &str,
+    logical_name: &str,
+    format: &str,
+    source_path: impl AsRef<Path>,
+    raw_root: impl AsRef<Path>,
+) -> Result<PreparedSourceFile> {
+    prepare_source_file(
+        source_id,
+        logical_name,
+        format,
+        source_path.as_ref(),
+        raw_root.as_ref(),
+    )
+}
+
+pub fn is_source_id(value: &str) -> bool {
+    !value.is_empty()
+        && value == value.trim()
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 pub fn read_csv_rows<T: DeserializeOwned>(file: &PreparedSourceFile) -> Result<Vec<T>> {
@@ -265,14 +299,20 @@ pub fn count_csv_rows(file: &PreparedSourceFile) -> Result<i64> {
     Ok(count)
 }
 
-fn prepare_csv_file(
+fn prepare_source_file(
     source_id: &str,
     logical_name: &str,
     format: &str,
     source_path: impl AsRef<Path>,
     raw_root: impl AsRef<Path>,
 ) -> Result<PreparedSourceFile> {
-    if format != "csv" {
+    ensure!(
+        is_source_id(source_id),
+        "source_id '{}' is invalid; {}",
+        source_id,
+        SOURCE_ID_RULE_DESCRIPTION
+    );
+    if !matches!(format, "csv" | "ndjson") {
         bail!("unsupported format {format} for {logical_name}");
     }
 
@@ -412,6 +452,30 @@ files:
 
         let error = load_manifest(&manifest_path).expect_err("unknown key");
         assert!(format!("{error:#}").contains("unknown field `unknown_key`"));
+    }
+
+    #[test]
+    fn rejects_non_portable_source_id() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("example.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: import_source
+source_id: ../bad-source
+source_name: Demo school codes
+manifest_version: 1
+files:
+  - logical_name: school_codes
+    path: demo.csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_manifest(&manifest_path).expect_err("invalid source id");
+
+        assert!(format!("{error:#}").contains("source_id '../bad-source' is invalid"));
     }
 
     #[test]

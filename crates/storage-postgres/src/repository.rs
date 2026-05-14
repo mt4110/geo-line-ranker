@@ -5154,6 +5154,14 @@ pub async fn import_event_csv(
     import_event_records(database_url, "event_csv", source_key, records, true).await
 }
 
+pub async fn import_event_ndjson(
+    database_url: &str,
+    source_key: &str,
+    records: &[EventCsvRecord],
+) -> Result<ImportSummary> {
+    import_event_records(database_url, "event_ndjson", source_key, records, true).await
+}
+
 pub async fn import_crawled_events(
     database_url: &str,
     source_key: &str,

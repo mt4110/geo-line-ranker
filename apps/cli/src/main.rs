@@ -20,10 +20,11 @@ use cli::{
     format_job_enqueue_summary, format_job_inspection, format_job_list,
     format_job_mutation_summary, format_replay_evaluation_summary, format_replay_scenario_summary,
     format_snapshot_refresh_summary, format_summary, run_context_inspect,
-    run_derive_school_station_links, run_event_csv_import, run_explain_trace, run_import_command,
-    run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry,
-    run_replay_evaluate, run_replay_scenarios, run_snapshot_refresh, ContextInspectInput,
-    ImportTarget,
+    run_derive_school_station_links, run_event_csv_import, run_event_ndjson_import,
+    run_explain_trace, run_import_command, run_job_due, run_job_enqueue, run_job_inspect,
+    run_job_list, run_job_retry, run_profile_source_import, run_replay_evaluate,
+    run_replay_scenarios, run_snapshot_refresh, ContextInspectInput, ImportTarget,
+    DEFAULT_EVENT_NDJSON_SOURCE_ID,
 };
 #[cfg(feature = "storage-backends")]
 use config::AppSettings;
@@ -176,6 +177,34 @@ enum ImportCommand {
     EventCsv {
         #[arg(long)]
         file: PathBuf,
+    },
+    #[command(name = "event-ndjson")]
+    EventNdjson {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long, default_value = DEFAULT_EVENT_NDJSON_SOURCE_ID)]
+        source_id: String,
+    },
+    #[command(
+        name = "profile-source",
+        about = "Import one profile-declared source by source_id"
+    )]
+    ProfileSource {
+        #[arg(
+            long,
+            help = "Profile id to resolve. Defaults to PROFILE_ID or local-discovery-generic."
+        )]
+        profile_id: Option<String>,
+        #[arg(
+            long = "profiles-path",
+            help = "Profile pack root directory or explicit profile.yaml file."
+        )]
+        profiles_path: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Connector source_id declared by the selected profile pack."
+        )]
+        source_id: String,
     },
 }
 
@@ -611,6 +640,27 @@ async fn main() -> anyhow::Result<()> {
                     run_import_command(&settings, ImportTarget::JpSchoolGeodata, manifest).await?
                 }
                 ImportCommand::EventCsv { file } => run_event_csv_import(&settings, file).await?,
+                ImportCommand::EventNdjson { file, source_id } => {
+                    run_event_ndjson_import(&settings, file, &source_id).await?
+                }
+                ImportCommand::ProfileSource {
+                    profile_id,
+                    profiles_path,
+                    source_id,
+                } => {
+                    let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                        "PROFILE_PACKS_DIR",
+                        PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                    )?);
+                    let env_profile_id = config::env_optional_non_empty("PROFILE_ID")?;
+                    run_profile_source_import(
+                        &settings,
+                        profiles_path,
+                        profile_id.as_deref().or(env_profile_id.as_deref()),
+                        &source_id,
+                    )
+                    .await?
+                }
             };
             println!("{}", format_summary(&summary));
         }
@@ -1819,11 +1869,15 @@ fn format_profile_inspect_summary(
     } else {
         lines.extend(lint_file.connector_registry.iter().map(|connector| {
             format!(
-                "- type={} source_class={} manifest_kind={} source_id={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
+                "- type={} source_class={} manifest_kind={} source_id={} field_mapping={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
                 connector.connector_type.as_str(),
                 connector.source_class.as_str(),
                 connector.manifest_kind,
                 connector.source_id.as_deref().unwrap_or("none"),
+                connector
+                    .field_mapping
+                    .map(|mapping| mapping.as_str())
+                    .unwrap_or("none"),
                 connector.profile_compatibility.as_str(),
                 connector.safety.local_reference_only,
                 connector.safety.dynamic_loading_enabled,
@@ -2692,6 +2746,7 @@ evaluation:
                     manifest_path: PathBuf::from("storage/sources/jp_rail/example.yaml"),
                     manifest_kind: "import_source".to_string(),
                     source_id: Some("jp-rail".to_string()),
+                    field_mapping: None,
                     profile_compatibility: ProfileCompatibilityLevel::Reference,
                     safety: ProfileConnectorSafetyMetadata {
                         local_reference_only: true,

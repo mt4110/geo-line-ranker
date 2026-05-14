@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 mod profile_connectors;
 
 pub use profile_connectors::{
-    ProfileConnectorRef, ProfileConnectorRegistryEntry, ProfileConnectorSafetyMetadata,
-    ProfileConnectorType, ProfileSourceClass,
+    ProfileConnectorFieldMapping, ProfileConnectorRef, ProfileConnectorRegistryEntry,
+    ProfileConnectorSafetyMetadata, ProfileConnectorType, ProfileSourceClass,
 };
 
 pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
@@ -28,6 +28,7 @@ pub const PROFILE_PACK_SCHEMA_VERSION: u32 = 2;
 pub const PROFILE_REASON_CATALOG_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_FIXTURE_SET_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
+pub const SOURCE_ID_RULE_DESCRIPTION: &str = PROFILE_ID_RULE_DESCRIPTION;
 pub const CONTENT_KIND_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, underscores, and hyphens, and must not start or end with a separator";
 const ARTICLE_CONTENT_KIND_ID: &str = "article";
 
@@ -2219,6 +2220,10 @@ fn has_windows_drive_prefix(raw_path: &str) -> bool {
 }
 
 pub fn is_profile_id(value: &str) -> bool {
+    is_source_id(value)
+}
+
+pub fn is_source_id(value: &str) -> bool {
     !value.is_empty()
         && value == value.trim()
         && !value.starts_with('-')
@@ -2411,10 +2416,10 @@ mod tests {
         resolve_profile_pack_ranking_selection, resolve_profile_pack_runtime_selection,
         validate_portable_relative_path, validate_profile_pack_contract,
         validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
-        ProfileCompatibilityLevel, ProfileConnectorType, ProfileContextInput, ProfilePackKind,
-        ProfilePackManifest, ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind,
-        ProfileReasonCatalogRef, ProfileSourceClass, RankingConfigKind, RankingProfiles,
-        DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        ProfileCompatibilityLevel, ProfileConnectorFieldMapping, ProfileConnectorType,
+        ProfileContextInput, ProfilePackKind, ProfilePackManifest, ProfilePackRegistry,
+        ProfileReasonCatalog, ProfileReasonCatalogKind, ProfileReasonCatalogRef,
+        ProfileSourceClass, RankingConfigKind, RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
     use domain::{ContentKind, PlacementKind};
@@ -3385,6 +3390,11 @@ reasons:
         );
         fs::write(source_dir.join("events.csv"), "event_id,title\n").expect("source");
         fs::write(
+            source_dir.join("events.ndjson"),
+            "{\"event_id\":\"event-one\",\"school_id\":\"school-one\",\"title\":\"Event One\"}\n",
+        )
+        .expect("source");
+        fs::write(
             profile_dir.join("evaluation").join("pairwise.yaml"),
             "schema_version: 1\n",
         )
@@ -3425,6 +3435,11 @@ connectors:
   - type: csv_import
     manifest: sources/events.csv
     source_id: example-events
+    field_mapping: event_v1
+  - type: ndjson_import
+    manifest: sources/events.ndjson
+    source_id: example-events-ndjson
+    field_mapping: event_v1
 evaluation:
   scenario_pack: evaluation/scenarios
   pairwise_pack: evaluation/pairwise.yaml
@@ -3436,7 +3451,7 @@ evaluation:
 
         assert_eq!(lint.reason_catalog_locale_count, 2);
         assert_eq!(lint.reason_count, 1);
-        assert_eq!(lint.connector_count, 1);
+        assert_eq!(lint.connector_count, 2);
         assert_eq!(
             lint.connector_registry[0].connector_type,
             ProfileConnectorType::CsvImport
@@ -3449,6 +3464,23 @@ evaluation:
         assert_eq!(
             lint.connector_registry[0].source_id.as_deref(),
             Some("example-events")
+        );
+        assert_eq!(
+            lint.connector_registry[0].field_mapping,
+            Some(ProfileConnectorFieldMapping::EventV1)
+        );
+        assert_eq!(
+            lint.connector_registry[1].connector_type,
+            ProfileConnectorType::NdjsonImport
+        );
+        assert_eq!(
+            lint.connector_registry[1].source_class,
+            ProfileSourceClass::NdjsonImport
+        );
+        assert_eq!(lint.connector_registry[1].manifest_kind, "ndjson_file");
+        assert_eq!(
+            lint.connector_registry[1].field_mapping,
+            Some(ProfileConnectorFieldMapping::EventV1)
         );
         assert!(!lint.connector_registry[0].safety.dynamic_loading_enabled);
         assert_eq!(lint.evaluation_reference_count, 2);
@@ -3526,6 +3558,166 @@ connectors:
 
         assert!(format!("{error:#}").contains("connector source_manifest manifest"));
         assert!(format!("{error:#}").contains("expected import_source"));
+    }
+
+    #[test]
+    fn rejects_file_import_connector_without_field_mapping() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let source_dir = profile_dir.join("sources");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(source_dir.join("events.ndjson"), "{}\n").expect("source");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+connectors:
+  - type: ndjson_import
+    manifest: sources/events.ndjson
+    source_id: example-events
+"#,
+        )
+        .expect("profile");
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("field mapping");
+
+        assert!(format!("{error:#}").contains("must declare field_mapping"));
+    }
+
+    #[test]
+    fn rejects_profile_connector_with_non_portable_source_id() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let source_dir = profile_dir.join("sources");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(source_dir.join("events.ndjson"), "{}\n").expect("source");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+connectors:
+  - type: ndjson_import
+    manifest: sources/events.ndjson
+    source_id: ../bad-source
+    field_mapping: event_v1
+"#,
+        )
+        .expect("profile");
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("source id");
+
+        assert!(format!("{error:#}").contains("source_id '../bad-source' is invalid"));
+    }
+
+    #[test]
+    fn rejects_duplicate_profile_connector_source_ids() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let source_dir = profile_dir.join("sources");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(source_dir.join("events.csv"), "event_id,title\n").expect("source");
+        fs::write(source_dir.join("events.ndjson"), "{}\n").expect("source");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+connectors:
+  - type: csv_import
+    manifest: sources/events.csv
+    source_id: example-events
+    field_mapping: event_v1
+  - type: ndjson_import
+    manifest: sources/events.ndjson
+    source_id: example-events
+    field_mapping: event_v1
+"#,
+        )
+        .expect("profile");
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("duplicate");
+
+        assert!(format!("{error:#}").contains("duplicate source_id example-events"));
     }
 
     #[test]
