@@ -790,7 +790,7 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "storage-backends")]
         Command::Explain { target } => match target {
             ExplainCommand::Trace { id, json } => {
-                let settings = AppSettings::from_env()?;
+                let settings = explain_trace_settings()?;
                 let report = run_explain_trace(&settings, id).await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1082,6 +1082,24 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(feature = "storage-backends")]
+fn explain_trace_settings() -> anyhow::Result<AppSettings> {
+    match AppSettings::from_env() {
+        Ok(settings) => Ok(settings),
+        Err(profile_error) => {
+            let settings = AppSettings::from_env_without_profile_pack().with_context(|| {
+                format!(
+                    "failed to load DB-only explain trace settings after profile-aware settings failed: {profile_error:#}"
+                )
+            })?;
+            eprintln!(
+                "warning: explain trace is using DB-only settings because profile pack resolution failed: {profile_error:#}"
+            );
+            Ok(settings)
+        }
+    }
 }
 
 #[cfg(feature = "storage-backends")]
