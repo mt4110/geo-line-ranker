@@ -109,11 +109,9 @@ to an NDJSON file. CSV/NDJSON file import refs must declare both a profile
 `source_id` and `field_mapping: event_v1`. Connector `source_id` values use
 the same portable lowercase letters, digits, and hyphens rule as `profile_id`.
 Optional `source_id` values on YAML-backed connectors must match the referenced
-manifest's `source_id`. For
-legacy
-schema-2 manifests that omit `content_kinds`, the validator treats
-`supported_content_kinds` as the inline registry; new profile packs should
-declare `content_kinds` explicitly.
+manifest's `source_id`. For legacy schema-2 manifests that omit
+`content_kinds`, the validator treats `supported_content_kinds` as the inline
+registry; new profile packs should declare `content_kinds` explicitly.
 
 The manifest spec draft also sketches a nested fallback config object, richer
 connector families, and per-profile evaluation packs. This repository has
