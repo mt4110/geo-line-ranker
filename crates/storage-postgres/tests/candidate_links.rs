@@ -2,7 +2,10 @@ use context::{
     AreaContext, ContextSource, LineContext, PrivacyLevel, RankingContext, StationContext,
 };
 use domain::Station;
-use storage_postgres::{run_migrations, PgRepository};
+use storage::{
+    CandidatePlanAreaGraphExpansion, CandidatePlanGraphExpansion, CandidatePlanLineGraphExpansion,
+};
+use storage_postgres::{run_migrations, ContextCandidateLinkQuery, PgRepository};
 use tokio_postgres::NoTls;
 mod common;
 
@@ -57,6 +60,7 @@ async fn load_candidate_links_filters_neighbor_hops_before_limit() -> anyhow::Re
                     name: "Target".to_string(),
                     line_name: "JR Yamanote Line".to_string(),
                     line_id: None,
+                    area_id: None,
                     latitude: 35.0,
                     longitude: 139.0,
                 },
@@ -213,6 +217,7 @@ async fn station_context_candidate_links_include_full_same_line_fallback() -> an
             name: "Target".to_string(),
             line_name: "Same Line".to_string(),
             line_id: None,
+            area_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -291,6 +296,7 @@ async fn station_context_candidate_links_include_nearby_off_line_candidates() ->
             name: "Target".to_string(),
             line_name: "Target Line".to_string(),
             line_id: None,
+            area_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -319,6 +325,247 @@ async fn station_context_candidate_links_include_nearby_off_line_candidates() ->
 
         assert_eq!(candidate_links.len(), 1);
         assert_eq!(candidate_links[0].school_id, "school_neighbor");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn context_candidate_links_include_line_graph_adjacent_candidates() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_line_graph_candidates").await
+    else {
+        eprintln!(
+            "skipping storage-postgres line graph candidate link test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO lines (line_id, line_name, country_code) VALUES
+                    ('line_target', 'Target Line', 'JP'),
+                    ('line_adjacent', 'Adjacent Line', 'JP');
+
+                 INSERT INTO schools (id, name, area, school_type, group_id) VALUES
+                    ('school_direct', 'Direct School', 'Target Ward', 'high_school', 'group_direct'),
+                    ('school_adjacent', 'Adjacent School', 'Neighbor Ward', 'high_school', 'group_adjacent');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id) VALUES
+                    ('st_target', 'Target', 'Target Line', 35.0, 139.0, 'line_target'),
+                    ('st_adjacent', 'Adjacent', 'Adjacent Line', 35.0004, 139.0004, 'line_adjacent');
+
+                 INSERT INTO line_adjacencies (
+                    from_line_id, to_line_id, adjacency_kind, interchange_station_id,
+                    station_hop_count, requires_transfer
+                 ) VALUES (
+                    'line_target', 'line_adjacent', 'interchange', 'st_target', 1, TRUE
+                 );
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_direct', 'st_target', 4, 250, 0, 'Target Line'),
+                    ('school_adjacent', 'st_adjacent', 8, 650, 1, 'Adjacent Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Target Line".to_string(),
+            line_id: Some("line_target".to_string()),
+            area_id: None,
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some("line_target".to_string()),
+                line_name: "Target Line".to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 1, 1_000.0, 1)
+            .await?;
+
+        assert_eq!(
+            candidate_links
+                .iter()
+                .map(|link| link.school_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school_direct", "school_adjacent"]
+        );
+
+        let mismatched_expansion = CandidatePlanGraphExpansion {
+            area: None,
+            line: Some(CandidatePlanLineGraphExpansion {
+                origin_line_id: "line_other".to_string(),
+                adjacent_line_ids: vec!["line_adjacent".to_string()],
+            }),
+        };
+        let guarded_links = repo
+            .load_context_candidate_links_with_graph_expansion(
+                ContextCandidateLinkQuery {
+                    target_station: &target_station,
+                    context: &context,
+                    candidate_limit: 10,
+                    min_scoped_candidates: 1,
+                    neighbor_distance_cap_meters: 1_000.0,
+                    neighbor_max_hops: 1,
+                },
+                &mismatched_expansion,
+            )
+            .await?;
+
+        assert_eq!(guarded_links.len(), 1);
+        assert_eq!(guarded_links[0].school_id, "school_direct");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn station_context_candidate_links_include_area_graph_neighbors() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_area_graph_candidates").await
+    else {
+        eprintln!(
+            "skipping storage-postgres area graph candidate link test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO areas (area_id, country_code, prefecture_name, city_name, area_level) VALUES
+                    ('area_target', 'JP', 'Tokyo', 'Target Ward', 'city'),
+                    ('area_neighbor', 'JP', 'Tokyo', 'Neighbor Ward', 'city');
+
+                 INSERT INTO area_adjacencies (
+                    from_area_id, to_area_id, adjacency_kind, distance_meters, area_cluster_id
+                 ) VALUES (
+                    'area_target', 'area_neighbor', 'city_neighbor', 1200.0, 'cluster_tokyo'
+                 );
+
+                 INSERT INTO schools (id, name, area, school_type, group_id) VALUES
+                    ('school_direct', 'Direct School', 'Target Ward', 'high_school', 'group_direct'),
+                    ('school_area_neighbor', 'Area Neighbor', 'Neighbor Ward', 'high_school', 'group_area_neighbor'),
+                    ('school_school_area_only', 'School Area Only', 'Neighbor Ward', 'high_school', 'group_school_area_only');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, area_id) VALUES
+                    ('st_target', 'Target', 'Target Line', 35.0, 139.0, 'area_target'),
+                    ('st_area_neighbor', 'Area Neighbor', 'Other Line', 36.0, 140.0, 'area_neighbor'),
+                    ('st_school_area_only', 'School Area Only', 'Other Line', 36.2, 140.2, NULL);
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_direct', 'st_target', 4, 250, 0, 'Target Line'),
+                    ('school_area_neighbor', 'st_area_neighbor', 9, 800, 0, 'Other Line'),
+                    ('school_school_area_only', 'st_school_area_only', 9, 800, 0, 'Other Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Target Line".to_string(),
+            line_id: None,
+            area_id: Some("area_target".to_string()),
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestStation,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: None,
+                line_name: "Target Line".to_string(),
+                operator_name: None,
+            }),
+            station: Some(StationContext {
+                station_id: "st_target".to_string(),
+                station_name: "Target".to_string(),
+            }),
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 1, 50.0, 1)
+            .await?;
+
+        assert_eq!(
+            candidate_links
+                .iter()
+                .map(|link| link.school_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school_direct", "school_area_neighbor"]
+        );
+
+        let mismatched_expansion = CandidatePlanGraphExpansion {
+            area: Some(CandidatePlanAreaGraphExpansion {
+                origin_area_id: "area_other".to_string(),
+                adjacent_area_ids: vec!["area_neighbor".to_string()],
+            }),
+            line: None,
+        };
+        let guarded_links = repo
+            .load_context_candidate_links_with_graph_expansion(
+                ContextCandidateLinkQuery {
+                    target_station: &target_station,
+                    context: &context,
+                    candidate_limit: 10,
+                    min_scoped_candidates: 1,
+                    neighbor_distance_cap_meters: 50.0,
+                    neighbor_max_hops: 1,
+                },
+                &mismatched_expansion,
+            )
+            .await?;
+
+        assert_eq!(guarded_links.len(), 1);
+        assert_eq!(guarded_links[0].school_id, "school_direct");
 
         Ok(())
     }
@@ -373,6 +620,7 @@ async fn line_context_candidate_links_fall_back_to_line_name_when_station_line_i
             name: "Target".to_string(),
             line_name: "Legacy Shared Line".to_string(),
             line_id: None,
+            area_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -398,6 +646,103 @@ async fn line_context_candidate_links_fall_back_to_line_name_when_station_line_i
 
         assert_eq!(candidate_links.len(), 1);
         assert_eq!(candidate_links[0].school_id, "school_legacy");
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
+async fn area_context_candidate_links_do_not_inherit_representative_line_graph(
+) -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_area_no_line_graph").await
+    else {
+        eprintln!(
+            "skipping storage-postgres area no line graph test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO lines (line_id, line_name, country_code) VALUES
+                    ('line_target', 'Target Line', 'JP'),
+                    ('line_adjacent', 'Adjacent Line', 'JP');
+
+                 INSERT INTO schools (id, name, area, school_type, group_id) VALUES
+                    ('school_direct', 'Direct School', 'Target Ward', 'high_school', 'group_direct'),
+                    ('school_adjacent', 'Adjacent School', 'Other Ward', 'high_school', 'group_adjacent');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id) VALUES
+                    ('st_target', 'Target', 'Target Line', 35.0, 139.0, 'line_target'),
+                    ('st_adjacent', 'Adjacent', 'Adjacent Line', 35.0003, 139.0003, 'line_adjacent');
+
+                 INSERT INTO line_adjacencies (
+                    from_line_id, to_line_id, adjacency_kind, interchange_station_id,
+                    station_hop_count, requires_transfer
+                 ) VALUES (
+                    'line_target', 'line_adjacent', 'interchange', 'st_target', 1, TRUE
+                 );
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_direct', 'st_target', 4, 250, 0, 'Target Line'),
+                    ('school_adjacent', 'st_adjacent', 8, 650, 1, 'Adjacent Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Target Line".to_string(),
+            line_id: Some("line_target".to_string()),
+            area_id: None,
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestArea,
+            confidence: 0.95,
+            area: Some(AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: None,
+                city_code: None,
+                city_name: Some("Target Ward".to_string()),
+            }),
+            line: None,
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 1, 1_000.0, 1)
+            .await?;
+
+        assert_eq!(
+            candidate_links
+                .iter()
+                .map(|link| link.school_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school_direct"]
+        );
 
         Ok(())
     }
@@ -588,6 +933,7 @@ async fn city_context_candidate_links_honor_prefecture_name() -> anyhow::Result<
             name: "Target Station".to_string(),
             line_name: "Target Line".to_string(),
             line_id: None,
+            area_id: None,
             latitude: 34.57,
             longitude: 133.24,
         };
@@ -673,6 +1019,7 @@ async fn prefecture_context_candidate_links_match_school_prefecture_name() -> an
             name: "Target".to_string(),
             line_name: "Target Line".to_string(),
             line_id: None,
+            area_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -753,6 +1100,7 @@ async fn context_candidate_links_include_safe_global_when_scoped_filters_are_und
             name: "Target".to_string(),
             line_name: "Target Line".to_string(),
             line_id: None,
+            area_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };
@@ -840,6 +1188,7 @@ async fn context_candidate_links_include_safe_global_when_scoped_filters_are_emp
             name: "Target".to_string(),
             line_name: "Target Line".to_string(),
             line_id: None,
+            area_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };

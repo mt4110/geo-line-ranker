@@ -766,6 +766,7 @@ mod tests {
             name: "Target".to_string(),
             line_name: "JR Yamanote Line".to_string(),
             line_id: None,
+            area_id: None,
             latitude: 35.0,
             longitude: 139.0,
         };

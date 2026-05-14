@@ -21,22 +21,25 @@ neighbor or interchange should be materialized as two directed rows when both
 directions are valid.
 
 These tables are not cache state, ranking weights, crawler configuration, or
-dynamic connector loading. Current recommendation behavior remains driven by
-the existing candidate retrieval and ranking path until a reviewed graph-aware
-candidate plan explicitly consumes these reference reads.
+dynamic connector loading. The SQL-only/PostgreSQL candidate path now consumes a
+small graph-aware planning slice: line adjacency can admit nearby adjacent-line
+candidates into the line-aware stage, and area adjacency can admit adjacent-area
+candidates into the neighbor-area stage. Final ranking and scoring still run in
+the Rust ranking core.
 
 The storage crate also exposes `GeoGraph` and `LineGraph` read models built
-from these rows. They are diagnostic/reference components only: use them to
-inspect deterministic area edge ordering, observed area cluster membership,
-station hop metadata, and interchange groups without changing candidate
-expansion or score math.
+from these rows. They preserve deterministic area edge ordering, observed area
+cluster membership, station hop metadata, and interchange groups. Candidate
+expansion uses their normalized adjacent id sets only after origin checks pass;
+it does not use graph rows as ranking weights.
 
 Dedicated candidate plan trace rows may include `graph_diagnostics` with a
 `diagnostic_read_only` mode. That payload records the resolved graph origins,
 graph read status, edge counts, capped deterministic samples, and
-origin-mismatch/load warnings. It is for plan inspection and audit only;
-current candidate expansion still follows the existing fallback ladder and does
-not consume adjacency edges.
+origin-mismatch/load warnings. The diagnostics payload stays compact and
+read-only; `candidate_expansion_behavior = graph_aware_candidate_plan` means
+the production plan can consume the same graph read model, not that diagnostics
+store expanded candidate ids.
 
 ## Session context summaries
 
@@ -866,6 +869,11 @@ Recommendation cache keys include:
 - serialized request hash
 
 Placement remains part of the serialized request payload, so cache entries stay separated per placement. Changing the retrieval window or fallback neighbor-distance cap also produces a different cache key, so rollout changes do not wait for TTL expiry before taking effect.
+
+Graph adjacency rows are reference data, not cache-key material. After changing
+`area_adjacencies` or `line_adjacencies` in an environment with Redis enabled,
+invalidate recommendation cache so graph-aware candidate expansion is reflected
+immediately instead of waiting for TTL expiry.
 
 Inspect Redis cache keys:
 

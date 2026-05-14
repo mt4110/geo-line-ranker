@@ -9,6 +9,24 @@ use serde_json::Value;
 
 use crate::{ensure_non_empty, AreaAdjacency, LineAdjacency};
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct CandidatePlanGraphExpansion {
+    pub area: Option<CandidatePlanAreaGraphExpansion>,
+    pub line: Option<CandidatePlanLineGraphExpansion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CandidatePlanAreaGraphExpansion {
+    pub origin_area_id: String,
+    pub adjacent_area_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CandidatePlanLineGraphExpansion {
+    pub origin_line_id: String,
+    pub adjacent_line_ids: Vec<String>,
+}
+
 /// Canonical read-only geographic graph component backed by area adjacency rows.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GeoGraph {

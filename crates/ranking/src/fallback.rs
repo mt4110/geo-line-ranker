@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use config::{PlacementProfile, RankingProfiles};
+use config::RankingProfiles;
 use domain::{FallbackStage, RankingDataset, RankingQuery, School, SchoolStationLink, Station};
 
-use crate::graph::CandidateGraph;
+use crate::graph::{CandidateGraph, CandidateGraphExpansion};
 use crate::RankingEngine;
 
 struct RankingLookups<'a> {
@@ -34,7 +34,7 @@ impl RankingEngine {
         dataset: &RankingDataset,
         query: &RankingQuery,
         target_station: &Station,
-        placement_profile: &PlacementProfile,
+        graph_expansion: &CandidateGraphExpansion,
     ) -> Vec<(FallbackStage, Vec<SchoolStationLink>)> {
         let lookups = RankingLookups::new(dataset);
 
@@ -45,9 +45,9 @@ impl RankingEngine {
                     dataset,
                     query,
                     target_station,
-                    placement_profile,
                     &FallbackStage::StrictStation,
                     &lookups,
+                    graph_expansion,
                 ),
             ),
             (
@@ -56,9 +56,9 @@ impl RankingEngine {
                     dataset,
                     query,
                     target_station,
-                    placement_profile,
                     &FallbackStage::SameLine,
                     &lookups,
+                    graph_expansion,
                 ),
             ),
             (
@@ -67,9 +67,9 @@ impl RankingEngine {
                     dataset,
                     query,
                     target_station,
-                    placement_profile,
                     &FallbackStage::SameCity,
                     &lookups,
+                    graph_expansion,
                 ),
             ),
             (
@@ -78,9 +78,9 @@ impl RankingEngine {
                     dataset,
                     query,
                     target_station,
-                    placement_profile,
                     &FallbackStage::SamePrefecture,
                     &lookups,
+                    graph_expansion,
                 ),
             ),
             (
@@ -89,9 +89,9 @@ impl RankingEngine {
                     dataset,
                     query,
                     target_station,
-                    placement_profile,
                     &FallbackStage::NeighborArea,
                     &lookups,
+                    graph_expansion,
                 ),
             ),
             (
@@ -100,9 +100,9 @@ impl RankingEngine {
                     dataset,
                     query,
                     target_station,
-                    placement_profile,
                     &FallbackStage::SafeGlobalPopular,
                     &lookups,
+                    graph_expansion,
                 ),
             ),
         ]
@@ -113,16 +113,17 @@ impl RankingEngine {
         dataset: &RankingDataset,
         query: &RankingQuery,
         target_station: &Station,
-        _placement_profile: &PlacementProfile,
         stage: &FallbackStage,
         lookups: &RankingLookups<'_>,
+        graph_expansion: &CandidateGraphExpansion,
     ) -> Vec<SchoolStationLink> {
         let context = query.context.as_ref();
-        let graph = CandidateGraph::new(
+        let graph = CandidateGraph::new_with_expansion(
             query,
             target_station,
             self.profiles.fallback.neighbor_distance_cap_meters,
             self.neighbor_max_hops(query.placement),
+            graph_expansion,
         );
         let area_hint_was_ignored = context
             .map(|context| {
@@ -156,8 +157,8 @@ impl RankingEngine {
                 let Some(school) = lookups.schools_by_id.get(link.school_id.as_str()) else {
                     return false;
                 };
-                let line_evidence = graph.line_evidence(candidate_station, link);
-                let is_same_line = line_evidence.is_same_line;
+                let graph_evidence = graph.evidence(target_station, candidate_station, link);
+                let is_same_line = graph_evidence.counts_as_same_line_candidate();
                 let school_prefecture_matches = |prefecture: &str| {
                     school
                         .prefecture_name
@@ -186,9 +187,8 @@ impl RankingEngine {
                             && !is_same_line
                             && !is_same_city
                             && !is_same_prefecture
-                            && graph
-                                .evidence(target_station, candidate_station, link)
-                                .within_neighbor_distance_cap
+                            && (graph_evidence.within_neighbor_distance_cap
+                                || graph_evidence.area_match.is_adjacent_area)
                     }
                     FallbackStage::SafeGlobalPopular => true,
                 }

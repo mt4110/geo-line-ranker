@@ -92,6 +92,13 @@ For line and neighbor-area stages, insufficient-stage reason codes may use the
 plan evaluated line identity, hop evidence, or the neighbor distance cap before
 falling through to a later stage; they do not imply ML/vector retrieval.
 
+In SQL-only/PostgreSQL retrieval, the candidate plan can also consume
+deterministic graph expansion hints from `line_adjacencies` and
+`area_adjacencies`. Line graph edges may add nearby adjacent-line candidates to
+the `same_line` stage, and area graph edges may add adjacent-area candidates to
+the `neighbor_area` stage. Final scoring still runs only in the Rust ranking
+core.
+
 Candidate plan stage statuses are:
 
 - `selected`: the stage used for scoring
