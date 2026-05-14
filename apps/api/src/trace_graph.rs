@@ -184,7 +184,7 @@ fn resolve_line_graph_origin<'a>(
     context: &'a context::RankingContext,
     target_station: &'a Station,
 ) -> Option<GraphDiagnosticOrigin<'a>> {
-    context
+    if let Some(origin) = context
         .line
         .as_ref()
         .and_then(|line| line.line_id.as_deref())
@@ -192,15 +192,19 @@ fn resolve_line_graph_origin<'a>(
             id: line_id,
             source: "context_line",
         })
-        .or_else(|| {
-            target_station
-                .line_id
-                .as_deref()
-                .map(|line_id| GraphDiagnosticOrigin {
-                    id: line_id,
-                    source: "target_station_line",
-                })
-        })
+    {
+        return Some(origin);
+    }
+
+    context.station_id().and_then(|_| {
+        target_station
+            .line_id
+            .as_deref()
+            .map(|line_id| GraphDiagnosticOrigin {
+                id: line_id,
+                source: "target_station_line",
+            })
+    })
 }
 
 fn candidate_plan_graph_diagnostics_payload(
@@ -378,7 +382,7 @@ mod tests {
 
     use super::{
         build_candidate_plan_graph_diagnostics_for_trace, candidate_plan_graph_diagnostics_payload,
-        GraphDiagnosticOrigin, GRAPH_DIAGNOSTIC_SAMPLE_LIMIT,
+        resolve_line_graph_origin, GraphDiagnosticOrigin, GRAPH_DIAGNOSTIC_SAMPLE_LIMIT,
     };
 
     #[tokio::test]
@@ -404,6 +408,41 @@ mod tests {
         .await;
 
         assert!(diagnostics.is_none());
+    }
+
+    #[test]
+    fn line_graph_origin_requires_line_or_station_intent() {
+        let target_station = Station {
+            id: "st_tamachi".to_string(),
+            name: "Tamachi".to_string(),
+            line_name: "Yamanote".to_string(),
+            line_id: Some("line_yamanote".to_string()),
+            area_id: Some("area_tokyo_minato".to_string()),
+            latitude: 35.645,
+            longitude: 139.747,
+        };
+        let mut area_context = context::RankingContext::default_safe();
+        area_context.context_source = context::ContextSource::RequestArea;
+        area_context.area = Some(context::AreaContext {
+            country: "JP".to_string(),
+            prefecture_code: None,
+            prefecture_name: Some("Tokyo".to_string()),
+            city_code: None,
+            city_name: Some("Minato".to_string()),
+        });
+
+        assert!(resolve_line_graph_origin(&area_context, &target_station).is_none());
+
+        area_context.context_source = context::ContextSource::RequestStation;
+        area_context.station = Some(context::StationContext {
+            station_id: "st_tamachi".to_string(),
+            station_name: "Tamachi".to_string(),
+        });
+
+        let origin =
+            resolve_line_graph_origin(&area_context, &target_station).expect("station origin");
+        assert_eq!(origin.id, "line_yamanote");
+        assert_eq!(origin.source, "target_station_line");
     }
 
     #[test]

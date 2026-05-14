@@ -140,10 +140,18 @@ fn candidate_plan_line_graph_origin_id(
     target_station: &Station,
     context: &RankingContext,
 ) -> Option<String> {
-    match context.line.as_ref() {
-        Some(line) => non_empty(line.line_id.as_deref()).map(str::to_string),
-        None => non_empty(target_station.line_id.as_deref()).map(str::to_string),
+    if let Some(line_id) = context
+        .line
+        .as_ref()
+        .and_then(|line| non_empty(line.line_id.as_deref()))
+    {
+        return Some(line_id.to_string());
     }
+
+    context
+        .station_id()
+        .and_then(|_| non_empty(target_station.line_id.as_deref()))
+        .map(str::to_string)
 }
 
 fn normalized_area_context(area_input: &AreaContextInput) -> AreaContext {

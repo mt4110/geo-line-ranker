@@ -656,6 +656,103 @@ async fn line_context_candidate_links_fall_back_to_line_name_when_station_line_i
 }
 
 #[tokio::test]
+async fn area_context_candidate_links_do_not_inherit_representative_line_graph(
+) -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("geo_line_ranker_area_no_line_graph").await
+    else {
+        eprintln!(
+            "skipping storage-postgres area no line graph test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(&database_url, repo_root().join("storage/migrations/postgres")).await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        client
+            .batch_execute(
+                "INSERT INTO lines (line_id, line_name, country_code) VALUES
+                    ('line_target', 'Target Line', 'JP'),
+                    ('line_adjacent', 'Adjacent Line', 'JP');
+
+                 INSERT INTO schools (id, name, area, school_type, group_id) VALUES
+                    ('school_direct', 'Direct School', 'Target Ward', 'high_school', 'group_direct'),
+                    ('school_adjacent', 'Adjacent School', 'Other Ward', 'high_school', 'group_adjacent');
+
+                 INSERT INTO stations (id, name, line_name, latitude, longitude, line_id) VALUES
+                    ('st_target', 'Target', 'Target Line', 35.0, 139.0, 'line_target'),
+                    ('st_adjacent', 'Adjacent', 'Adjacent Line', 35.0003, 139.0003, 'line_adjacent');
+
+                 INSERT INTO line_adjacencies (
+                    from_line_id, to_line_id, adjacency_kind, interchange_station_id,
+                    station_hop_count, requires_transfer
+                 ) VALUES (
+                    'line_target', 'line_adjacent', 'interchange', 'st_target', 1, TRUE
+                 );
+
+                 INSERT INTO school_station_links
+                    (school_id, station_id, walking_minutes, distance_meters, hop_distance, line_name)
+                 VALUES
+                    ('school_direct', 'st_target', 4, 250, 0, 'Target Line'),
+                    ('school_adjacent', 'st_adjacent', 8, 650, 1, 'Adjacent Line');",
+            )
+            .await?;
+
+        let repo = PgRepository::new(&database_url);
+        let target_station = Station {
+            id: "st_target".to_string(),
+            name: "Target".to_string(),
+            line_name: "Target Line".to_string(),
+            line_id: Some("line_target".to_string()),
+            area_id: None,
+            latitude: 35.0,
+            longitude: 139.0,
+        };
+        let context = RankingContext {
+            context_source: ContextSource::RequestArea,
+            confidence: 0.95,
+            area: Some(AreaContext {
+                country: "JP".to_string(),
+                prefecture_code: None,
+                prefecture_name: None,
+                city_code: None,
+                city_name: Some("Target Ward".to_string()),
+            }),
+            line: None,
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let candidate_links = repo
+            .load_context_candidate_links(&target_station, &context, 10, 1, 1_000.0, 1)
+            .await?;
+
+        assert_eq!(
+            candidate_links
+                .iter()
+                .map(|link| link.school_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school_direct"]
+        );
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
+#[tokio::test]
 async fn line_context_station_lookup_falls_back_to_line_name_when_station_line_id_is_null(
 ) -> anyhow::Result<()> {
     let Ok((admin_database_url, database_url, database_name)) =
