@@ -101,12 +101,15 @@ runtime path. Profile manifests now declare content-kind identifiers through a
 profile-owned `content_kinds` registry and expose runtime refs through
 `supported_content_kinds`, while `ContentKind::Article` remains a compatibility
 adapter for the current response/config reservation. Active profile packs must
-keep `article_support: reserved`, must not list `article` in
+keep `article_support: reserved`. They may list `article` in the
+`content_kinds` registry as a future kind, but must not list it in
 `supported_content_kinds`, and placement configs must not reference `article`
 in `enabled_content_kinds`, `score_boosts`, or `content_kind_max_ratio`.
-Turning it on requires a small reviewed slice that adds an article read model,
-dataset loading, deterministic scoring, diversity tests, fixtures, and public
-API/OpenAPI docs if the response shape changes.
+Validation and doctor output separate registry-only kinds from the currently
+executable `school,event` runtime boundary. Turning it on requires a small
+reviewed slice that adds an article read model, dataset loading, deterministic
+scoring, diversity tests, fixtures, and public API/OpenAPI docs if the response
+shape changes.
 
 Per-placement config currently controls:
 

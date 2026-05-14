@@ -30,7 +30,7 @@ pub const PROFILE_FIXTURE_SET_SCHEMA_VERSION: u32 = 1;
 pub const PROFILE_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
 pub const SOURCE_ID_RULE_DESCRIPTION: &str = PROFILE_ID_RULE_DESCRIPTION;
 pub const CONTENT_KIND_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, underscores, and hyphens, and must not start or end with a separator";
-const ARTICLE_CONTENT_KIND_ID: &str = "article";
+const RUNTIME_EXECUTABLE_CONTENT_KIND_IDS: &[&str] = &["school", "event"];
 
 fn required_runtime_placements() -> [PlacementKind; 4] {
     [
@@ -713,6 +713,8 @@ pub struct ProfilePackLintFile {
     pub compatibility_level: ProfileCompatibilityLevel,
     pub content_kind_registry: Vec<ContentKindRef>,
     pub supported_content_kinds: Vec<ContentKindRef>,
+    pub runtime_executable_content_kinds: Vec<ContentKindRef>,
+    pub registry_only_content_kinds: Vec<ContentKindRef>,
     pub placements: Vec<PlacementKind>,
     pub reason_catalog_locale_count: usize,
     pub reason_count: usize,
@@ -740,6 +742,12 @@ pub struct ProfilePackRuntimeSelection {
     pub ranking_config_dir: PathBuf,
     pub fixture_set_id: Option<String>,
     pub fixture_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProfileContentKindRuntimeBoundary {
+    pub runtime_executable_content_kinds: Vec<ContentKindRef>,
+    pub registry_only_content_kinds: Vec<ContentKindRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1425,6 +1433,7 @@ fn resolve_runtime_ranking_config_dir(
         )
     })?;
     let ranking_profiles = RankingProfiles::load_from_dir(&ranking_config_dir)?;
+    validate_profile_content_kind_runtime_boundary(profile_pack_manifest, manifest)?;
     validate_profile_ranking_content_kinds(profile_pack_manifest, manifest, &ranking_profiles)?;
     Ok(ranking_config_dir)
 }
@@ -1590,6 +1599,7 @@ fn lint_loaded_profile_pack_file(
     } else {
         lint_ranking_config_dir_with_profiles(&ranking_config_dir)?.1
     };
+    let content_kind_runtime = validate_profile_content_kind_runtime_boundary(path, manifest)?;
     validate_profile_ranking_content_kinds(path, manifest, &ranking_profiles)?;
 
     let ranking_config_dir = ranking_config_dir.canonicalize().with_context(|| {
@@ -1707,6 +1717,8 @@ fn lint_loaded_profile_pack_file(
         compatibility_level: manifest.compatibility_level,
         content_kind_registry: declared_content_kind_registry(manifest),
         supported_content_kinds: manifest.supported_content_kinds.clone(),
+        runtime_executable_content_kinds: content_kind_runtime.runtime_executable_content_kinds,
+        registry_only_content_kinds: content_kind_runtime.registry_only_content_kinds,
         placements: manifest.placements.clone(),
         reason_catalog_locale_count,
         reason_count: reason_catalog.reasons.len(),
@@ -1764,6 +1776,60 @@ fn load_profile_reason_catalog_for_manifest(
     let (reason_catalog_path, reason_catalog) =
         primary_catalog.with_context(|| "selected reason_catalog was not loaded".to_string())?;
     Ok((reason_catalog_path, reason_catalog, locale_count))
+}
+
+fn validate_profile_content_kind_runtime_boundary(
+    path: &Path,
+    manifest: &ProfilePackManifest,
+) -> Result<ProfileContentKindRuntimeBoundary> {
+    let boundary = profile_content_kind_runtime_boundary(manifest);
+    let non_executable_content_kinds = manifest
+        .supported_content_kinds
+        .iter()
+        .filter(|kind| !is_runtime_executable_content_kind(kind.as_str()))
+        .map(|kind| kind.as_str())
+        .collect::<Vec<_>>();
+
+    ensure!(
+        non_executable_content_kinds.is_empty(),
+        "profile pack {} supported_content_kinds contains non-executable content kind(s) {}; current runtime executes only {}. Keep future kinds in content_kinds until read-model, ranking, and response support exists",
+        path.display(),
+        non_executable_content_kinds.join(","),
+        RUNTIME_EXECUTABLE_CONTENT_KIND_IDS.join(",")
+    );
+
+    Ok(boundary)
+}
+
+fn profile_content_kind_runtime_boundary(
+    manifest: &ProfilePackManifest,
+) -> ProfileContentKindRuntimeBoundary {
+    let supported_content_kinds = manifest
+        .supported_content_kinds
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect::<BTreeSet<_>>();
+
+    let runtime_executable_content_kinds = manifest
+        .supported_content_kinds
+        .iter()
+        .filter(|kind| is_runtime_executable_content_kind(kind.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let registry_only_content_kinds = declared_content_kind_registry(manifest)
+        .into_iter()
+        .filter(|kind| !supported_content_kinds.contains(kind.as_str()))
+        .collect::<Vec<_>>();
+
+    ProfileContentKindRuntimeBoundary {
+        runtime_executable_content_kinds,
+        registry_only_content_kinds,
+    }
+}
+
+fn is_runtime_executable_content_kind(content_kind: &str) -> bool {
+    RUNTIME_EXECUTABLE_CONTENT_KIND_IDS.contains(&content_kind)
 }
 
 fn validate_profile_ranking_content_kinds(
@@ -1994,15 +2060,6 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
         manifest.article_support == ArticleSupport::Reserved,
         "profile pack {} article_support=implemented is reserved until article candidates are implemented",
         path.display()
-    );
-    ensure!(
-        !manifest
-            .supported_content_kinds
-            .iter()
-            .any(|kind| kind.as_str() == ARTICLE_CONTENT_KIND_ID),
-        "profile pack {} cannot enable article while article_support is {}",
-        path.display(),
-        manifest.article_support.as_str()
     );
 
     let mut seen_context_inputs = BTreeSet::new();
@@ -3207,6 +3264,182 @@ article_support: reserved
             vec!["place", "civic_event"]
         );
         assert_eq!(manifest.supported_content_kinds[0].as_str(), "place");
+    }
+
+    #[test]
+    fn lints_registry_only_article_as_non_runtime_content_kind() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+  - article
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let lint = lint_profile_pack_file(profile_dir.join("profile.yaml")).expect("profile lint");
+
+        assert_eq!(
+            lint.content_kind_registry
+                .iter()
+                .map(|kind| kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school", "event", "article"]
+        );
+        assert_eq!(
+            lint.runtime_executable_content_kinds
+                .iter()
+                .map(|kind| kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school", "event"]
+        );
+        assert_eq!(
+            lint.registry_only_content_kinds
+                .iter()
+                .map(|kind| kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["article"]
+        );
+    }
+
+    #[test]
+    fn lints_registry_only_custom_content_kind() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+  - civic_notice
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let lint = lint_profile_pack_file(profile_dir.join("profile.yaml")).expect("profile lint");
+
+        assert_eq!(
+            lint.runtime_executable_content_kinds
+                .iter()
+                .map(|kind| kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["school", "event"]
+        );
+        assert_eq!(
+            lint.registry_only_content_kinds
+                .iter()
+                .map(|kind| kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["civic_notice"]
+        );
+    }
+
+    #[test]
+    fn runtime_validation_rejects_non_executable_supported_content_kind() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+  - place
+supported_content_kinds:
+  - school
+  - event
+  - place
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = lint_profile_pack_file(profile_dir.join("profile.yaml"))
+            .expect_err("non-executable content kind");
+        let rendered = format!("{error:#}");
+        assert!(rendered
+            .contains("supported_content_kinds contains non-executable content kind(s) place"));
+        assert!(rendered.contains("current runtime executes only school,event"));
+
+        let runtime_error =
+            resolve_profile_pack_runtime_selection(&profiles_dir, "example-profile", None)
+                .expect_err("non-executable content kind at runtime");
+        assert!(format!("{runtime_error:#}")
+            .contains("supported_content_kinds contains non-executable content kind(s) place"));
     }
 
     #[test]
@@ -4627,7 +4860,7 @@ article_support: reserved
     }
 
     #[test]
-    fn rejects_article_without_profile_support() {
+    fn rejects_supported_article_until_runtime_support_exists() {
         let temp = tempdir().expect("tempdir");
         let profile_dir = temp.path().join("profiles").join("example-profile");
         let ranking_dir = temp.path().join("ranking");
@@ -4672,7 +4905,8 @@ fixtures:
         .expect("profile");
 
         let error = lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("article");
-        assert!(format!("{error:#}").contains("cannot enable article"));
+        assert!(format!("{error:#}")
+            .contains("supported_content_kinds contains non-executable content kind(s) article"));
     }
 
     #[test]
