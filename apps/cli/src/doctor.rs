@@ -9,9 +9,7 @@ use config::{
     ProfilePackLintFile, ProfilePackLintSummary, RankingConfigLintFile, RankingConfigLintSummary,
 };
 use context::ContextSource;
-use crawler_core::{
-    lint_manifest_file as lint_crawl_manifest_file, load_manifest as load_crawl_manifest,
-};
+use crawler_core::lint_manifest_file as lint_crawl_manifest_file;
 use domain::SchoolStationLink;
 use generic_csv::lint_source_manifest_file;
 use serde::Serialize;
@@ -1369,16 +1367,8 @@ fn ingest_quality_doctor_connector(
                     connector.manifest_path.display()
                 )
             })?;
-            let manifest = load_crawl_manifest(&connector.manifest_path).with_context(|| {
-                format!(
-                    "failed to load profile {profile_id} crawler_manifest connector source_id={} manifest {}",
-                    connector.source_id.as_deref().unwrap_or("unknown"),
-                    connector.manifest_path.display()
-                )
-            })?;
             crawler_target_count = Some(lint.target_count);
-            crawler_source_maturity =
-                Some(manifest.effective_source_maturity().as_str().to_string());
+            crawler_source_maturity = Some(lint.source_maturity.as_str().to_string());
             crawler_expected_shape = lint.expected_shape.map(|shape| shape.as_str().to_string());
             manifest_lint = "crawler_manifest_lint".to_string();
         }

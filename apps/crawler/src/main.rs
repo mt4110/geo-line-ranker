@@ -496,13 +496,14 @@ fn format_manifest_lint_summary(summary: &CrawlManifestLintSummary) -> String {
     )];
     lines.extend(summary.files.iter().map(|file| {
         format!(
-            "- {} schema_version={} kind={} manifest_version={} source_id={} parser_key={} expected_shape={} targets={}",
+            "- {} schema_version={} kind={} manifest_version={} source_id={} parser_key={} source_maturity={} expected_shape={} targets={}",
             file.path.display(),
             file.schema_version,
             file.kind.as_str(),
             file.manifest_version,
             file.source_id,
             file.parser_key,
+            file.source_maturity,
             file.expected_shape
                 .map(|shape| shape.to_string())
                 .unwrap_or_else(|| "-".to_string()),

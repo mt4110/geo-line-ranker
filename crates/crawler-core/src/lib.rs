@@ -167,6 +167,7 @@ pub struct CrawlManifestLintFile {
     pub kind: CrawlManifestKind,
     pub manifest_version: u32,
     pub parser_key: String,
+    pub source_maturity: SourceMaturity,
     pub expected_shape: Option<ParserExpectedShape>,
     pub target_count: usize,
 }
@@ -471,6 +472,7 @@ fn lint_manifest_file_with_registry(
         );
     }
     let expected_shape = manifest.effective_expected_shape(Some(parser));
+    let source_maturity = manifest.effective_source_maturity();
     validate_fixture_paths(path, &manifest, expected_shape)?;
     Ok(CrawlManifestLintFile {
         path: path.to_path_buf(),
@@ -479,6 +481,7 @@ fn lint_manifest_file_with_registry(
         kind: manifest.kind,
         manifest_version: manifest.manifest_version,
         parser_key: manifest.parser_key,
+        source_maturity,
         expected_shape,
         target_count: manifest.targets.len(),
     })
@@ -3276,6 +3279,7 @@ targets:
         let summary = lint_manifest_dir(temp.path().join("configs")).expect("lint");
         assert_eq!(summary.files.len(), 1);
         assert_eq!(summary.files[0].source_id, "custom-example");
+        assert_eq!(summary.files[0].source_maturity, SourceMaturity::LiveReady);
         assert_eq!(summary.files[0].target_count, 1);
         assert_eq!(
             summary.files[0].expected_shape,
