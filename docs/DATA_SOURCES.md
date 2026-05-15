@@ -85,13 +85,17 @@ Profile connector registry model:
    current file-import runtime executes only `field_mapping: event_v1`; other
    valid mapping refs fail
    validation, doctor, and import rather than becoming silent half-support.
+   The profile manifest checksum lineage is recorded on the resulting
+   `import_runs` row together with connector type, source class, manifest kind,
+   manifest schema version, field mapping, and bounded connector evidence.
    Crawler manifests still use the crawler commands.
 9. `cargo run -p cli -- doctor ingest-quality` is DB-free coverage evidence for
    this registry. It reuses profile validation, lints declared source
    manifests, archive manifests, and crawler manifests, and reports source-class,
    manifest-kind, manifest schema-version, runtime-executable mapping,
    source-manifest file, archive file/format, crawler target, and
-   safety-boundary counts without importing data or making live crawl requests.
+   safety-boundary counts plus the run-lineage field contract without importing
+   data or making live crawl requests.
 
 The stable connector matrix is documented in
 [Connector Manifest Schemas](CONNECTOR_MANIFESTS.md). The matrix currently
@@ -116,8 +120,8 @@ normalized to an empty object; scalar or array `details` values are rejected.
   `cargo run -p cli -- fixtures doctor --path ...` before trusting a changed
   fixture set.
 - Production usage should point manifests at separately managed source files.
-- Provenance for each run lives in `source_manifests`, `import_runs`, `import_run_files`, and `import_reports`.
-- Crawl provenance for allowlist sources lives in `source_manifests`, `crawl_runs`, `crawl_fetch_logs`, `crawl_parse_reports`, and `crawl_dedupe_reports`.
+- Provenance for each run lives in `source_manifests`, `import_runs`, `import_run_files`, and `import_reports`. Profile-source imports also link `import_runs.profile_id` and `import_runs.profile_manifest_lineage_id` to `profile_pack_manifest_lineage`.
+- Crawl provenance for allowlist sources lives in `source_manifests`, `crawl_runs`, `crawl_fetch_logs`, `crawl_parse_reports`, and `crawl_dedupe_reports`. `crawl_runs` has the same nullable profile/connector lineage columns for profile-aware evidence, while crawler execution remains crawler-command-only.
 - Crawl manifests can declare `source_maturity` and `expected_shape` so operators can separate `live_ready`, `policy_blocked`, and `parser_only` sources while keeping doctor checks shape-aware.
 - Crawl targets may declare `fixture_path` so `crawler doctor` and manifest lint
   can verify parser shape against committed local HTML/JSON without making live

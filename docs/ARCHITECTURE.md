@@ -152,14 +152,15 @@ The ranker may return fewer than the requested limit when the hard caps would ot
 - Profile-declared one-shot imports can be run through
   `cargo run -p cli -- import profile-source --source-id ...`, which resolves
   local connector paths and the deterministic `event_v1` field mapping from the
-  selected profile pack.
+  selected profile pack. Profile-source runs record the selected profile
+  manifest lineage and connector metadata on `import_runs`.
 - Raw CSV/NDJSON files are checksum-staged under `.storage/raw/<source-id>/...`.
 - The importer uses stable logical source keys such as `event-csv` and `event-ndjson` so renamed operational exports still deactivate stale rows from the same feed.
 - Import success and failure are recorded in `import_runs`, `import_run_files`, and `import_reports`.
 - Allowlist crawl uses `cargo run -p crawler -- fetch|parse --manifest ...`.
 - Fetch writes raw HTML into `.storage/raw/<source_id>/<checksum>/...`.
 - Parse uses the registry-selected parser, records parse failures explicitly, dedupes deterministic event IDs, and imports rows into `events` as `source_type = 'crawl'` with manifest `source_id` as the stable source key. Parser details such as detail, official, or apply URLs are preserved in `events.details`.
-- Crawl success and failure are recorded in `crawl_runs`, `crawl_fetch_logs`, `crawl_parse_reports`, and `crawl_dedupe_reports`.
+- Crawl success and failure are recorded in `crawl_runs`, `crawl_fetch_logs`, `crawl_parse_reports`, and `crawl_dedupe_reports`. `crawl_runs` carries the same nullable profile/connector lineage fields for operator evidence, without making profile packs or crawling mandatory.
 
 ## Workspace Crate Map
 

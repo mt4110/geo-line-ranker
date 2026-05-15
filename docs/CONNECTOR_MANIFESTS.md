@@ -43,7 +43,8 @@ Profile validation resolves connector paths and checks the stable matrix:
 `doctor profile-pack` reports the stable schema contract version and every
 schema row. `doctor ingest-quality` reports the same schema contract plus actual
 coverage counts for source classes, manifest kinds, manifest schema versions,
-field mappings, archive shape, crawler shape, and safety flags. Both are
+field mappings, archive shape, crawler shape, safety flags, and the run-lineage
+fields available on `import_runs` / `crawl_runs`. Both are
 DB-free by default and make no live crawl requests; the profile-pack doctor with
 `--persist` additionally writes profile registry evidence to PostgreSQL.
 
@@ -52,9 +53,22 @@ cargo run -p cli -- doctor profile-pack
 cargo run -p cli -- doctor ingest-quality
 ```
 
+## Run Lineage
+
+`import profile-source --source-id ...` upserts the selected profile manifest
+into `profile_pack_manifest_lineage`, then records the import run with nullable
+lineage columns: `profile_id`, `profile_manifest_lineage_id`,
+`connector_type`, `source_class`, `manifest_kind`, `manifest_schema_version`,
+`field_mapping`, and `lineage_evidence`. Existing explicit import commands keep
+those columns empty.
+
+`crawl_runs` carries the same nullable columns for future profile-aware crawler
+entry points, but crawler execution still goes through the existing crawler
+commands and allowlist policy. This is evidence plumbing only; it does not add
+dynamic loading, arbitrary mapping execution, or live feed behavior.
+
 ## Deferred
 
 The stable schema contract intentionally does not implement dynamic connector
 loading, arbitrary field mapping execution, arbitrary content-kind execution,
-context-aware ingest lineage persistence, live feed fetching, or MySQL write
-support.
+live feed fetching, or MySQL write support.

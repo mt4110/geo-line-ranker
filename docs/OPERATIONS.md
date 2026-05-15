@@ -447,6 +447,8 @@ Operational notes:
 
 - raw input is checksum-staged under `.storage/raw/event-csv/...`
 - import audit is written to `import_runs`, `import_run_files`, and `import_reports`
+- profile-source imports additionally populate nullable lineage columns on
+  `import_runs` so the run can be traced back to `profile_pack_manifest_lineage`
 - `starts_at` accepts ISO-8601 date (`YYYY-MM-DD`) or RFC3339 timestamp and is stored as `TIMESTAMPTZ` after import
 - repeated import of the same logical `event-csv` source is idempotent, even when the CSV file path changes
 - rows no longer present in the same logical `event-csv` source are marked `is_active = false`
@@ -454,7 +456,20 @@ Operational notes:
 Inspect recent event imports:
 
 ```sql
-SELECT id, source_id, status, total_rows, started_at, completed_at
+SELECT
+    id,
+    source_id,
+    profile_id,
+    profile_manifest_lineage_id,
+    connector_type,
+    source_class,
+    manifest_kind,
+    manifest_schema_version,
+    field_mapping,
+    status,
+    total_rows,
+    started_at,
+    completed_at
 FROM import_runs
 WHERE source_id = 'event-csv'
 ORDER BY id DESC
@@ -572,7 +587,19 @@ Typical health output includes:
 Inspect recent crawl runs:
 
 ```sql
-SELECT id, source_id, parser_key, status, fetched_targets, parsed_rows, imported_rows
+SELECT
+    id,
+    source_id,
+    profile_id,
+    profile_manifest_lineage_id,
+    connector_type,
+    source_class,
+    manifest_kind,
+    parser_key,
+    status,
+    fetched_targets,
+    parsed_rows,
+    imported_rows
 FROM crawl_runs
 ORDER BY id DESC
 LIMIT 20;

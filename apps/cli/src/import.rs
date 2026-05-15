@@ -4,7 +4,8 @@ use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, FixedOffset, NaiveDate};
 use config::{
     load_and_lint_profile_pack_file, AppSettings, ProfileConnectorFieldMapping,
-    ProfileConnectorRegistryEntry, ProfileConnectorType, ProfilePackRegistry, DEFAULT_PROFILE_ID,
+    ProfileConnectorRegistryEntry, ProfileConnectorType, ProfilePackLintFile, ProfilePackManifest,
+    ProfilePackRegistry, DEFAULT_PROFILE_ID,
 };
 use generic_csv::{
     count_csv_rows, is_source_id, load_archive_manifest, load_manifest, read_csv_rows,
@@ -21,12 +22,18 @@ use jp_school::{
 };
 use serde::{de, Deserialize};
 use serde_json::{json, Value};
+use storage::{
+    IngestRunLineageRecord, ProfileCompatibilityStatus, ProfileCompatibilityStatusRecord,
+    ProfileRegistryRepository,
+};
 use storage_postgres::{
-    begin_import_run, derive_school_station_links, finish_import_run, import_event_csv,
-    import_event_ndjson, import_jp_postal, import_jp_rail, import_jp_school_codes,
-    import_jp_school_geodata, record_import_report, EventCsvRecord, ImportReportEntry,
+    begin_import_run_with_lineage, derive_school_station_links, finish_import_run,
+    import_event_csv, import_event_ndjson, import_jp_postal, import_jp_rail,
+    import_jp_school_codes, import_jp_school_geodata, record_import_report, EventCsvRecord,
+    ImportReportEntry, PgRepository,
 };
 
+use crate::profile_persistence::build_profile_manifest_record;
 use crate::repository::{persist_success_reports, register_staged_files, update_file_row_counts};
 
 const EVENT_CSV_PARSER_VERSION: &str = "event-csv-v1";
@@ -76,6 +83,15 @@ pub async fn run_import_command(
     target: ImportTarget,
     manifest_path: impl AsRef<Path>,
 ) -> Result<CommandSummary> {
+    run_import_command_with_lineage(settings, target, manifest_path, None).await
+}
+
+async fn run_import_command_with_lineage(
+    settings: &AppSettings,
+    target: ImportTarget,
+    manifest_path: impl AsRef<Path>,
+    lineage: Option<IngestRunLineageRecord>,
+) -> Result<CommandSummary> {
     let manifest_path = fs::canonicalize(manifest_path.as_ref()).with_context(|| {
         format!(
             "failed to resolve source manifest {}",
@@ -90,11 +106,12 @@ pub async fn run_import_command(
         target.source_id()
     );
     let parser_version = manifest.effective_parser_version(target.default_parser_version());
-    let import_run_id = begin_import_run(
+    let import_run_id = begin_import_run_with_lineage(
         &settings.database_url,
         &manifest_path,
         &manifest,
         &parser_version,
+        lineage.as_ref(),
     )
     .await?;
 
@@ -217,41 +234,57 @@ pub async fn run_profile_source_import(
     let registry = ProfilePackRegistry::new(profiles_path.as_ref());
     let selected_profile_id = registry.selected_profile_id(profile_id, DEFAULT_PROFILE_ID)?;
     let manifest_path = registry.manifest_path_for_profile_id(&selected_profile_id)?;
-    let (_manifest, lint_file) = load_and_lint_profile_pack_file(&manifest_path)?;
+    let (manifest, lint_file) = load_and_lint_profile_pack_file(&manifest_path)?;
     let connector = select_profile_source_connector(
         &lint_file.connector_registry,
         &selected_profile_id,
         source_id,
     )?;
+    let runtime = profile_source_import_runtime(&selected_profile_id, source_id, connector)?;
+    let profile_manifest_lineage_id =
+        persist_profile_source_lineage(settings, &manifest, &lint_file, connector).await?;
+    let lineage = profile_source_import_lineage(
+        &selected_profile_id,
+        profile_manifest_lineage_id,
+        connector,
+    )?;
 
-    match connector.connector_type {
-        ProfileConnectorType::SourceManifest => {
-            let source_id = connector.source_id.as_deref().unwrap_or(source_id);
-            let target = import_target_for_source_id(source_id)?;
-            run_import_command(settings, target, &connector.manifest_path).await
-        }
-        ProfileConnectorType::CsvImport => {
-            ensure_event_v1_mapping(connector)?;
-            let source_id = connector.source_id.as_deref().unwrap_or(source_id);
-            run_event_csv_import_with_source_id(settings, source_id, &connector.manifest_path).await
-        }
-        ProfileConnectorType::NdjsonImport => {
-            ensure_event_v1_mapping(connector)?;
-            let source_id = connector.source_id.as_deref().unwrap_or(source_id);
-            run_event_ndjson_import(settings, &connector.manifest_path, source_id).await
-        }
-        ProfileConnectorType::ArchiveSource => {
-            ensure_event_v1_mapping(connector)?;
-            let source_id = connector.source_id.as_deref().unwrap_or(source_id);
-            run_event_archive_import(settings, source_id, &connector.manifest_path).await
-        }
-        ProfileConnectorType::CrawlerManifest => {
-            anyhow::bail!(
-                "profile {} source_id {} points to crawler_manifest {}; use crawler fetch/parse commands for crawler sources",
-                selected_profile_id,
-                source_id,
-                connector.manifest_path.display()
+    match runtime {
+        ProfileSourceImportRuntime::SourceManifest(target) => {
+            run_import_command_with_lineage(
+                settings,
+                target,
+                &connector.manifest_path,
+                Some(lineage),
             )
+            .await
+        }
+        ProfileSourceImportRuntime::CsvImport { source_id } => {
+            run_event_csv_import_with_source_id_and_lineage(
+                settings,
+                &source_id,
+                &connector.manifest_path,
+                Some(lineage),
+            )
+            .await
+        }
+        ProfileSourceImportRuntime::NdjsonImport { source_id } => {
+            run_event_ndjson_import_with_lineage(
+                settings,
+                &connector.manifest_path,
+                &source_id,
+                Some(lineage),
+            )
+            .await
+        }
+        ProfileSourceImportRuntime::ArchiveSource { source_id } => {
+            run_event_archive_import_with_lineage(
+                settings,
+                &source_id,
+                &connector.manifest_path,
+                Some(lineage),
+            )
+            .await
         }
     }
 }
@@ -267,6 +300,15 @@ async fn run_event_csv_import_with_source_id(
     settings: &AppSettings,
     source_id: &str,
     file_path: impl AsRef<Path>,
+) -> Result<CommandSummary> {
+    run_event_csv_import_with_source_id_and_lineage(settings, source_id, file_path, None).await
+}
+
+async fn run_event_csv_import_with_source_id_and_lineage(
+    settings: &AppSettings,
+    source_id: &str,
+    file_path: impl AsRef<Path>,
+    lineage: Option<IngestRunLineageRecord>,
 ) -> Result<CommandSummary> {
     ensure_import_source_id("event CSV", source_id)?;
     let file_path = fs::canonicalize(file_path.as_ref()).with_context(|| {
@@ -289,11 +331,12 @@ async fn run_event_csv_import_with_source_id(
             format: "csv".to_string(),
         }],
     };
-    let import_run_id = begin_import_run(
+    let import_run_id = begin_import_run_with_lineage(
         &settings.database_url,
         &file_path,
         &manifest,
         EVENT_CSV_PARSER_VERSION,
+        lineage.as_ref(),
     )
     .await?;
 
@@ -371,6 +414,15 @@ pub async fn run_event_ndjson_import(
     file_path: impl AsRef<Path>,
     source_id: &str,
 ) -> Result<CommandSummary> {
+    run_event_ndjson_import_with_lineage(settings, file_path, source_id, None).await
+}
+
+async fn run_event_ndjson_import_with_lineage(
+    settings: &AppSettings,
+    file_path: impl AsRef<Path>,
+    source_id: &str,
+    lineage: Option<IngestRunLineageRecord>,
+) -> Result<CommandSummary> {
     ensure_import_source_id("event NDJSON", source_id)?;
     let file_path = fs::canonicalize(file_path.as_ref()).with_context(|| {
         format!(
@@ -392,11 +444,12 @@ pub async fn run_event_ndjson_import(
             format: "ndjson".to_string(),
         }],
     };
-    let import_run_id = begin_import_run(
+    let import_run_id = begin_import_run_with_lineage(
         &settings.database_url,
         &file_path,
         &manifest,
         EVENT_NDJSON_PARSER_VERSION,
+        lineage.as_ref(),
     )
     .await?;
 
@@ -474,10 +527,11 @@ pub async fn run_event_ndjson_import(
     }
 }
 
-async fn run_event_archive_import(
+async fn run_event_archive_import_with_lineage(
     settings: &AppSettings,
     source_id: &str,
     manifest_path: impl AsRef<Path>,
+    lineage: Option<IngestRunLineageRecord>,
 ) -> Result<CommandSummary> {
     ensure_import_source_id("event archive", source_id)?;
     let manifest_path = fs::canonicalize(manifest_path.as_ref()).with_context(|| {
@@ -490,11 +544,12 @@ async fn run_event_archive_import(
         Ok(manifest) => manifest,
         Err(error) => {
             let preflight_manifest = archive_preflight_audit_manifest(source_id);
-            let import_run_id = begin_import_run(
+            let import_run_id = begin_import_run_with_lineage(
                 &settings.database_url,
                 &manifest_path,
                 &preflight_manifest,
                 EVENT_ARCHIVE_PARSER_VERSION,
+                lineage.as_ref(),
             )
             .await?;
             let _ = record_import_report(
@@ -519,11 +574,12 @@ async fn run_event_archive_import(
     };
     let parser_version = manifest.effective_parser_version(EVENT_ARCHIVE_PARSER_VERSION);
     let audit_manifest = archive_audit_manifest(&manifest, &parser_version);
-    let import_run_id = begin_import_run(
+    let import_run_id = begin_import_run_with_lineage(
         &settings.database_url,
         &manifest_path,
         &audit_manifest,
         &parser_version,
+        lineage.as_ref(),
     )
     .await?;
 
@@ -775,6 +831,136 @@ fn select_profile_source_connector<'a>(
     Ok(matches[0])
 }
 
+#[derive(Debug, Clone)]
+enum ProfileSourceImportRuntime {
+    SourceManifest(ImportTarget),
+    CsvImport { source_id: String },
+    NdjsonImport { source_id: String },
+    ArchiveSource { source_id: String },
+}
+
+fn profile_source_import_runtime(
+    profile_id: &str,
+    requested_source_id: &str,
+    connector: &ProfileConnectorRegistryEntry,
+) -> Result<ProfileSourceImportRuntime> {
+    match connector.connector_type {
+        ProfileConnectorType::SourceManifest => {
+            let source_id = connector
+                .source_id
+                .as_deref()
+                .unwrap_or(requested_source_id);
+            Ok(ProfileSourceImportRuntime::SourceManifest(
+                import_target_for_source_id(source_id)?,
+            ))
+        }
+        ProfileConnectorType::CsvImport => {
+            ensure_event_v1_mapping(connector)?;
+            Ok(ProfileSourceImportRuntime::CsvImport {
+                source_id: connector_source_id(connector, requested_source_id),
+            })
+        }
+        ProfileConnectorType::NdjsonImport => {
+            ensure_event_v1_mapping(connector)?;
+            Ok(ProfileSourceImportRuntime::NdjsonImport {
+                source_id: connector_source_id(connector, requested_source_id),
+            })
+        }
+        ProfileConnectorType::ArchiveSource => {
+            ensure_event_v1_mapping(connector)?;
+            Ok(ProfileSourceImportRuntime::ArchiveSource {
+                source_id: connector_source_id(connector, requested_source_id),
+            })
+        }
+        ProfileConnectorType::CrawlerManifest => {
+            anyhow::bail!(
+                "profile {} source_id {} points to crawler_manifest {}; use crawler fetch/parse commands for crawler sources",
+                profile_id,
+                requested_source_id,
+                connector.manifest_path.display()
+            )
+        }
+    }
+}
+
+fn connector_source_id(
+    connector: &ProfileConnectorRegistryEntry,
+    requested_source_id: &str,
+) -> String {
+    connector
+        .source_id
+        .as_deref()
+        .unwrap_or(requested_source_id)
+        .to_string()
+}
+
+async fn persist_profile_source_lineage(
+    settings: &AppSettings,
+    manifest: &ProfilePackManifest,
+    lint_file: &ProfilePackLintFile,
+    connector: &ProfileConnectorRegistryEntry,
+) -> Result<i64> {
+    let repository = PgRepository::new(&settings.database_url);
+    let record = build_profile_manifest_record(manifest, lint_file)?;
+    let lineage_id = repository.upsert_profile_manifest(&record).await?;
+    repository
+        .record_profile_compatibility_status(&ProfileCompatibilityStatusRecord {
+            profile_id: record.profile_id.clone(),
+            compatibility_level: record.compatibility_level.clone(),
+            status: ProfileCompatibilityStatus::Valid,
+            evidence: json!({
+                "command": "import profile-source",
+                "manifest_lineage_id": lineage_id,
+                "source_id": connector.source_id.as_deref(),
+                "connector_type": connector.connector_type.as_str(),
+                "source_class": connector.source_class.as_str(),
+                "manifest_kind": connector.manifest_kind.as_str(),
+                "manifest_schema_version": connector.manifest_schema_version,
+                "field_mapping": connector.field_mapping.as_ref().map(|mapping| mapping.as_str()),
+                "connector_manifest_path": connector.manifest_path.display().to_string()
+            }),
+        })
+        .await?;
+    Ok(lineage_id)
+}
+
+fn profile_source_import_lineage(
+    profile_id: &str,
+    profile_manifest_lineage_id: i64,
+    connector: &ProfileConnectorRegistryEntry,
+) -> Result<IngestRunLineageRecord> {
+    let manifest_schema_version = connector
+        .manifest_schema_version
+        .map(|version| version.try_into())
+        .transpose()
+        .context("manifest_schema_version is too large for storage")?;
+    let lineage = IngestRunLineageRecord {
+        profile_id: Some(profile_id.to_string()),
+        profile_manifest_lineage_id: Some(profile_manifest_lineage_id),
+        connector_type: Some(connector.connector_type.as_str().to_string()),
+        source_class: Some(connector.source_class.as_str().to_string()),
+        manifest_kind: Some(connector.manifest_kind.clone()),
+        manifest_schema_version,
+        field_mapping: connector
+            .field_mapping
+            .as_ref()
+            .map(|mapping| mapping.as_str().to_string()),
+        lineage_evidence: json!({
+            "source_id": connector.source_id.as_deref(),
+            "profile_compatibility": connector.profile_compatibility.as_str(),
+            "connector_manifest_path": connector.manifest_path.display().to_string(),
+            "safety": {
+                "local_reference_only": connector.safety.local_reference_only,
+                "dynamic_loading_enabled": connector.safety.dynamic_loading_enabled,
+                "live_fetch_default": connector.safety.live_fetch_default,
+                "allowlist_required": connector.safety.allowlist_required
+            }
+        }),
+    };
+    lineage.validate()?;
+    Ok(lineage)
+}
+
 fn import_target_for_source_id(source_id: &str) -> Result<ImportTarget> {
     match source_id {
         "jp-rail" => Ok(ImportTarget::JpRail),
@@ -987,8 +1173,8 @@ mod tests {
 
     use super::{
         archive_audit_manifest, archive_preflight_audit_manifest, ensure_event_v1_mapping,
-        ensure_import_source_id, read_event_ndjson_records, select_archive_event_file,
-        validate_event_csv_records,
+        ensure_import_source_id, profile_source_import_runtime, read_event_ndjson_records,
+        select_archive_event_file, validate_event_csv_records, ProfileSourceImportRuntime,
     };
 
     #[test]
@@ -1026,6 +1212,86 @@ mod tests {
 
         assert!(error.to_string().contains(
             "profile source_id example-events connector csv_import must use field_mapping event_v1"
+        ));
+    }
+
+    #[test]
+    fn profile_import_runtime_rejects_crawler_before_persistence() {
+        let connector = ProfileConnectorRegistryEntry {
+            connector_type: ProfileConnectorType::CrawlerManifest,
+            source_class: ProfileSourceClass::HtmlCrawl,
+            manifest_path: PathBuf::from("custom-example.yaml"),
+            manifest_kind: "crawler_source".to_string(),
+            manifest_schema_version: Some(1),
+            source_id: Some("custom-example".to_string()),
+            field_mapping: None,
+            profile_compatibility: ProfileCompatibilityLevel::Reference,
+            safety: ProfileConnectorSafetyMetadata {
+                local_reference_only: true,
+                dynamic_loading_enabled: false,
+                live_fetch_default: false,
+                allowlist_required: true,
+            },
+        };
+
+        let error = profile_source_import_runtime("school-event-jp", "custom-example", &connector)
+            .expect_err("crawler manifests are not profile-source imports");
+
+        assert!(error.to_string().contains("points to crawler_manifest"));
+    }
+
+    #[test]
+    fn profile_import_runtime_rejects_unmapped_source_manifest_before_persistence() {
+        let connector = ProfileConnectorRegistryEntry {
+            connector_type: ProfileConnectorType::SourceManifest,
+            source_class: ProfileSourceClass::CsvImport,
+            manifest_path: PathBuf::from("custom-source.yaml"),
+            manifest_kind: "import_source".to_string(),
+            manifest_schema_version: Some(1),
+            source_id: Some("custom-source".to_string()),
+            field_mapping: None,
+            profile_compatibility: ProfileCompatibilityLevel::Reference,
+            safety: ProfileConnectorSafetyMetadata {
+                local_reference_only: true,
+                dynamic_loading_enabled: false,
+                live_fetch_default: false,
+                allowlist_required: false,
+            },
+        };
+
+        let error = profile_source_import_runtime("school-event-jp", "custom-source", &connector)
+            .expect_err("source manifests without a CLI importer mapping must be rejected");
+
+        assert!(error
+            .to_string()
+            .contains("uses source_manifest but has no CLI importer mapping"));
+    }
+
+    #[test]
+    fn profile_import_runtime_accepts_mapped_source_manifest() {
+        let connector = ProfileConnectorRegistryEntry {
+            connector_type: ProfileConnectorType::SourceManifest,
+            source_class: ProfileSourceClass::CsvImport,
+            manifest_path: PathBuf::from("jp_rail.yaml"),
+            manifest_kind: "import_source".to_string(),
+            manifest_schema_version: Some(1),
+            source_id: Some("jp-rail".to_string()),
+            field_mapping: None,
+            profile_compatibility: ProfileCompatibilityLevel::Reference,
+            safety: ProfileConnectorSafetyMetadata {
+                local_reference_only: true,
+                dynamic_loading_enabled: false,
+                live_fetch_default: false,
+                allowlist_required: false,
+            },
+        };
+
+        let runtime = profile_source_import_runtime("school-event-jp", "jp-rail", &connector)
+            .expect("mapped source manifest should be executable");
+
+        assert!(matches!(
+            runtime,
+            ProfileSourceImportRuntime::SourceManifest(super::ImportTarget::JpRail)
         ));
     }
 

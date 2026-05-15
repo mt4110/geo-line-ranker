@@ -28,11 +28,11 @@ use sha2::{Digest, Sha256};
 use storage::{
     AreaAdjacency, CandidatePlanAreaGraphExpansion, CandidatePlanGraphExpansion,
     CandidatePlanLineGraphExpansion, ClaimedJob, EvaluationRunRecord, GraphAdjacencyRepository,
-    JobType, LineAdjacency, NewJob, ProfileCompatibilityStatusRecord, ProfileManifestRecord,
-    ProfileRegistryRepository, RecommendationRepository, RecommendationTrace,
-    RecommendationTraceCandidatePlanStage, RecommendationTraceCandidatePlanTrace,
-    RecommendationTraceContextEvidenceSummary, SessionContextSummary,
-    SessionContextSummaryRepository, SnapshotRefreshStats, SnapshotTuning,
+    IngestRunLineageRecord, JobType, LineAdjacency, NewJob, ProfileCompatibilityStatusRecord,
+    ProfileManifestRecord, ProfileRegistryRepository, RecommendationRepository,
+    RecommendationTrace, RecommendationTraceCandidatePlanStage,
+    RecommendationTraceCandidatePlanTrace, RecommendationTraceContextEvidenceSummary,
+    SessionContextSummary, SessionContextSummaryRepository, SnapshotRefreshStats, SnapshotTuning,
 };
 use tokio::sync::OnceCell;
 use tokio_postgres::Row;
@@ -2871,6 +2871,14 @@ pub struct CrawlRunHealthSnapshot {
     pub source_id: String,
     pub parser_key: String,
     pub parser_version: String,
+    pub profile_id: Option<String>,
+    pub profile_manifest_lineage_id: Option<i64>,
+    pub connector_type: Option<String>,
+    pub source_class: Option<String>,
+    pub manifest_kind: Option<String>,
+    pub manifest_schema_version: Option<i32>,
+    pub field_mapping: Option<String>,
+    pub lineage_evidence: Value,
     pub status: String,
     pub fetched_targets: i64,
     pub parsed_rows: i64,
@@ -4100,6 +4108,18 @@ pub async fn begin_import_run(
     manifest: &SourceManifest,
     parser_version: &str,
 ) -> Result<i64> {
+    begin_import_run_with_lineage(database_url, manifest_path, manifest, parser_version, None).await
+}
+
+pub async fn begin_import_run_with_lineage(
+    database_url: &str,
+    manifest_path: impl AsRef<Path>,
+    manifest: &SourceManifest,
+    parser_version: &str,
+    lineage: Option<&IngestRunLineageRecord>,
+) -> Result<i64> {
+    let lineage = lineage.cloned().unwrap_or_default();
+    lineage.validate()?;
     let manifest = SourceManifestAudit {
         manifest_path: manifest_path.as_ref().display().to_string(),
         source_id: manifest.source_id.clone(),
@@ -4118,14 +4138,30 @@ pub async fn begin_import_run(
                 manifest_path,
                 source_id,
                 parser_version,
+                profile_id,
+                profile_manifest_lineage_id,
+                connector_type,
+                source_class,
+                manifest_kind,
+                manifest_schema_version,
+                field_mapping,
+                lineage_evidence,
                 status
             )
-            VALUES ($1, $2, $3, 'running')
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'running')
             RETURNING id",
             &[
                 &manifest.manifest_path,
                 &manifest.source_id,
                 &manifest.parser_version,
+                &lineage.profile_id,
+                &lineage.profile_manifest_lineage_id,
+                &lineage.connector_type,
+                &lineage.source_class,
+                &lineage.manifest_kind,
+                &lineage.manifest_schema_version,
+                &lineage.field_mapping,
+                &lineage.lineage_evidence,
             ],
         )
         .await?;
@@ -4263,6 +4299,17 @@ pub async fn begin_crawl_run(
     manifest: &SourceManifestAudit,
     parser_key: &str,
 ) -> Result<i64> {
+    begin_crawl_run_with_lineage(database_url, manifest, parser_key, None).await
+}
+
+pub async fn begin_crawl_run_with_lineage(
+    database_url: &str,
+    manifest: &SourceManifestAudit,
+    parser_key: &str,
+    lineage: Option<&IngestRunLineageRecord>,
+) -> Result<i64> {
+    let lineage = lineage.cloned().unwrap_or_default();
+    lineage.validate()?;
     upsert_source_manifest(database_url, manifest).await?;
 
     let repo = PgRepository::new(database_url);
@@ -4274,15 +4321,31 @@ pub async fn begin_crawl_run(
                 source_id,
                 parser_key,
                 parser_version,
+                profile_id,
+                profile_manifest_lineage_id,
+                connector_type,
+                source_class,
+                manifest_kind,
+                manifest_schema_version,
+                field_mapping,
+                lineage_evidence,
                 status
             )
-            VALUES ($1, $2, $3, $4, 'fetching')
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'fetching')
             RETURNING id",
             &[
                 &manifest.manifest_path,
                 &manifest.source_id,
                 &parser_key,
                 &manifest.parser_version,
+                &lineage.profile_id,
+                &lineage.profile_manifest_lineage_id,
+                &lineage.connector_type,
+                &lineage.source_class,
+                &lineage.manifest_kind,
+                &lineage.manifest_schema_version,
+                &lineage.field_mapping,
+                &lineage.lineage_evidence,
             ],
         )
         .await?;
@@ -4576,6 +4639,14 @@ pub async fn load_crawl_run_health(
                 source_id,
                 parser_key,
                 parser_version,
+                profile_id,
+                profile_manifest_lineage_id,
+                connector_type,
+                source_class,
+                manifest_kind,
+                manifest_schema_version,
+                field_mapping,
+                lineage_evidence,
                 status,
                 fetched_targets,
                 parsed_rows,
@@ -4597,6 +4668,14 @@ pub async fn load_crawl_run_health(
             source_id: row.get("source_id"),
             parser_key: row.get("parser_key"),
             parser_version: row.get("parser_version"),
+            profile_id: row.get("profile_id"),
+            profile_manifest_lineage_id: row.get("profile_manifest_lineage_id"),
+            connector_type: row.get("connector_type"),
+            source_class: row.get("source_class"),
+            manifest_kind: row.get("manifest_kind"),
+            manifest_schema_version: row.get("manifest_schema_version"),
+            field_mapping: row.get("field_mapping"),
+            lineage_evidence: row.get("lineage_evidence"),
             status: row.get("status"),
             fetched_targets: row.get("fetched_targets"),
             parsed_rows: row.get("parsed_rows"),

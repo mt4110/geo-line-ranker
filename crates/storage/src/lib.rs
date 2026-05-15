@@ -353,6 +353,54 @@ impl ProfileCompatibilityStatusRecord {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct IngestRunLineageRecord {
+    pub profile_id: Option<String>,
+    pub profile_manifest_lineage_id: Option<i64>,
+    pub connector_type: Option<String>,
+    pub source_class: Option<String>,
+    pub manifest_kind: Option<String>,
+    pub manifest_schema_version: Option<i32>,
+    pub field_mapping: Option<String>,
+    pub lineage_evidence: Value,
+}
+
+impl Default for IngestRunLineageRecord {
+    fn default() -> Self {
+        Self {
+            profile_id: None,
+            profile_manifest_lineage_id: None,
+            connector_type: None,
+            source_class: None,
+            manifest_kind: None,
+            manifest_schema_version: None,
+            field_mapping: None,
+            lineage_evidence: default_json_object(),
+        }
+    }
+}
+
+impl IngestRunLineageRecord {
+    pub fn validate(&self) -> Result<()> {
+        ensure_optional_non_empty("profile_id", self.profile_id.as_deref())?;
+        ensure_optional_positive_i64(
+            "profile_manifest_lineage_id",
+            self.profile_manifest_lineage_id,
+        )?;
+        ensure_optional_non_empty("connector_type", self.connector_type.as_deref())?;
+        ensure_optional_non_empty("source_class", self.source_class.as_deref())?;
+        ensure_optional_non_empty("manifest_kind", self.manifest_kind.as_deref())?;
+        ensure_optional_positive("manifest_schema_version", self.manifest_schema_version)?;
+        ensure_optional_non_empty("field_mapping", self.field_mapping.as_deref())?;
+        ensure_json_object("lineage_evidence", &self.lineage_evidence)?;
+        anyhow::ensure!(
+            self.profile_manifest_lineage_id.is_none() || self.profile_id.is_some(),
+            "profile_manifest_lineage_id requires profile_id"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EvaluationRunKind {
@@ -709,6 +757,25 @@ fn ensure_positive(field: &str, value: i32) -> Result<()> {
     Ok(())
 }
 
+fn ensure_optional_positive(field: &str, value: Option<i32>) -> Result<()> {
+    if let Some(value) = value {
+        ensure_positive(field, value)?;
+    }
+    Ok(())
+}
+
+fn ensure_positive_i64(field: &str, value: i64) -> Result<()> {
+    anyhow::ensure!(value > 0, "{field} must be positive");
+    Ok(())
+}
+
+fn ensure_optional_positive_i64(field: &str, value: Option<i64>) -> Result<()> {
+    if let Some(value) = value {
+        ensure_positive_i64(field, value)?;
+    }
+    Ok(())
+}
+
 fn ensure_optional_non_empty(field: &str, value: Option<&str>) -> Result<()> {
     if let Some(value) = value {
         ensure_non_empty(field, value)?;
@@ -749,6 +816,54 @@ fn default_true() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ingest_run_lineage_record_default_is_db_free_and_valid() {
+        let record = IngestRunLineageRecord::default();
+
+        record.validate().expect("default lineage should validate");
+        assert_eq!(record.lineage_evidence, serde_json::json!({}));
+    }
+
+    #[test]
+    fn ingest_run_lineage_record_accepts_profile_connector_evidence() {
+        let record = ingest_run_lineage_record();
+
+        record
+            .validate()
+            .expect("profile connector lineage should validate");
+    }
+
+    #[test]
+    fn ingest_run_lineage_record_requires_profile_for_manifest_lineage() {
+        let mut record = ingest_run_lineage_record();
+        record.profile_id = None;
+
+        let error = record.validate().expect_err("profile_id is required");
+        assert!(format!("{error:#}").contains("profile_manifest_lineage_id requires profile_id"));
+    }
+
+    #[test]
+    fn ingest_run_lineage_record_rejects_non_object_evidence() {
+        let mut record = ingest_run_lineage_record();
+        record.lineage_evidence = serde_json::json!([]);
+
+        let error = record
+            .validate()
+            .expect_err("lineage evidence must be an object");
+        assert!(format!("{error:#}").contains("lineage_evidence must be a JSON object"));
+    }
+
+    #[test]
+    fn ingest_run_lineage_record_rejects_non_positive_schema_version() {
+        let mut record = ingest_run_lineage_record();
+        record.manifest_schema_version = Some(0);
+
+        let error = record
+            .validate()
+            .expect_err("schema version must be positive");
+        assert!(format!("{error:#}").contains("manifest_schema_version must be positive"));
+    }
 
     #[test]
     fn retrieval_sort_contract_keeps_direct_station_first_then_tiebreakers() {
@@ -1246,6 +1361,22 @@ mod tests {
             fixture_count: 1,
             connector_count: 1,
             evaluation_reference_count: 1,
+        }
+    }
+
+    fn ingest_run_lineage_record() -> IngestRunLineageRecord {
+        IngestRunLineageRecord {
+            profile_id: Some("school-event-jp".to_string()),
+            profile_manifest_lineage_id: Some(7),
+            connector_type: Some("archive_source".to_string()),
+            source_class: Some("archive_import".to_string()),
+            manifest_kind: Some("archive_source".to_string()),
+            manifest_schema_version: Some(1),
+            field_mapping: Some("event_v1".to_string()),
+            lineage_evidence: serde_json::json!({
+                "source_id": "event-archive",
+                "connector_manifest_path": "/tmp/profile/sources/events.yaml"
+            }),
         }
     }
 
