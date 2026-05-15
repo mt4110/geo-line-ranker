@@ -30,11 +30,11 @@ use cli::{
 #[cfg(feature = "storage-backends")]
 use config::AppSettings;
 use config::{
-    lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
-    resolve_linted_profile_pack_runtime_selection, resolve_runtime_path, ProfilePackLintFile,
-    ProfilePackLintSummary, ProfilePackManifest, ProfilePackRegistry, RankingConfigLintSummary,
-    DEFAULT_ALGORITHM_VERSION, DEFAULT_PROFILE_ID, DEFAULT_PROFILE_PACKS_DIR,
-    DEFAULT_RANKING_CONFIG_DIR,
+    lint_profile_pack_dir, lint_ranking_config_dir, lint_ranking_config_dir_with_fallback_file,
+    load_and_lint_profile_pack_file, resolve_linted_profile_pack_runtime_selection,
+    resolve_runtime_path, ProfilePackLintFile, ProfilePackLintSummary, ProfilePackManifest,
+    ProfilePackRegistry, RankingConfigLintSummary, DEFAULT_ALGORITHM_VERSION, DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_PACKS_DIR, DEFAULT_RANKING_CONFIG_DIR,
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 #[cfg(feature = "storage-backends")]
@@ -1230,7 +1230,8 @@ fn resolve_eval_golden_scenario_selection(
             profile_manifest: Some(profile_selection.profile_pack_manifest),
             ranking_config_dir: profile_selection.ranking_config_dir,
             scenario_source: ReplayScenarioSource::explicit_path(scenario_path.clone())
-                .with_reason_catalog_path(profile_selection.reason_catalog_path),
+                .with_reason_catalog_path(profile_selection.reason_catalog_path)
+                .with_fallback_config_path(profile_selection.fallback_config_path),
         });
     }
 
@@ -1263,6 +1264,7 @@ fn resolve_eval_golden_scenario_selection(
                 profile_selection.scenario_pack,
                 profile_selection.profile_pack_manifest,
                 profile_selection.reason_catalog_path,
+                profile_selection.fallback_config_path,
                 profile_selection.pairwise_pack,
             ),
         });
@@ -1531,9 +1533,20 @@ fn build_config_lint_report(
         })
         .context("active profile selection is required to choose ranking config dir")?;
     let profile_summary = lint_profile_pack_dir(profiles_path)?;
-    let ranking_summary = match cached_ranking_summary_for_path(&profile_summary, &path)? {
-        Some(summary) => ranking_summary_with_base_path(summary, &path),
-        None => lint_ranking_config_dir(&path)?,
+    let active_fallback_config_path = if needs_active_profile {
+        active_profile
+            .as_ref()
+            .and_then(|profile| profile.fallback_config_path.as_deref())
+    } else {
+        None
+    };
+    let ranking_summary = if let Some(fallback_config_path) = active_fallback_config_path {
+        lint_ranking_config_dir_with_fallback_file(&path, fallback_config_path)?
+    } else {
+        match cached_ranking_summary_for_path(&profile_summary, &path)? {
+            Some(summary) => ranking_summary_with_base_path(summary, &path),
+            None => lint_ranking_config_dir(&path)?,
+        }
     };
     Ok(ConfigLintReport {
         active_profile_id: active_profile
@@ -1986,6 +1999,24 @@ reasons:
         .expect("write profile reason catalog");
     }
 
+    fn fallback_config_yaml(min_results: usize, fallback_ladder: &[&str]) -> String {
+        let stages = fallback_ladder
+            .iter()
+            .map(|stage| format!("  - {stage}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            r#"schema_version: 1
+kind: ranking_fallback
+min_results: {min_results}
+neighbor_penalty: 0.8
+neighbor_distance_cap_meters: 2500.0
+fallback_ladder:
+{stages}
+"#
+        )
+    }
+
     #[cfg(feature = "storage-backends")]
     #[test]
     fn context_inspect_help_explains_read_only_evidence_flow() {
@@ -2410,6 +2441,13 @@ evaluation:
         };
 
         assert!(format_eval_golden_summary(&scenario_summary).starts_with("eval golden completed:"));
+        let fallback_summary = cli::ReplayScenarioSummary {
+            scenario_source: ReplayScenarioSource::explicit_path(PathBuf::from("scenarios"))
+                .with_fallback_config_path(Some(PathBuf::from("profiles/local/fallback.yaml"))),
+            ..scenario_summary.clone()
+        };
+        assert!(format_eval_golden_summary(&fallback_summary)
+            .contains("fallback_config=profiles/local/fallback.yaml"));
         #[cfg(feature = "storage-backends")]
         {
             let evaluation_summary = cli::ReplayEvaluationSummary {
@@ -3005,6 +3043,102 @@ evaluation:
         assert_eq!(report.ranking_summary.files.len(), 8);
         assert_eq!(report.profile_summary.files.len(), 2);
         assert_eq!(report.profile_summary.ranking_configs.len(), 1);
+    }
+
+    #[test]
+    fn config_lint_report_uses_active_profile_fallback_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let profile_dir = temp.path().join("profiles").join("local-discovery-generic");
+        let fallback_dir = profile_dir.join("fallback");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fallback_dir).expect("fallback dir");
+        copy_default_ranking_configs(&ranking_dir);
+        let fallback_path = fallback_dir.join("compact.yaml");
+        fs::write(
+            &fallback_path,
+            fallback_config_yaml(4, &["strict_station", "same_line", "safe_global_popular"]),
+        )
+        .expect("fallback config");
+        write_minimal_profile_reason_catalog(
+            &profile_dir.join("reasons.yaml"),
+            "local-discovery-generic",
+        );
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: local-discovery-generic
+display_name: Local Discovery Generic
+compatibility_level: stable
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy:
+  config_file: fallback/compact.yaml
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile manifest");
+
+        let report = build_config_lint_report(None, Some(profile_dir.join("profile.yaml")))
+            .expect("config lint report");
+        let expected_profiles =
+            config::RankingProfiles::load_from_dir_with_fallback_file(&ranking_dir, &fallback_path)
+                .expect("ranking profiles");
+
+        assert_eq!(
+            report.ranking_summary.profile_version,
+            expected_profiles.profile_version
+        );
+        assert_eq!(report.profile_summary.ranking_configs.len(), 1);
+        let fallback_path = fallback_path
+            .canonicalize()
+            .expect("canonical fallback path");
+        assert!(report
+            .ranking_summary
+            .files
+            .iter()
+            .any(|file| file.path == fallback_path
+                && file.kind == RankingConfigKind::RankingFallback));
+
+        let explicit_path_report = build_config_lint_report(
+            Some(ranking_dir.clone()),
+            Some(profile_dir.join("profile.yaml")),
+        )
+        .expect("explicit path config lint report");
+        let base_profiles =
+            config::RankingProfiles::load_from_dir(&ranking_dir).expect("base ranking profiles");
+
+        assert_eq!(
+            explicit_path_report.ranking_summary.profile_version,
+            base_profiles.profile_version
+        );
+        assert!(explicit_path_report
+            .ranking_summary
+            .files
+            .iter()
+            .any(|file| file.path.file_name().and_then(|name| name.to_str())
+                == Some("fallback.default.yaml")
+                && file.kind == RankingConfigKind::RankingFallback));
+        assert!(!explicit_path_report
+            .ranking_summary
+            .files
+            .iter()
+            .any(|file| file.path == fallback_path));
     }
 
     #[test]

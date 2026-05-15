@@ -31,6 +31,12 @@ The supported ranking config kinds are:
 | `ranking_tracking` | `tracking.default.yaml` |
 | `ranking_placement` | `placement.home.yaml`, `placement.search.yaml`, `placement.detail.yaml`, `placement.mypage.yaml` |
 
+By default the active fallback role is `fallback.default.yaml`. A profile pack
+may declare `fallback_policy.config_file` to use a local `ranking_fallback` file
+for runtime ranking, profile-aware replay/evaluation, and active config lint.
+The referenced `ranking_config_dir` remains a complete strict ranking config
+directory; the profile override replaces only the runtime fallback role.
+
 Ranking config loading is strict:
 
 - `schema_version` must be supported by the current binary.

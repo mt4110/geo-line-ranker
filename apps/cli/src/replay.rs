@@ -152,6 +152,8 @@ pub struct ReplayScenarioSource {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason_catalog_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_config_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pairwise_pack: Option<PathBuf>,
 }
 
@@ -162,6 +164,7 @@ impl ReplayScenarioSource {
             path,
             profile_manifest: None,
             reason_catalog_path: None,
+            fallback_config_path: None,
             pairwise_pack: None,
         }
     }
@@ -172,6 +175,7 @@ impl ReplayScenarioSource {
             path,
             profile_manifest: None,
             reason_catalog_path: None,
+            fallback_config_path: None,
             pairwise_pack: None,
         }
     }
@@ -180,6 +184,7 @@ impl ReplayScenarioSource {
         path: PathBuf,
         profile_manifest: PathBuf,
         reason_catalog_path: PathBuf,
+        fallback_config_path: Option<PathBuf>,
         pairwise_pack: Option<PathBuf>,
     ) -> Self {
         Self {
@@ -187,12 +192,18 @@ impl ReplayScenarioSource {
             path,
             profile_manifest: Some(profile_manifest),
             reason_catalog_path: Some(reason_catalog_path),
+            fallback_config_path,
             pairwise_pack,
         }
     }
 
     pub fn with_reason_catalog_path(mut self, reason_catalog_path: PathBuf) -> Self {
         self.reason_catalog_path = Some(reason_catalog_path);
+        self
+    }
+
+    pub fn with_fallback_config_path(mut self, fallback_config_path: Option<PathBuf>) -> Self {
+        self.fallback_config_path = fallback_config_path;
         self
     }
 }
@@ -335,7 +346,10 @@ pub fn run_replay_scenarios_with_source(
     if let Some(pairwise_pack) = scenario_source.pairwise_pack.as_deref() {
         apply_replay_pairwise_pack(&mut scenarios, pairwise_pack)?;
     }
-    let profiles = RankingProfiles::load_from_dir(ranking_config_dir)?;
+    let profiles = RankingProfiles::load_from_dir_with_optional_fallback(
+        ranking_config_dir,
+        scenario_source.fallback_config_path.as_deref(),
+    )?;
     let engine = RankingEngine::new(profiles, algorithm_version.to_string())
         .with_reason_catalog(reason_catalog);
     let cases = scenarios
@@ -1145,7 +1159,7 @@ pub async fn run_replay_evaluate(
     settings: &AppSettings,
     limit: i64,
 ) -> Result<ReplayEvaluationSummary> {
-    let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
+    let profiles = settings.load_ranking_profiles()?;
     let neighbor_distance_cap_meters = profiles.fallback.neighbor_distance_cap_meters;
     let mut engine = RankingEngine::new(profiles, settings.algorithm_version.clone());
     if !settings.profile_reason_catalog_path.is_empty() {
@@ -1792,6 +1806,7 @@ expectations:
                 .join("profiles")
                 .join("local-discovery-generic")
                 .join("reasons.yaml"),
+            None,
             Some(pairwise_pack_path.clone()),
         );
 

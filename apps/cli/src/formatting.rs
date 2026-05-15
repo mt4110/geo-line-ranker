@@ -335,6 +335,12 @@ fn format_replay_scenario_summary_with_label(
     if let Some(pairwise_pack) = summary.scenario_source.pairwise_pack.as_deref() {
         lines.push(format!("  pairwise_pack={}", pairwise_pack.display()));
     }
+    if let Some(fallback_config_path) = summary.scenario_source.fallback_config_path.as_deref() {
+        lines.push(format!(
+            "  fallback_config={}",
+            fallback_config_path.display()
+        ));
+    }
 
     for case in &summary.cases {
         lines.push(format!(
