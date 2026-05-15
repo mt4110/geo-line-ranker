@@ -1008,6 +1008,7 @@ mod tests {
             source_class: ProfileSourceClass::CsvImport,
             manifest_path: PathBuf::from("events.csv"),
             manifest_kind: "csv_file".to_string(),
+            manifest_schema_version: None,
             source_id: Some("example-events".to_string()),
             field_mapping: Some(ProfileConnectorFieldMapping::Custom(
                 "custom_event_v1".to_string(),

@@ -89,12 +89,17 @@ Profile pack loading is strict:
   packs, source manifests, crawler manifests, examples, and event CSV/NDJSON
   files must use portable relative paths and resolve locally when linted.
 - Profile `connectors` support local `source_manifest`, `csv_import`,
-  `ndjson_import`, and `crawler_manifest` references. CSV/NDJSON file imports
-  must declare a portable `field_mapping` ref using lowercase letters, digits,
-  underscores, and hyphens, with no leading or trailing separator. The manifest
-  contract can carry future mapping refs, but the current schema-2 import
-  runtime executes only `event_v1`; unsupported mapping refs fail validation,
-  doctor, and import.
+  `ndjson_import`, `archive_source`, and `crawler_manifest` references. The
+  stable connector schema matrix is versioned as
+  `local_stable_connector_manifest_schema_v1` and documented in
+  [Connector Manifest Schemas](CONNECTOR_MANIFESTS.md). YAML-backed connector
+  refs must declare the expected `schema_version: 1` and `kind`; CSV/NDJSON
+  refs are raw files and report no manifest schema version. CSV/NDJSON and
+  archive imports must declare a portable `field_mapping` ref using lowercase
+  letters, digits, underscores, and hyphens, with no leading or trailing
+  separator. The manifest contract can carry future mapping refs, but the
+  current schema-2 import runtime executes only `event_v1`; unsupported mapping
+  refs fail validation, doctor, and import.
 
 Run profile pack contract lint together with ranking config lint:
 
@@ -145,6 +150,14 @@ kind: crawler_source
 manifest_version: 1
 ```
 
+Archive source manifests use:
+
+```yaml
+schema_version: 1
+kind: archive_source
+manifest_version: 1
+```
+
 `schema_version` and `kind` identify the document shape. `manifest_version`
 remains the source-authored manifest revision recorded in import and crawler
 audit tables. Committed manifests must declare these fields explicitly so lint
@@ -153,14 +166,21 @@ Import `source_id` values must be portable path segments: lowercase letters,
 digits, and hyphens, with no leading or trailing hyphen.
 
 Import source lint also checks that committed manifest file paths resolve to
-local CSV files. Crawler manifest lint checks parser registration,
-`expected_shape` compatibility, and any declared target fixture paths without
-fetching live content.
+local CSV files. Archive source lint checks the same-directory archive path,
+checksum, format, and listed archive entries. Crawler manifest lint checks
+parser registration, `expected_shape` compatibility, and any declared target
+fixture paths without fetching live content.
 
 Run import source manifest lint locally:
 
 ```bash
 cargo run -p cli -- source-manifest lint
+```
+
+Run archive source lint through profile or ingest-quality doctor:
+
+```bash
+cargo run -p cli -- doctor ingest-quality
 ```
 
 Run crawler manifest lint locally:

@@ -123,15 +123,17 @@ manifest-level details. Use `doctor profile-pack` when capturing
 operator-facing quality evidence: it reuses the same profile-pack validation
 logic, then summarizes profile count, reason count, fixture references, source
 manifest references, event CSV example references, optional crawler manifest
-references, and each profile's compatibility level.
+references, the stable connector schema contract version, and each profile's
+compatibility level.
 Use `doctor ingest-quality` when a connector or source coverage change needs
 more specific evidence: it validates declared source manifests, archive
 manifests, and crawler manifests, then reports source classes, manifest kinds,
-executable field mappings, source-manifest file counts, archive file/format
-counts, crawler target counts, crawler maturity, expected shapes,
-local-reference/dynamic-loading/live-fetch safety boundaries, and allowlist
-requirements. It does not import data, touch PostgreSQL, or make live crawl
-requests.
+manifest schema-version coverage, executable field mappings, source-manifest
+file counts, archive file/format counts, crawler target counts, crawler
+maturity, expected shapes, local-reference/dynamic-loading/live-fetch safety
+boundaries, allowlist requirements, and the stable connector schema matrix from
+[Connector Manifest Schemas](CONNECTOR_MANIFESTS.md). It does not import data,
+touch PostgreSQL, or make live crawl requests.
 
 When PostgreSQL is migrated and you want durable profile evidence, add
 `--persist` to `profile validate` or `doctor profile-pack`. That opt-in path

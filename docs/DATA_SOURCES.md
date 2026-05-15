@@ -3,12 +3,14 @@
 This repository includes adapter paths for four Japanese public data families
 and an optional allowlist crawler path for supplemental event data.
 
-Connector authors should start here, then read [Data Licenses](DATA_LICENSES.md)
-before changing source manifests, adapters, crawler manifests, or upstream-data
-handling. Use [Documentation Index](README.md) when choosing a broader audience
-or task path, and [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md)
-when optional crawler or full-mode evidence needs review without widening the
-fixed public-MVP gate.
+Connector authors should start here, then read
+[Connector Manifest Schemas](CONNECTOR_MANIFESTS.md) and
+[Data Licenses](DATA_LICENSES.md) before changing source manifests, adapters,
+crawler manifests, or upstream-data handling. Use
+[Documentation Index](README.md) when choosing a broader audience or task path,
+and [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md) when optional
+crawler or full-mode evidence needs review without widening the fixed
+public-MVP gate.
 
 ## Covered sources
 
@@ -85,11 +87,17 @@ Profile connector registry model:
    validation, doctor, and import rather than becoming silent half-support.
    Crawler manifests still use the crawler commands.
 9. `cargo run -p cli -- doctor ingest-quality` is DB-free coverage evidence for
-   this registry. It reuses profile validation, lints declared source manifests
-   archive manifests, and crawler manifests, and reports source-class,
-   manifest-kind, runtime-executable mapping, source-manifest file, archive
-   file/format, crawler target, and safety-boundary counts without importing
-   data or making live crawl requests.
+   this registry. It reuses profile validation, lints declared source
+   manifests, archive manifests, and crawler manifests, and reports source-class,
+   manifest-kind, manifest schema-version, runtime-executable mapping,
+   source-manifest file, archive file/format, crawler target, and
+   safety-boundary counts without importing data or making live crawl requests.
+
+The stable connector matrix is documented in
+[Connector Manifest Schemas](CONNECTOR_MANIFESTS.md). The matrix currently
+covers `source_manifest`, `csv_import`, `ndjson_import`, `archive_source`, and
+`crawler_manifest`; doctor output reports the same contract version as
+`local_stable_connector_manifest_schema_v1`.
 
 Connector and import `source_id` values must be portable path segments: lowercase
 letters, digits, and hyphens, with no leading or trailing hyphen.

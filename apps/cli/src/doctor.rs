@@ -5,8 +5,9 @@ use std::{
 
 use anyhow::{Context, Result};
 use config::{
-    lint_profile_pack_dir, ProfileConnectorRegistryEntry, ProfileConnectorType,
-    ProfilePackLintFile, ProfilePackLintSummary, RankingConfigLintFile, RankingConfigLintSummary,
+    lint_profile_pack_dir, profile_connector_schema_contracts, ProfileConnectorRegistryEntry,
+    ProfileConnectorType, ProfilePackLintFile, ProfilePackLintSummary, RankingConfigLintFile,
+    RankingConfigLintSummary, PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION,
 };
 use context::ContextSource;
 use crawler_core::lint_manifest_file as lint_crawl_manifest_file;
@@ -80,6 +81,8 @@ pub struct ProfilePackDoctorSummary {
     pub event_csv_example_references: usize,
     pub archive_source_references: usize,
     pub optional_crawler_manifest_references: usize,
+    pub connector_schema_contract_version: String,
+    pub connector_schema_contracts: Vec<ConnectorSchemaContractSummary>,
     pub files: Vec<ProfilePackDoctorFile>,
 }
 
@@ -121,6 +124,7 @@ pub struct IngestQualityDoctorSummary {
     pub optional_crawler_manifest_references: usize,
     pub source_class_counts: BTreeMap<String, usize>,
     pub manifest_kind_counts: BTreeMap<String, usize>,
+    pub manifest_schema_version_counts: BTreeMap<String, usize>,
     pub runtime_executable_mappings: usize,
     pub non_runtime_mappings: usize,
     pub local_reference_only_connectors: usize,
@@ -135,6 +139,8 @@ pub struct IngestQualityDoctorSummary {
     pub crawler_expected_shape_counts: BTreeMap<String, usize>,
     pub evidence_scope: String,
     pub execution_scope: String,
+    pub connector_schema_contract_version: String,
+    pub connector_schema_contracts: Vec<ConnectorSchemaContractSummary>,
     pub profiles: Vec<IngestQualityDoctorProfile>,
 }
 
@@ -149,6 +155,7 @@ pub struct IngestQualityDoctorProfile {
     pub optional_crawler_manifest_references: usize,
     pub source_class_counts: BTreeMap<String, usize>,
     pub manifest_kind_counts: BTreeMap<String, usize>,
+    pub manifest_schema_version_counts: BTreeMap<String, usize>,
     pub runtime_executable_mappings: usize,
     pub non_runtime_mappings: usize,
     pub local_reference_only_connectors: usize,
@@ -169,6 +176,7 @@ pub struct IngestQualityDoctorConnector {
     pub connector_type: String,
     pub source_class: String,
     pub manifest_kind: String,
+    pub manifest_schema_version: Option<u32>,
     pub source_id: Option<String>,
     pub field_mapping: Option<String>,
     pub field_mapping_runtime_executable: Option<bool>,
@@ -185,6 +193,22 @@ pub struct IngestQualityDoctorConnector {
     pub live_fetch_default: bool,
     pub allowlist_required: bool,
     pub manifest_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ConnectorSchemaContractSummary {
+    pub connector_type: String,
+    pub source_class: String,
+    pub manifest_kind: String,
+    pub manifest_schema_version: Option<u32>,
+    pub source_id_scope: String,
+    pub field_mapping_scope: String,
+    pub runtime_execution: String,
+    pub manifest_lint: String,
+    pub local_reference_only: bool,
+    pub dynamic_loading_enabled: bool,
+    pub live_fetch_default: bool,
+    pub allowlist_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1153,6 +1177,8 @@ fn profile_pack_doctor_summary_from_lint(
             .iter()
             .map(|file| file.optional_crawler_manifest_references)
             .sum(),
+        connector_schema_contract_version: PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION.to_string(),
+        connector_schema_contracts: connector_schema_contract_summaries(),
         files,
     }
 }
@@ -1216,6 +1242,7 @@ fn ingest_quality_doctor_summary_from_lint(
         .collect::<Result<Vec<_>>>()?;
     let mut source_class_counts = BTreeMap::new();
     let mut manifest_kind_counts = BTreeMap::new();
+    let mut manifest_schema_version_counts = BTreeMap::new();
     let mut archive_format_counts = BTreeMap::new();
     let mut crawler_source_maturity_counts = BTreeMap::new();
     let mut crawler_expected_shape_counts = BTreeMap::new();
@@ -1223,6 +1250,10 @@ fn ingest_quality_doctor_summary_from_lint(
     for profile in &profiles {
         merge_counts(&mut source_class_counts, &profile.source_class_counts);
         merge_counts(&mut manifest_kind_counts, &profile.manifest_kind_counts);
+        merge_counts(
+            &mut manifest_schema_version_counts,
+            &profile.manifest_schema_version_counts,
+        );
         merge_counts(&mut archive_format_counts, &profile.archive_format_counts);
         merge_counts(
             &mut crawler_source_maturity_counts,
@@ -1258,6 +1289,7 @@ fn ingest_quality_doctor_summary_from_lint(
             .sum(),
         source_class_counts,
         manifest_kind_counts,
+        manifest_schema_version_counts,
         runtime_executable_mappings: profiles
             .iter()
             .map(|profile| profile.runtime_executable_mappings)
@@ -1299,6 +1331,8 @@ fn ingest_quality_doctor_summary_from_lint(
         crawler_expected_shape_counts,
         evidence_scope: "db_free_profile_connector_manifest_coverage".to_string(),
         execution_scope: "no_import_or_live_crawl".to_string(),
+        connector_schema_contract_version: PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION.to_string(),
+        connector_schema_contracts: connector_schema_contract_summaries(),
         profiles,
     })
 }
@@ -1311,6 +1345,7 @@ fn ingest_quality_doctor_profile(file: ProfilePackLintFile) -> Result<IngestQual
         .collect::<Result<Vec<_>>>()?;
     let mut source_class_counts = BTreeMap::new();
     let mut manifest_kind_counts = BTreeMap::new();
+    let mut manifest_schema_version_counts = BTreeMap::new();
     let mut archive_format_counts = BTreeMap::new();
     let mut crawler_source_maturity_counts = BTreeMap::new();
     let mut crawler_expected_shape_counts = BTreeMap::new();
@@ -1318,6 +1353,13 @@ fn ingest_quality_doctor_profile(file: ProfilePackLintFile) -> Result<IngestQual
     for connector in &connectors {
         increment(&mut source_class_counts, &connector.source_class);
         increment(&mut manifest_kind_counts, &connector.manifest_kind);
+        increment(
+            &mut manifest_schema_version_counts,
+            &connector
+                .manifest_schema_version
+                .map(|version| version.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+        );
         if let Some(archive_format) = connector.archive_format.as_deref() {
             increment(&mut archive_format_counts, archive_format);
         }
@@ -1339,6 +1381,7 @@ fn ingest_quality_doctor_profile(file: ProfilePackLintFile) -> Result<IngestQual
         optional_crawler_manifest_references: file.optional_crawler_manifest_count,
         source_class_counts,
         manifest_kind_counts,
+        manifest_schema_version_counts,
         runtime_executable_mappings: connectors
             .iter()
             .filter(|connector| connector.field_mapping_runtime_executable == Some(true))
@@ -1441,6 +1484,7 @@ fn ingest_quality_doctor_connector(
         connector_type: connector.connector_type.as_str().to_string(),
         source_class: connector.source_class.as_str().to_string(),
         manifest_kind: connector.manifest_kind.clone(),
+        manifest_schema_version: connector.manifest_schema_version,
         source_id: connector.source_id.clone(),
         field_mapping: connector
             .field_mapping
@@ -1464,6 +1508,26 @@ fn ingest_quality_doctor_connector(
         allowlist_required: connector.safety.allowlist_required,
         manifest_path: connector.manifest_path.clone(),
     })
+}
+
+fn connector_schema_contract_summaries() -> Vec<ConnectorSchemaContractSummary> {
+    profile_connector_schema_contracts()
+        .iter()
+        .map(|contract| ConnectorSchemaContractSummary {
+            connector_type: contract.connector_type.as_str().to_string(),
+            source_class: contract.source_class.as_str().to_string(),
+            manifest_kind: contract.manifest_kind.to_string(),
+            manifest_schema_version: contract.manifest_schema_version,
+            source_id_scope: contract.source_id_scope.to_string(),
+            field_mapping_scope: contract.field_mapping_scope.to_string(),
+            runtime_execution: contract.runtime_execution.to_string(),
+            manifest_lint: contract.manifest_lint.to_string(),
+            local_reference_only: contract.safety.local_reference_only,
+            dynamic_loading_enabled: contract.safety.dynamic_loading_enabled,
+            live_fetch_default: contract.safety.live_fetch_default,
+            allowlist_required: contract.safety.allowlist_required,
+        })
+        .collect()
 }
 
 fn ensure_archive_source_event_v1_runtime(
@@ -1659,6 +1723,18 @@ mod tests {
                 .map(|file| file.optional_crawler_manifest_references)
                 .sum::<usize>()
         );
+        assert_eq!(
+            summary.connector_schema_contract_version,
+            "local_stable_connector_manifest_schema_v1"
+        );
+        assert_eq!(summary.connector_schema_contracts.len(), 5);
+        assert!(summary
+            .connector_schema_contracts
+            .iter()
+            .any(|contract| contract.connector_type == "archive_source"
+                && contract.manifest_kind == "archive_source"
+                && contract.manifest_schema_version == Some(1)
+                && contract.field_mapping_scope == "event_v1_required_for_runtime"));
 
         let local_discovery = summary
             .files
@@ -1707,6 +1783,8 @@ mod tests {
         assert_eq!(summary.manifest_kind_counts.get("csv_file"), Some(&2));
         assert_eq!(summary.manifest_kind_counts.get("ndjson_file"), Some(&2));
         assert_eq!(summary.manifest_kind_counts.get("crawler_source"), Some(&1));
+        assert_eq!(summary.manifest_schema_version_counts.get("1"), Some(&6));
+        assert_eq!(summary.manifest_schema_version_counts.get("none"), Some(&4));
         assert_eq!(summary.runtime_executable_mappings, 5);
         assert_eq!(summary.non_runtime_mappings, 0);
         assert_eq!(summary.source_manifest_file_count, 4);
@@ -1725,6 +1803,11 @@ mod tests {
             Some(&1)
         );
         assert_eq!(summary.execution_scope, "no_import_or_live_crawl");
+        assert_eq!(
+            summary.connector_schema_contract_version,
+            "local_stable_connector_manifest_schema_v1"
+        );
+        assert_eq!(summary.connector_schema_contracts.len(), 5);
 
         let school_event_jp = summary
             .profiles
@@ -1734,10 +1817,19 @@ mod tests {
         assert_eq!(school_event_jp.connector_references, 7);
         assert_eq!(school_event_jp.source_manifest_file_count, 4);
         assert_eq!(school_event_jp.crawler_target_count, 1);
+        assert_eq!(
+            school_event_jp.manifest_schema_version_counts.get("1"),
+            Some(&5)
+        );
+        assert_eq!(
+            school_event_jp.manifest_schema_version_counts.get("none"),
+            Some(&2)
+        );
         assert!(school_event_jp.connectors.iter().any(|connector| {
             connector.connector_type == "crawler_manifest"
                 && connector.allowlist_required
                 && connector.manifest_lint == "crawler_manifest_lint"
+                && connector.manifest_schema_version == Some(1)
         }));
 
         let local_discovery = summary
@@ -1747,9 +1839,18 @@ mod tests {
             .expect("local discovery profile");
         assert_eq!(local_discovery.archive_source_references, 1);
         assert_eq!(local_discovery.archive_file_count, 1);
+        assert_eq!(
+            local_discovery.manifest_schema_version_counts.get("1"),
+            Some(&1)
+        );
+        assert_eq!(
+            local_discovery.manifest_schema_version_counts.get("none"),
+            Some(&2)
+        );
         assert!(local_discovery.connectors.iter().any(|connector| {
             connector.connector_type == "archive_source"
                 && connector.manifest_lint == "archive_source_lint"
+                && connector.manifest_schema_version == Some(1)
                 && connector.archive_format.as_deref() == Some("tar")
                 && connector.archive_checksum_sha256.is_some()
         }));

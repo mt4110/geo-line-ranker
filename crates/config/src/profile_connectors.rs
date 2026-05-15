@@ -14,6 +14,80 @@ use crate::{
 
 const FIELD_MAPPING_REF_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, underscores, and hyphens, and must not start or end with a separator";
 const RUNTIME_EXECUTABLE_FIELD_MAPPING_IDS: &[&str] = &["event_v1"];
+pub const PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION: &str =
+    "local_stable_connector_manifest_schema_v1";
+const PROFILE_CONNECTOR_YAML_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const LOCAL_REFERENCE_SAFETY: ProfileConnectorSafetyMetadata = ProfileConnectorSafetyMetadata {
+    local_reference_only: true,
+    dynamic_loading_enabled: false,
+    live_fetch_default: false,
+    allowlist_required: false,
+};
+const LOCAL_CRAWLER_REFERENCE_SAFETY: ProfileConnectorSafetyMetadata =
+    ProfileConnectorSafetyMetadata {
+        local_reference_only: true,
+        dynamic_loading_enabled: false,
+        live_fetch_default: false,
+        allowlist_required: true,
+    };
+
+static PROFILE_CONNECTOR_SCHEMA_CONTRACTS: [ProfileConnectorSchemaContract; 5] = [
+    ProfileConnectorSchemaContract {
+        connector_type: ProfileConnectorType::SourceManifest,
+        source_class: ProfileSourceClass::CsvImport,
+        manifest_kind: "import_source",
+        manifest_schema_version: Some(PROFILE_CONNECTOR_YAML_MANIFEST_SCHEMA_VERSION),
+        source_id_scope: "manifest_required_profile_override_must_match",
+        field_mapping_scope: "not_supported",
+        runtime_execution: "profile_source_import",
+        manifest_lint: "source_manifest_lint",
+        safety: LOCAL_REFERENCE_SAFETY,
+    },
+    ProfileConnectorSchemaContract {
+        connector_type: ProfileConnectorType::CsvImport,
+        source_class: ProfileSourceClass::CsvImport,
+        manifest_kind: "csv_file",
+        manifest_schema_version: None,
+        source_id_scope: "profile_required",
+        field_mapping_scope: "event_v1_required_for_runtime",
+        runtime_execution: "event_csv_import",
+        manifest_lint: "file_reference",
+        safety: LOCAL_REFERENCE_SAFETY,
+    },
+    ProfileConnectorSchemaContract {
+        connector_type: ProfileConnectorType::NdjsonImport,
+        source_class: ProfileSourceClass::NdjsonImport,
+        manifest_kind: "ndjson_file",
+        manifest_schema_version: None,
+        source_id_scope: "profile_required",
+        field_mapping_scope: "event_v1_required_for_runtime",
+        runtime_execution: "event_ndjson_import",
+        manifest_lint: "file_reference",
+        safety: LOCAL_REFERENCE_SAFETY,
+    },
+    ProfileConnectorSchemaContract {
+        connector_type: ProfileConnectorType::ArchiveSource,
+        source_class: ProfileSourceClass::ArchiveImport,
+        manifest_kind: "archive_source",
+        manifest_schema_version: Some(PROFILE_CONNECTOR_YAML_MANIFEST_SCHEMA_VERSION),
+        source_id_scope: "manifest_required_profile_override_must_match",
+        field_mapping_scope: "event_v1_required_for_runtime",
+        runtime_execution: "event_archive_import",
+        manifest_lint: "archive_source_lint",
+        safety: LOCAL_REFERENCE_SAFETY,
+    },
+    ProfileConnectorSchemaContract {
+        connector_type: ProfileConnectorType::CrawlerManifest,
+        source_class: ProfileSourceClass::HtmlCrawl,
+        manifest_kind: "crawler_source",
+        manifest_schema_version: Some(PROFILE_CONNECTOR_YAML_MANIFEST_SCHEMA_VERSION),
+        source_id_scope: "manifest_required_profile_override_must_match",
+        field_mapping_scope: "not_supported",
+        runtime_execution: "crawler_commands_only",
+        manifest_lint: "crawler_manifest_lint",
+        safety: LOCAL_CRAWLER_REFERENCE_SAFETY,
+    },
+];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -37,22 +111,22 @@ impl ProfileConnectorType {
     }
 
     pub fn source_class(self) -> ProfileSourceClass {
-        match self {
-            Self::SourceManifest | Self::CsvImport => ProfileSourceClass::CsvImport,
-            Self::NdjsonImport => ProfileSourceClass::NdjsonImport,
-            Self::ArchiveSource => ProfileSourceClass::ArchiveImport,
-            Self::CrawlerManifest => ProfileSourceClass::HtmlCrawl,
-        }
+        self.schema_contract().source_class
     }
 
     pub fn expected_manifest_kind(self) -> &'static str {
-        match self {
-            Self::SourceManifest => "import_source",
-            Self::CsvImport => "csv_file",
-            Self::NdjsonImport => "ndjson_file",
-            Self::ArchiveSource => "archive_source",
-            Self::CrawlerManifest => "crawler_source",
-        }
+        self.schema_contract().manifest_kind
+    }
+
+    pub fn expected_manifest_schema_version(self) -> Option<u32> {
+        self.schema_contract().manifest_schema_version
+    }
+
+    fn schema_contract(self) -> &'static ProfileConnectorSchemaContract {
+        profile_connector_schema_contracts()
+            .iter()
+            .find(|contract| contract.connector_type == self)
+            .expect("profile connector schema contract")
     }
 
     fn expected_extension(self) -> Option<&'static str> {
@@ -96,7 +170,7 @@ impl fmt::Display for ProfileSourceClass {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProfileConnectorSafetyMetadata {
     pub local_reference_only: bool,
     pub dynamic_loading_enabled: bool,
@@ -106,13 +180,25 @@ pub struct ProfileConnectorSafetyMetadata {
 
 impl ProfileConnectorSafetyMetadata {
     fn for_connector_type(connector_type: ProfileConnectorType) -> Self {
-        Self {
-            local_reference_only: true,
-            dynamic_loading_enabled: false,
-            live_fetch_default: false,
-            allowlist_required: matches!(connector_type, ProfileConnectorType::CrawlerManifest),
-        }
+        connector_type.schema_contract().safety
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct ProfileConnectorSchemaContract {
+    pub connector_type: ProfileConnectorType,
+    pub source_class: ProfileSourceClass,
+    pub manifest_kind: &'static str,
+    pub manifest_schema_version: Option<u32>,
+    pub source_id_scope: &'static str,
+    pub field_mapping_scope: &'static str,
+    pub runtime_execution: &'static str,
+    pub manifest_lint: &'static str,
+    pub safety: ProfileConnectorSafetyMetadata,
+}
+
+pub fn profile_connector_schema_contracts() -> &'static [ProfileConnectorSchemaContract] {
+    &PROFILE_CONNECTOR_SCHEMA_CONTRACTS
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -189,6 +275,8 @@ pub struct ProfileConnectorRegistryEntry {
     pub source_class: ProfileSourceClass,
     pub manifest_path: PathBuf,
     pub manifest_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_schema_version: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -267,64 +355,81 @@ fn profile_connector_registry_entry(
         resolved.display()
     );
 
-    let (manifest_kind, source_id, field_mapping) = match connector.connector_type {
-        ProfileConnectorType::SourceManifest => {
-            ensure_no_file_field_mapping(path, connector)?;
-            let header = load_connector_manifest_header(path, &resolved)?;
-            ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
-            let source_id =
-                require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
-            validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
-            (header.kind, Some(source_id), None)
-        }
-        ProfileConnectorType::CrawlerManifest => {
-            ensure_no_file_field_mapping(path, connector)?;
-            let header = load_connector_manifest_header(path, &resolved)?;
-            ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
-            let source_id =
-                require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
-            validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
-            (header.kind, Some(source_id), None)
-        }
-        ProfileConnectorType::ArchiveSource => {
-            let header = load_connector_manifest_header(path, &resolved)?;
-            ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
-            let source_id =
-                require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
-            validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
-            let field_mapping =
-                require_runtime_executable_import_field_mapping(path, manifest, connector)?;
-            (header.kind, Some(source_id), Some(field_mapping))
-        }
-        ProfileConnectorType::CsvImport | ProfileConnectorType::NdjsonImport => {
-            let expected_extension = connector
-                .connector_type
-                .expected_extension()
-                .expect("file connector extension");
-            let extension = resolved
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default();
-            ensure!(
-                extension.eq_ignore_ascii_case(expected_extension),
-                "profile pack {} connector {} manifest {} must point to a .{} file",
-                path.display(),
-                connector.connector_type.as_str(),
-                resolved.display(),
-                expected_extension
-            );
-            let field_mapping =
-                require_runtime_executable_import_field_mapping(path, manifest, connector)?;
-            (
-                connector
+    let (manifest_kind, manifest_schema_version, source_id, field_mapping) =
+        match connector.connector_type {
+            ProfileConnectorType::SourceManifest => {
+                ensure_no_file_field_mapping(path, connector)?;
+                let header = load_connector_manifest_header(path, &resolved)?;
+                ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
+                let source_id =
+                    require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
+                validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
+                (
+                    header.kind,
+                    Some(header.schema_version),
+                    Some(source_id),
+                    None,
+                )
+            }
+            ProfileConnectorType::CrawlerManifest => {
+                ensure_no_file_field_mapping(path, connector)?;
+                let header = load_connector_manifest_header(path, &resolved)?;
+                ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
+                let source_id =
+                    require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
+                validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
+                (
+                    header.kind,
+                    Some(header.schema_version),
+                    Some(source_id),
+                    None,
+                )
+            }
+            ProfileConnectorType::ArchiveSource => {
+                let header = load_connector_manifest_header(path, &resolved)?;
+                ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
+                let source_id =
+                    require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
+                validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
+                let field_mapping =
+                    require_runtime_executable_import_field_mapping(path, manifest, connector)?;
+                (
+                    header.kind,
+                    Some(header.schema_version),
+                    Some(source_id),
+                    Some(field_mapping),
+                )
+            }
+            ProfileConnectorType::CsvImport | ProfileConnectorType::NdjsonImport => {
+                let expected_extension = connector
                     .connector_type
-                    .expected_manifest_kind()
-                    .to_string(),
-                Some(require_profile_connector_source_id(path, connector)?),
-                Some(field_mapping),
-            )
-        }
-    };
+                    .expected_extension()
+                    .expect("file connector extension");
+                let extension = resolved
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or_default();
+                ensure!(
+                    extension.eq_ignore_ascii_case(expected_extension),
+                    "profile pack {} connector {} manifest {} must point to a .{} file",
+                    path.display(),
+                    connector.connector_type.as_str(),
+                    resolved.display(),
+                    expected_extension
+                );
+                let field_mapping =
+                    require_runtime_executable_import_field_mapping(path, manifest, connector)?;
+                (
+                    connector
+                        .connector_type
+                        .expected_manifest_kind()
+                        .to_string(),
+                    None,
+                    Some(require_profile_connector_source_id(path, connector)?),
+                    Some(field_mapping),
+                )
+            }
+        };
 
     Ok(ProfileConnectorRegistryEntry {
         connector_type: connector.connector_type,
@@ -338,6 +443,7 @@ fn profile_connector_registry_entry(
             )
         })?,
         manifest_kind,
+        manifest_schema_version,
         source_id,
         field_mapping,
         profile_compatibility: manifest.compatibility_level,
@@ -351,6 +457,19 @@ fn ensure_connector_manifest_kind(
     connector: &ProfileConnectorRef,
     header: &ConnectorManifestHeader,
 ) -> Result<()> {
+    if let Some(expected_schema_version) =
+        connector.connector_type.expected_manifest_schema_version()
+    {
+        ensure!(
+            header.schema_version == expected_schema_version,
+            "profile pack {} connector {} manifest {} schema_version {} is invalid; expected {}",
+            profile_path.display(),
+            connector.connector_type.as_str(),
+            connector_manifest_path.display(),
+            header.schema_version,
+            expected_schema_version
+        );
+    }
     ensure!(
         header.kind == connector.connector_type.expected_manifest_kind(),
         "profile pack {} connector {} manifest {} kind {} is invalid; expected {}",

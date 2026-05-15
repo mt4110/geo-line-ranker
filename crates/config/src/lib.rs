@@ -13,8 +13,9 @@ use sha2::{Digest, Sha256};
 mod profile_connectors;
 
 pub use profile_connectors::{
-    ProfileConnectorFieldMapping, ProfileConnectorRef, ProfileConnectorRegistryEntry,
-    ProfileConnectorSafetyMetadata, ProfileConnectorType, ProfileSourceClass,
+    profile_connector_schema_contracts, ProfileConnectorFieldMapping, ProfileConnectorRef,
+    ProfileConnectorRegistryEntry, ProfileConnectorSafetyMetadata, ProfileConnectorSchemaContract,
+    ProfileConnectorType, ProfileSourceClass, PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION,
 };
 
 pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
@@ -3830,6 +3831,7 @@ evaluation:
             ProfileSourceClass::CsvImport
         );
         assert_eq!(lint.connector_registry[0].manifest_kind, "csv_file");
+        assert_eq!(lint.connector_registry[0].manifest_schema_version, None);
         assert_eq!(
             lint.connector_registry[0].source_id.as_deref(),
             Some("example-events")
@@ -3850,6 +3852,7 @@ evaluation:
             ProfileSourceClass::NdjsonImport
         );
         assert_eq!(lint.connector_registry[1].manifest_kind, "ndjson_file");
+        assert_eq!(lint.connector_registry[1].manifest_schema_version, None);
         assert_eq!(
             lint.connector_registry[1]
                 .field_mapping
@@ -3866,6 +3869,7 @@ evaluation:
             ProfileSourceClass::ArchiveImport
         );
         assert_eq!(lint.connector_registry[2].manifest_kind, "archive_source");
+        assert_eq!(lint.connector_registry[2].manifest_schema_version, Some(1));
         assert_eq!(
             lint.connector_registry[2].source_id.as_deref(),
             Some("example-events-archive")
@@ -3889,6 +3893,120 @@ evaluation:
                 .canonicalize()
                 .expect("reason catalog")
         );
+    }
+
+    #[test]
+    fn stable_profile_connector_schema_contracts_cover_supported_types() {
+        let contracts = super::profile_connector_schema_contracts();
+        let expected_types = [
+            ProfileConnectorType::SourceManifest,
+            ProfileConnectorType::CsvImport,
+            ProfileConnectorType::NdjsonImport,
+            ProfileConnectorType::ArchiveSource,
+            ProfileConnectorType::CrawlerManifest,
+        ];
+
+        assert_eq!(
+            super::PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION,
+            "local_stable_connector_manifest_schema_v1"
+        );
+        assert_eq!(contracts.len(), expected_types.len());
+        assert_eq!(
+            contracts
+                .iter()
+                .map(|contract| contract.connector_type)
+                .collect::<Vec<_>>(),
+            expected_types
+        );
+        for contract in contracts {
+            assert_eq!(
+                contract.connector_type.source_class(),
+                contract.source_class
+            );
+            assert_eq!(
+                contract.connector_type.expected_manifest_kind(),
+                contract.manifest_kind
+            );
+            assert_eq!(
+                contract.connector_type.expected_manifest_schema_version(),
+                contract.manifest_schema_version
+            );
+        }
+        assert!(contracts.iter().any(|contract| {
+            contract.connector_type == ProfileConnectorType::SourceManifest
+                && contract.manifest_kind == "import_source"
+                && contract.manifest_schema_version == Some(1)
+                && contract.field_mapping_scope == "not_supported"
+        }));
+        assert!(contracts.iter().any(|contract| {
+            contract.connector_type == ProfileConnectorType::CsvImport
+                && contract.manifest_kind == "csv_file"
+                && contract.manifest_schema_version.is_none()
+                && contract.field_mapping_scope == "event_v1_required_for_runtime"
+        }));
+        assert!(contracts.iter().any(|contract| {
+            contract.connector_type == ProfileConnectorType::CrawlerManifest
+                && contract.manifest_kind == "crawler_source"
+                && contract.safety.allowlist_required
+        }));
+    }
+
+    #[test]
+    fn rejects_profile_connector_manifest_schema_version_mismatch() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let source_dir = profile_dir.join("sources");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            source_dir.join("import.yaml"),
+            r#"schema_version: 2
+kind: import_source
+source_id: example-source
+"#,
+        )
+        .expect("source manifest");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+connectors:
+  - type: source_manifest
+    manifest: sources/import.yaml
+"#,
+        )
+        .expect("profile");
+
+        let error =
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("schema mismatch");
+
+        assert!(format!("{error:#}").contains("connector source_manifest manifest"));
+        assert!(format!("{error:#}").contains("schema_version 2 is invalid; expected 1"));
     }
 
     #[test]
