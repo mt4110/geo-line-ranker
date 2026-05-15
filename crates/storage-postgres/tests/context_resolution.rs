@@ -448,15 +448,21 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             ContextSource::RecentSearchContext
         );
         assert_eq!(recent_search_context.station_id(), Some("st_tamachi"));
+        assert!(recent_search_context.confidence < 0.88);
+        assert!(recent_search_context.confidence > 0.8);
         let recent_search_evidence = recent_search_context.evidence_summary();
         assert_eq!(
             recent_search_evidence.primary_kind,
             context::ContextEvidenceKind::SearchExecute
         );
+        assert_eq!(
+            recent_search_evidence.strongest_strength,
+            recent_search_context.confidence
+        );
         assert!(recent_search_evidence.has_search_execute);
         let recent_search_row = client
             .query_one(
-                "SELECT user_id_hash, context_source, station_id
+                "SELECT user_id_hash, context_source, confidence, station_id
                  FROM context_resolution_traces
                  WHERE request_id = 'req-context-recent-search'",
                 &[],
@@ -469,6 +475,10 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
         assert_eq!(
             recent_search_row.get::<_, String>("context_source"),
             "recent_search_context".to_string()
+        );
+        assert_eq!(
+            recent_search_row.get::<_, f64>("confidence"),
+            recent_search_context.confidence
         );
         assert_eq!(
             recent_search_row.get::<_, Option<String>>("station_id"),
@@ -546,6 +556,112 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
 
         client
             .batch_execute(
+                "INSERT INTO user_events (
+                    user_id,
+                    school_id,
+                    event_type,
+                    target_station_id,
+                    occurred_at,
+                    payload
+                ) VALUES (
+                    'aged-search-only-user',
+                    NULL,
+                    'search_execute',
+                    'st_tamachi',
+                    NOW() - INTERVAL '70 hours',
+                    '{}'::jsonb
+                );
+
+                INSERT INTO user_profile_contexts (
+                    user_id,
+                    area_id,
+                    line_id,
+                    station_id,
+                    context_source,
+                    confidence,
+                    consent_scope
+                ) VALUES (
+                    'aged-search-profile-user',
+                    NULL,
+                    NULL,
+                    'st_shibuya',
+                    'user_profile_area',
+                    0.7,
+                    'coarse_area'
+                )
+                ON CONFLICT (user_id) DO UPDATE
+                SET area_id = EXCLUDED.area_id,
+                    line_id = EXCLUDED.line_id,
+                    station_id = EXCLUDED.station_id,
+                    context_source = EXCLUDED.context_source,
+                    confidence = EXCLUDED.confidence,
+                    consent_scope = EXCLUDED.consent_scope;
+
+                INSERT INTO user_events (
+                    user_id,
+                    school_id,
+                    event_type,
+                    target_station_id,
+                    occurred_at,
+                    payload
+                ) VALUES (
+                    'aged-search-profile-user',
+                    NULL,
+                    'search_execute',
+                    'st_tamachi',
+                    NOW() - INTERVAL '70 hours',
+                    '{}'::jsonb
+                );",
+            )
+            .await?;
+        let aged_search_context = repo
+            .resolve_context(
+                "req-context-aged-search",
+                Some("aged-search-only-user"),
+                &ContextInput::default(),
+            )
+            .await?;
+        assert_eq!(
+            aged_search_context.context_source,
+            ContextSource::RecentSearchContext
+        );
+        assert_eq!(aged_search_context.station_id(), Some("st_tamachi"));
+        assert!(aged_search_context.confidence >= 0.32);
+        assert!(aged_search_context.confidence < 0.34);
+        let aged_search_evidence = aged_search_context.evidence_summary();
+        assert_eq!(
+            aged_search_evidence.strongest_strength,
+            aged_search_context.confidence
+        );
+        assert!(aged_search_evidence.has_search_execute);
+        let aged_search_row = client
+            .query_one(
+                "SELECT confidence
+                 FROM context_resolution_traces
+                 WHERE request_id = 'req-context-aged-search'",
+                &[],
+            )
+            .await?;
+        assert_eq!(
+            aged_search_row.get::<_, f64>("confidence"),
+            aged_search_context.confidence
+        );
+
+        let aged_search_profile_context = repo
+            .resolve_context(
+                "req-context-aged-search-profile",
+                Some("aged-search-profile-user"),
+                &ContextInput::default(),
+            )
+            .await?;
+        assert_eq!(
+            aged_search_profile_context.context_source,
+            ContextSource::UserProfileArea
+        );
+        assert_eq!(aged_search_profile_context.station_id(), Some("st_shibuya"));
+
+        client
+            .batch_execute(
                 "ALTER TABLE user_events
                     DROP CONSTRAINT IF EXISTS user_events_target_station_id_fkey;
 
@@ -603,6 +719,60 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
             ContextSource::UserProfileArea
         );
         assert_eq!(stale_recent_search_context.station_id(), Some("st_shibuya"));
+
+        client
+            .batch_execute(
+                "INSERT INTO user_profile_contexts (
+                    user_id,
+                    area_id,
+                    line_id,
+                    station_id,
+                    context_source,
+                    confidence,
+                    consent_scope
+                ) VALUES (
+                    'tie-break-profile-user',
+                    NULL,
+                    NULL,
+                    'st_shibuya',
+                    'user_profile_area',
+                    0.32,
+                    'coarse_area'
+                )
+                ON CONFLICT (user_id) DO UPDATE
+                SET area_id = EXCLUDED.area_id,
+                    line_id = EXCLUDED.line_id,
+                    station_id = EXCLUDED.station_id,
+                    context_source = EXCLUDED.context_source,
+                    confidence = EXCLUDED.confidence,
+                    consent_scope = EXCLUDED.consent_scope;
+
+                INSERT INTO user_events (
+                    user_id,
+                    school_id,
+                    event_type,
+                    target_station_id,
+                    occurred_at,
+                    payload
+                ) VALUES (
+                    'tie-break-profile-user',
+                    NULL,
+                    'search_execute',
+                    'st_tamachi',
+                    NOW() - INTERVAL '72 hours',
+                    '{}'::jsonb
+                );",
+            )
+            .await?;
+        let tie_break_context = repo
+            .resolve_context(
+                "req-context-tie-break-profile",
+                Some("tie-break-profile-user"),
+                &ContextInput::default(),
+            )
+            .await?;
+        assert_eq!(tie_break_context.context_source, ContextSource::UserProfileArea);
+        assert_eq!(tie_break_context.station_id(), Some("st_shibuya"));
 
         client
             .execute(
