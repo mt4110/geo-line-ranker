@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs, io,
+    fs,
+    io::{self, Read, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -11,6 +12,8 @@ use sha2::{Digest, Sha256};
 
 pub const SOURCE_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const ARCHIVE_SOURCE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const ARCHIVE_MAX_ENTRY_UNPACK_BYTES: u64 = 64 * 1024 * 1024;
+pub const ARCHIVE_MAX_TOTAL_UNPACK_BYTES: u64 = 256 * 1024 * 1024;
 pub const SOURCE_ID_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, and hyphens, and must not start or end with a hyphen";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -422,7 +425,7 @@ fn validate_archive_manifest(path: &Path, manifest: &ArchiveSourceManifest) -> R
         "archive source manifest {} source_name must not be empty",
         path.display()
     );
-    validate_archive_relative_path(path, "archive.path", &manifest.archive.path, true)?;
+    validate_archive_relative_path(path, "archive.path", &manifest.archive.path, false)?;
     let checksum = manifest
         .archive
         .checksum_sha256
@@ -451,6 +454,12 @@ fn validate_archive_manifest(path: &Path, manifest: &ArchiveSourceManifest) -> R
             !file.logical_name.trim().is_empty(),
             "archive source manifest {} contains a file with empty logical_name",
             path.display()
+        );
+        ensure!(
+            is_archive_logical_name(&file.logical_name),
+            "archive source manifest {} file logical_name '{}' is invalid; expected lowercase letters, digits, underscores, or hyphens, starting and ending with a letter or digit",
+            path.display(),
+            file.logical_name
         );
         ensure!(
             logical_names.insert(file.logical_name.clone()),
@@ -530,6 +539,28 @@ fn is_sha256_hex(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
+fn is_archive_logical_name(value: &str) -> bool {
+    if value.is_empty() || value.trim() != value {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    let Some(first) = bytes.first() else {
+        return false;
+    };
+    let Some(last) = bytes.last() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+        return false;
+    }
+    if !last.is_ascii_lowercase() && !last.is_ascii_digit() {
+        return false;
+    }
+    bytes.iter().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+    })
+}
+
 fn resolve_archive_source_path(manifest_path: &Path, archive_path: &str) -> Result<PathBuf> {
     let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let resolved = manifest_dir.join(archive_path);
@@ -543,8 +574,25 @@ fn resolve_archive_source_path(manifest_path: &Path, archive_path: &str) -> Resu
 }
 
 fn file_checksum_and_size(path: &Path) -> Result<(String, u64)> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-    Ok((format!("{:x}", Sha256::digest(&bytes)), bytes.len() as u64))
+    let file =
+        fs::File::open(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let mut reader = io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut size_bytes = 0_u64;
+    let mut buffer = [0_u8; 8192];
+
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        size_bytes += read as u64;
+    }
+
+    Ok((format!("{:x}", hasher.finalize()), size_bytes))
 }
 
 fn validate_archive_checksum(
@@ -747,6 +795,7 @@ fn unpack_zip_archive(
         )
     })?;
     let mut files = Vec::new();
+    let mut total_unpacked_bytes = 0_u64;
     for spec in &manifest.files {
         let mut entry = archive.by_name(&spec.path).with_context(|| {
             format!(
@@ -768,11 +817,18 @@ fn unpack_zip_archive(
             entry.name(),
             entry.is_file(),
         )?;
+        validate_archive_relative_path(manifest_path, "archive entry path", entry.name(), false)?;
         let target_path = archive_unpack_target(destination_dir, spec)?;
         let mut output = fs::File::create(&target_path)
             .with_context(|| format!("failed to create {}", target_path.display()))?;
-        io::copy(&mut entry, &mut output)
-            .with_context(|| format!("failed to unpack {}", spec.path))?;
+        copy_archive_entry(
+            manifest_path,
+            archive_path,
+            spec,
+            &mut entry,
+            &mut output,
+            &mut total_unpacked_bytes,
+        )?;
         files.push(UnpackedArchiveFile {
             logical_name: spec.logical_name.clone(),
             format: spec.format.clone(),
@@ -833,6 +889,7 @@ fn unpack_tar_entries<R: io::Read>(
         .map(|file| (file.path.clone(), file))
         .collect::<BTreeMap<_, _>>();
     let mut files_by_path = BTreeMap::new();
+    let mut total_unpacked_bytes = 0_u64;
     for entry in archive.entries().with_context(|| {
         format!(
             "failed to read tar archive {} for manifest {}",
@@ -854,8 +911,14 @@ fn unpack_tar_entries<R: io::Read>(
         let target_path = archive_unpack_target(destination_dir, spec)?;
         let mut output = fs::File::create(&target_path)
             .with_context(|| format!("failed to create {}", target_path.display()))?;
-        io::copy(&mut entry, &mut output)
-            .with_context(|| format!("failed to unpack {}", spec.path))?;
+        copy_archive_entry(
+            manifest_path,
+            archive_path,
+            spec,
+            &mut entry,
+            &mut output,
+            &mut total_unpacked_bytes,
+        )?;
         files_by_path.insert(
             entry_path,
             UnpackedArchiveFile {
@@ -880,6 +943,60 @@ fn unpack_tar_entries<R: io::Read>(
         files.push(file);
     }
     Ok(files)
+}
+
+fn copy_archive_entry<R: Read, W: Write>(
+    manifest_path: &Path,
+    archive_path: &Path,
+    spec: &ArchiveEntrySpec,
+    reader: &mut R,
+    writer: &mut W,
+    total_unpacked_bytes: &mut u64,
+) -> Result<()> {
+    let total_remaining = ARCHIVE_MAX_TOTAL_UNPACK_BYTES.saturating_sub(*total_unpacked_bytes);
+    let copy_limit = ARCHIVE_MAX_ENTRY_UNPACK_BYTES.min(total_remaining);
+    let copied = copy_with_limit(reader, writer, copy_limit).with_context(|| {
+        format!(
+            "failed to unpack archive source manifest {} archive {} entry {}",
+            manifest_path.display(),
+            archive_path.display(),
+            spec.path
+        )
+    })?;
+    *total_unpacked_bytes += copied;
+    Ok(())
+}
+
+fn copy_with_limit<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    limit_bytes: u64,
+) -> Result<u64> {
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 8192];
+
+    loop {
+        let remaining = limit_bytes.saturating_sub(copied);
+        let read_limit = if remaining == 0 {
+            1
+        } else {
+            remaining.min(buffer.len() as u64) as usize
+        };
+        let read = reader.read(&mut buffer[..read_limit])?;
+        if read == 0 {
+            break;
+        }
+        copied += read as u64;
+        ensure!(
+            copied <= limit_bytes,
+            "archive entry exceeds unpack size limits; max_entry_bytes={}, max_total_bytes={}",
+            ARCHIVE_MAX_ENTRY_UNPACK_BYTES,
+            ARCHIVE_MAX_TOTAL_UNPACK_BYTES
+        );
+        writer.write_all(&buffer[..read])?;
+    }
+
+    Ok(copied)
 }
 
 fn archive_unpack_target(destination_dir: &Path, spec: &ArchiveEntrySpec) -> Result<PathBuf> {
@@ -1463,6 +1580,64 @@ files:
     }
 
     #[test]
+    fn archive_manifest_rejects_archive_parent_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("events.archive.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: archive_source
+source_id: event-archive
+source_name: Event archive
+manifest_version: 1
+archive:
+  path: ../events.tar
+  format: tar
+  checksum_sha256: 0000000000000000000000000000000000000000000000000000000000000000
+files:
+  - logical_name: events
+    path: events.csv
+    format: csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_archive_manifest(&manifest_path).expect_err("archive parent path");
+
+        assert!(format!("{error:#}").contains("archive.path must not contain . or .. components"));
+    }
+
+    #[test]
+    fn archive_manifest_rejects_path_like_logical_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("events.archive.yaml");
+        fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: archive_source
+source_id: event-archive
+source_name: Event archive
+manifest_version: 1
+archive:
+  path: events.tar
+  format: tar
+  checksum_sha256: 0000000000000000000000000000000000000000000000000000000000000000
+files:
+  - logical_name: ../events
+    path: events.csv
+    format: csv
+"#,
+        )
+        .expect("manifest");
+
+        let error = load_archive_manifest(&manifest_path).expect_err("logical name");
+
+        assert!(format!("{error:#}").contains("logical_name '../events' is invalid"));
+    }
+
+    #[test]
     fn archive_manifest_requires_archive_checksum() {
         let temp = tempfile::tempdir().expect("tempdir");
         let archive_path = temp.path().join("events.tar");
@@ -1564,6 +1739,17 @@ files:
         let unpack_error = unpack_archive_manifest(&manifest_path, temp.path().join("unpacked"))
             .expect_err("duplicate archive path during unpack");
         assert!(format!("{unpack_error:#}").contains("duplicate entry path events.csv"));
+    }
+
+    #[test]
+    fn archive_copy_rejects_entries_over_unpack_limit() {
+        let mut input = "hello".as_bytes();
+        let mut output = Vec::new();
+
+        let error = copy_with_limit(&mut input, &mut output, 4).expect_err("copy limit");
+
+        assert!(format!("{error:#}").contains("archive entry exceeds unpack size limits"));
+        assert_eq!(output, b"hell");
     }
 
     #[test]

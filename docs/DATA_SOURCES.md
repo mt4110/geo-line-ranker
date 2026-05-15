@@ -67,10 +67,12 @@ Profile connector registry model:
    `ndjson_import`.
 6. `archive_source` entries point to local `kind: archive_source` YAML,
    declare `field_mapping: event_v1`, and are classified as `archive_import`.
-   Archive manifests are local-file only, declare one archive path plus a
-   checksum, and list the CSV/NDJSON entries to unpack. The current import
-   runtime accepts exactly one `logical_name: events` entry and bridges it to
-   the existing event CSV/NDJSON importer.
+   Archive manifests are local-file only, declare one same-directory archive
+   path plus a checksum, and list the CSV/NDJSON entries to unpack. Entry paths
+   and logical names are portable identifiers, unpacked entries must be regular
+   files, and the unpacker enforces bounded per-entry and total extracted bytes.
+   The current import runtime accepts exactly one `logical_name: events` entry
+   and bridges it to the existing event CSV/NDJSON importer.
 7. `crawler_manifest` entries must point to `kind: crawler_source` YAML and
    are classified as `html_crawl`; registry metadata marks them as
    allowlist-required and live-fetch disabled by default at the profile

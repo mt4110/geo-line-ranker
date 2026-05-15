@@ -122,9 +122,10 @@ mapping boundaries, and evaluation refs.
 `csv_import` refs must point to a CSV file, and `ndjson_import` refs must point
 to an NDJSON file. CSV/NDJSON file import refs must declare both a profile
 `source_id` and a portable field mapping ref. Archive import refs must point to
-a local archive manifest whose archive path is local, whose checksum is checked
-by `doctor ingest-quality`, and whose listed CSV/NDJSON entries stay inside the
-archive. Connector `source_id` values use the same portable lowercase letters,
+a local archive manifest whose archive path stays beside the manifest, whose
+checksum is checked by `doctor ingest-quality`, whose listed CSV/NDJSON entries
+stay inside the archive, and whose unpacked files stay within bounded size
+limits. Connector `source_id` values use the same portable lowercase letters,
 digits, and hyphens rule as `profile_id`; `field_mapping` refs use lowercase
 letters, digits, underscores, and hyphens, with no leading or trailing
 separator. Only `field_mapping: event_v1` is executable today. Unsupported
