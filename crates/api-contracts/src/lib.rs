@@ -11,6 +11,7 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RecommendationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
@@ -50,6 +51,7 @@ impl RecommendationRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextResolveRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
@@ -260,6 +262,7 @@ impl<'de> Deserialize<'de> for RecommendationContextDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TrackRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
@@ -740,5 +743,44 @@ mod tests {
             error,
             "target_station_id or context.station_id is required to build RankingQuery"
         );
+    }
+
+    #[test]
+    fn track_request_rejects_unknown_keys() {
+        let payload = serde_json::json!({
+            "user_id": "demo-user",
+            "event_kind": "school_view",
+            "school_id": "school_seaside",
+            "unexpected": true
+        });
+
+        let error = serde_json::from_value::<TrackRequest>(payload).expect_err("unknown key");
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn context_resolve_request_rejects_unknown_keys() {
+        let payload = serde_json::json!({
+            "user_id": "demo-user",
+            "target_station_id": "st_tamachi",
+            "unexpected": "value"
+        });
+
+        let error =
+            serde_json::from_value::<ContextResolveRequest>(payload).expect_err("unknown key");
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn recommendation_request_rejects_unknown_keys() {
+        let payload = serde_json::json!({
+            "target_station_id": "st_tamachi",
+            "limit": 3,
+            "unexpected": 1
+        });
+
+        let error =
+            serde_json::from_value::<RecommendationRequest>(payload).expect_err("unknown key");
+        assert!(error.to_string().contains("unknown field `unexpected`"));
     }
 }
