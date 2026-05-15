@@ -496,13 +496,14 @@ fn format_manifest_lint_summary(summary: &CrawlManifestLintSummary) -> String {
     )];
     lines.extend(summary.files.iter().map(|file| {
         format!(
-            "- {} schema_version={} kind={} manifest_version={} source_id={} parser_key={} expected_shape={} targets={}",
+            "- {} schema_version={} kind={} manifest_version={} source_id={} parser_key={} source_maturity={} expected_shape={} targets={}",
             file.path.display(),
             file.schema_version,
             file.kind.as_str(),
             file.manifest_version,
             file.source_id,
             file.parser_key,
+            file.source_maturity,
             file.expected_shape
                 .map(|shape| shape.to_string())
                 .unwrap_or_else(|| "-".to_string()),
@@ -514,9 +515,15 @@ fn format_manifest_lint_summary(summary: &CrawlManifestLintSummary) -> String {
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
+    use std::path::PathBuf;
 
-    use super::Cli;
+    use clap::CommandFactory;
+    use crawler_core::{
+        CrawlManifestKind, CrawlManifestLintFile, CrawlManifestLintSummary, ParserExpectedShape,
+        SourceMaturity,
+    };
+
+    use super::{format_manifest_lint_summary, Cli};
 
     #[test]
     fn scaffold_domain_help_is_grouped_and_actionable() {
@@ -570,5 +577,30 @@ mod tests {
         );
         assert!(help.contains("Path to the crawl manifest yaml to inspect."));
         assert!(help.contains("This command is intentionally read-only."));
+    }
+
+    #[test]
+    fn manifest_lint_summary_reports_source_maturity() {
+        let summary = CrawlManifestLintSummary {
+            files: vec![CrawlManifestLintFile {
+                path: PathBuf::from("configs/crawler/sources/custom_example.yaml"),
+                source_id: "custom-example".to_string(),
+                schema_version: 1,
+                kind: CrawlManifestKind::CrawlerSource,
+                manifest_version: 1,
+                parser_key: "single_title_page_v1".to_string(),
+                source_maturity: SourceMaturity::ParserOnly,
+                expected_shape: Some(ParserExpectedShape::HtmlHeadingPage),
+                target_count: 1,
+            }],
+        };
+
+        let rendered = format_manifest_lint_summary(&summary);
+
+        assert!(rendered.contains("crawler manifest lint ok: files=1"));
+        assert!(rendered.contains("source_id=custom-example"));
+        assert!(rendered.contains("source_maturity=parser_only"));
+        assert!(rendered.contains("expected_shape=html_heading_page"));
+        assert!(rendered.contains("targets=1"));
     }
 }

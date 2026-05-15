@@ -167,6 +167,7 @@ pub struct CrawlManifestLintFile {
     pub kind: CrawlManifestKind,
     pub manifest_version: u32,
     pub parser_key: String,
+    pub source_maturity: SourceMaturity,
     pub expected_shape: Option<ParserExpectedShape>,
     pub target_count: usize,
 }
@@ -471,6 +472,7 @@ fn lint_manifest_file_with_registry(
         );
     }
     let expected_shape = manifest.effective_expected_shape(Some(parser));
+    let source_maturity = manifest.effective_source_maturity();
     validate_fixture_paths(path, &manifest, expected_shape)?;
     Ok(CrawlManifestLintFile {
         path: path.to_path_buf(),
@@ -479,6 +481,7 @@ fn lint_manifest_file_with_registry(
         kind: manifest.kind,
         manifest_version: manifest.manifest_version,
         parser_key: manifest.parser_key,
+        source_maturity,
         expected_shape,
         target_count: manifest.targets.len(),
     })
@@ -3052,6 +3055,46 @@ targets:
     }
 
     #[test]
+    fn lint_reports_explicit_source_maturity() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("crawler.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: crawler_source
+source_id: custom-example
+source_name: Custom example
+source_maturity: parser_only
+manifest_version: 1
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  live_fetch_enabled: false
+  live_fetch_block_reason: parser coverage only
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let lint = lint_manifest_file(&manifest_path).expect("lint");
+        assert_eq!(lint.source_maturity, SourceMaturity::ParserOnly);
+        assert_eq!(lint.target_count, 1);
+        assert_eq!(
+            lint.expected_shape,
+            Some(ParserExpectedShape::HtmlHeadingPage)
+        );
+    }
+
+    #[test]
     fn manifest_rejects_live_ready_when_live_fetch_is_disabled() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_path = temp.path().join("crawler.yaml");
@@ -3276,6 +3319,7 @@ targets:
         let summary = lint_manifest_dir(temp.path().join("configs")).expect("lint");
         assert_eq!(summary.files.len(), 1);
         assert_eq!(summary.files[0].source_id, "custom-example");
+        assert_eq!(summary.files[0].source_maturity, SourceMaturity::LiveReady);
         assert_eq!(summary.files[0].target_count, 1);
         assert_eq!(
             summary.files[0].expected_shape,

@@ -130,7 +130,8 @@ For release candidate evidence, capture the local validation results
 (`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
 `just test-all`, config/source/crawler manifest lint, fixture doctor,
-`eval golden`, the doctor evidence suite, and `git diff --check`), CI status, release notes,
+`eval golden`, the doctor evidence suite including `doctor ingest-quality`,
+and `git diff --check`), CI status, release notes,
 and the required `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor`
 evidence. The data quality doctor is required evidence capture for release
 readiness; strict mode makes doctor warnings fail the evidence step, but it
@@ -358,6 +359,23 @@ declared compatibility levels. Use `profile validate`, `profile list`, and
 `profile inspect` while authoring or reviewing a specific pack; use
 `doctor profile-pack` for operator evidence that summarizes committed profile
 coverage and fails fast on the same deterministic contract errors.
+
+Run the ingest quality doctor when an operator needs connector/source coverage
+evidence without executing imports or crawl fetches:
+
+```bash
+cargo run -p cli -- doctor ingest-quality
+cargo run -p cli -- doctor ingest-quality --json
+```
+
+This doctor reuses profile-pack validation and then performs DB-free source
+manifest and crawler manifest lint for profile-declared connectors. It reports
+source class counts, manifest kind counts, runtime-executable and non-runtime
+field mapping counts, source-manifest file counts, crawler target counts,
+crawler maturity, expected shapes, local-reference/dynamic-loading/live-fetch
+safety boundaries, and allowlist-required connectors. Treat the output as
+coverage and quality evidence only: it does not import data, mutate PostgreSQL,
+fetch live pages, unpack archives, or promote crawler sources.
 
 Replay recent persisted recommendation traces against the current SQL-only
 ranking path:

@@ -75,6 +75,11 @@ Profile connector registry model:
    executes only `field_mapping: event_v1`; other valid mapping refs fail
    validation, doctor, and import rather than becoming silent half-support.
    Crawler manifests still use the crawler commands.
+8. `cargo run -p cli -- doctor ingest-quality` is DB-free coverage evidence for
+   this registry. It reuses profile validation, lints declared source manifests
+   and crawler manifests, and reports source-class, manifest-kind,
+   runtime-executable mapping, source-manifest file, crawler target, and
+   safety-boundary counts without importing data or making live crawl requests.
 
 Connector and import `source_id` values must be portable path segments: lowercase
 letters, digits, and hyphens, with no leading or trailing hyphen.

@@ -3,13 +3,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use config::{
-    lint_profile_pack_dir, ProfileConnectorRegistryEntry, ProfilePackLintFile,
-    ProfilePackLintSummary, RankingConfigLintFile, RankingConfigLintSummary,
+    lint_profile_pack_dir, ProfileConnectorRegistryEntry, ProfileConnectorType,
+    ProfilePackLintFile, ProfilePackLintSummary, RankingConfigLintFile, RankingConfigLintSummary,
 };
 use context::ContextSource;
+use crawler_core::lint_manifest_file as lint_crawl_manifest_file;
 use domain::SchoolStationLink;
+use generic_csv::lint_source_manifest_file;
 use serde::Serialize;
 use storage::{
     candidate_retrieval_opensearch_sort_contract, candidate_retrieval_ordering_contract,
@@ -103,6 +105,73 @@ pub struct ProfilePackDoctorFile {
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
     pub optional_crawler_manifest_references: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct IngestQualityDoctorSummary {
+    pub profile_packs: usize,
+    pub connector_references: usize,
+    pub source_manifest_references: usize,
+    pub event_csv_example_references: usize,
+    pub optional_crawler_manifest_references: usize,
+    pub source_class_counts: BTreeMap<String, usize>,
+    pub manifest_kind_counts: BTreeMap<String, usize>,
+    pub runtime_executable_mappings: usize,
+    pub non_runtime_mappings: usize,
+    pub local_reference_only_connectors: usize,
+    pub dynamic_loading_enabled_connectors: usize,
+    pub live_fetch_default_connectors: usize,
+    pub crawler_allowlist_required_connectors: usize,
+    pub source_manifest_file_count: usize,
+    pub crawler_target_count: usize,
+    pub crawler_source_maturity_counts: BTreeMap<String, usize>,
+    pub crawler_expected_shape_counts: BTreeMap<String, usize>,
+    pub evidence_scope: String,
+    pub execution_scope: String,
+    pub profiles: Vec<IngestQualityDoctorProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct IngestQualityDoctorProfile {
+    pub path: PathBuf,
+    pub profile_id: String,
+    pub connector_references: usize,
+    pub source_manifest_references: usize,
+    pub event_csv_example_references: usize,
+    pub optional_crawler_manifest_references: usize,
+    pub source_class_counts: BTreeMap<String, usize>,
+    pub manifest_kind_counts: BTreeMap<String, usize>,
+    pub runtime_executable_mappings: usize,
+    pub non_runtime_mappings: usize,
+    pub local_reference_only_connectors: usize,
+    pub dynamic_loading_enabled_connectors: usize,
+    pub live_fetch_default_connectors: usize,
+    pub crawler_allowlist_required_connectors: usize,
+    pub source_manifest_file_count: usize,
+    pub crawler_target_count: usize,
+    pub crawler_source_maturity_counts: BTreeMap<String, usize>,
+    pub crawler_expected_shape_counts: BTreeMap<String, usize>,
+    pub connectors: Vec<IngestQualityDoctorConnector>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct IngestQualityDoctorConnector {
+    pub connector_type: String,
+    pub source_class: String,
+    pub manifest_kind: String,
+    pub source_id: Option<String>,
+    pub field_mapping: Option<String>,
+    pub field_mapping_runtime_executable: Option<bool>,
+    pub manifest_lint: String,
+    pub source_manifest_file_count: Option<usize>,
+    pub crawler_target_count: Option<usize>,
+    pub crawler_source_maturity: Option<String>,
+    pub crawler_expected_shape: Option<String>,
+    pub local_reference_only: bool,
+    pub dynamic_loading_enabled: bool,
+    pub live_fetch_default: bool,
+    pub allowlist_required: bool,
+    pub manifest_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -315,6 +384,13 @@ pub fn run_profile_pack_doctor(
 ) -> Result<ProfilePackDoctorSummary> {
     let lint_summary = lint_profile_pack_dir(profiles_path)?;
     Ok(profile_pack_doctor_summary_from_lint(lint_summary))
+}
+
+pub fn run_ingest_quality_doctor(
+    profiles_path: impl AsRef<Path>,
+) -> Result<IngestQualityDoctorSummary> {
+    let lint_summary = lint_profile_pack_dir(profiles_path)?;
+    ingest_quality_doctor_summary_from_lint(lint_summary)
 }
 
 pub fn ranking_config_doctor_summary_from_lint(
@@ -581,6 +657,12 @@ fn context_coverage_case(path: PathBuf, scenario: ReplayScenario) -> ContextCove
 
 fn increment(counts: &mut BTreeMap<String, usize>, key: &str) {
     *counts.entry(key.to_string()).or_insert(0) += 1;
+}
+
+fn merge_counts(target: &mut BTreeMap<String, usize>, source: &BTreeMap<String, usize>) {
+    for (key, count) in source {
+        *target.entry(key.clone()).or_insert(0) += count;
+    }
 }
 
 fn context_shape_mismatch(
@@ -1100,6 +1182,225 @@ fn profile_pack_doctor_file(file: ProfilePackLintFile) -> ProfilePackDoctorFile 
     }
 }
 
+fn ingest_quality_doctor_summary_from_lint(
+    lint_summary: ProfilePackLintSummary,
+) -> Result<IngestQualityDoctorSummary> {
+    let profiles = lint_summary
+        .files
+        .into_iter()
+        .map(ingest_quality_doctor_profile)
+        .collect::<Result<Vec<_>>>()?;
+    let mut source_class_counts = BTreeMap::new();
+    let mut manifest_kind_counts = BTreeMap::new();
+    let mut crawler_source_maturity_counts = BTreeMap::new();
+    let mut crawler_expected_shape_counts = BTreeMap::new();
+
+    for profile in &profiles {
+        merge_counts(&mut source_class_counts, &profile.source_class_counts);
+        merge_counts(&mut manifest_kind_counts, &profile.manifest_kind_counts);
+        merge_counts(
+            &mut crawler_source_maturity_counts,
+            &profile.crawler_source_maturity_counts,
+        );
+        merge_counts(
+            &mut crawler_expected_shape_counts,
+            &profile.crawler_expected_shape_counts,
+        );
+    }
+
+    Ok(IngestQualityDoctorSummary {
+        profile_packs: profiles.len(),
+        connector_references: profiles
+            .iter()
+            .map(|profile| profile.connector_references)
+            .sum(),
+        source_manifest_references: profiles
+            .iter()
+            .map(|profile| profile.source_manifest_references)
+            .sum(),
+        event_csv_example_references: profiles
+            .iter()
+            .map(|profile| profile.event_csv_example_references)
+            .sum(),
+        optional_crawler_manifest_references: profiles
+            .iter()
+            .map(|profile| profile.optional_crawler_manifest_references)
+            .sum(),
+        source_class_counts,
+        manifest_kind_counts,
+        runtime_executable_mappings: profiles
+            .iter()
+            .map(|profile| profile.runtime_executable_mappings)
+            .sum(),
+        non_runtime_mappings: profiles
+            .iter()
+            .map(|profile| profile.non_runtime_mappings)
+            .sum(),
+        local_reference_only_connectors: profiles
+            .iter()
+            .map(|profile| profile.local_reference_only_connectors)
+            .sum(),
+        dynamic_loading_enabled_connectors: profiles
+            .iter()
+            .map(|profile| profile.dynamic_loading_enabled_connectors)
+            .sum(),
+        live_fetch_default_connectors: profiles
+            .iter()
+            .map(|profile| profile.live_fetch_default_connectors)
+            .sum(),
+        crawler_allowlist_required_connectors: profiles
+            .iter()
+            .map(|profile| profile.crawler_allowlist_required_connectors)
+            .sum(),
+        source_manifest_file_count: profiles
+            .iter()
+            .map(|profile| profile.source_manifest_file_count)
+            .sum(),
+        crawler_target_count: profiles
+            .iter()
+            .map(|profile| profile.crawler_target_count)
+            .sum(),
+        crawler_source_maturity_counts,
+        crawler_expected_shape_counts,
+        evidence_scope: "db_free_profile_connector_manifest_coverage".to_string(),
+        execution_scope: "no_import_or_live_crawl".to_string(),
+        profiles,
+    })
+}
+
+fn ingest_quality_doctor_profile(file: ProfilePackLintFile) -> Result<IngestQualityDoctorProfile> {
+    let connectors = file
+        .connector_registry
+        .iter()
+        .map(|connector| ingest_quality_doctor_connector(&file.profile_id, connector))
+        .collect::<Result<Vec<_>>>()?;
+    let mut source_class_counts = BTreeMap::new();
+    let mut manifest_kind_counts = BTreeMap::new();
+    let mut crawler_source_maturity_counts = BTreeMap::new();
+    let mut crawler_expected_shape_counts = BTreeMap::new();
+
+    for connector in &connectors {
+        increment(&mut source_class_counts, &connector.source_class);
+        increment(&mut manifest_kind_counts, &connector.manifest_kind);
+        if let Some(source_maturity) = connector.crawler_source_maturity.as_deref() {
+            increment(&mut crawler_source_maturity_counts, source_maturity);
+        }
+        if let Some(expected_shape) = connector.crawler_expected_shape.as_deref() {
+            increment(&mut crawler_expected_shape_counts, expected_shape);
+        }
+    }
+
+    Ok(IngestQualityDoctorProfile {
+        path: file.path,
+        profile_id: file.profile_id,
+        connector_references: connectors.len(),
+        source_manifest_references: file.source_manifest_count,
+        event_csv_example_references: file.event_csv_example_count,
+        optional_crawler_manifest_references: file.optional_crawler_manifest_count,
+        source_class_counts,
+        manifest_kind_counts,
+        runtime_executable_mappings: connectors
+            .iter()
+            .filter(|connector| connector.field_mapping_runtime_executable == Some(true))
+            .count(),
+        non_runtime_mappings: connectors
+            .iter()
+            .filter(|connector| connector.field_mapping_runtime_executable == Some(false))
+            .count(),
+        local_reference_only_connectors: connectors
+            .iter()
+            .filter(|connector| connector.local_reference_only)
+            .count(),
+        dynamic_loading_enabled_connectors: connectors
+            .iter()
+            .filter(|connector| connector.dynamic_loading_enabled)
+            .count(),
+        live_fetch_default_connectors: connectors
+            .iter()
+            .filter(|connector| connector.live_fetch_default)
+            .count(),
+        crawler_allowlist_required_connectors: connectors
+            .iter()
+            .filter(|connector| connector.allowlist_required)
+            .count(),
+        source_manifest_file_count: connectors
+            .iter()
+            .filter_map(|connector| connector.source_manifest_file_count)
+            .sum(),
+        crawler_target_count: connectors
+            .iter()
+            .filter_map(|connector| connector.crawler_target_count)
+            .sum(),
+        crawler_source_maturity_counts,
+        crawler_expected_shape_counts,
+        connectors,
+    })
+}
+
+fn ingest_quality_doctor_connector(
+    profile_id: &str,
+    connector: &ProfileConnectorRegistryEntry,
+) -> Result<IngestQualityDoctorConnector> {
+    let mut manifest_lint = "file_reference".to_string();
+    let mut source_manifest_file_count = None;
+    let mut crawler_target_count = None;
+    let mut crawler_source_maturity = None;
+    let mut crawler_expected_shape = None;
+
+    match connector.connector_type {
+        ProfileConnectorType::SourceManifest => {
+            let lint = lint_source_manifest_file(&connector.manifest_path).with_context(|| {
+                format!(
+                    "failed to lint profile {profile_id} source_manifest connector source_id={} manifest {}",
+                    connector.source_id.as_deref().unwrap_or("unknown"),
+                    connector.manifest_path.display()
+                )
+            })?;
+            source_manifest_file_count = Some(lint.file_count);
+            manifest_lint = "source_manifest_lint".to_string();
+        }
+        ProfileConnectorType::CrawlerManifest => {
+            let lint = lint_crawl_manifest_file(&connector.manifest_path).with_context(|| {
+                format!(
+                    "failed to lint profile {profile_id} crawler_manifest connector source_id={} manifest {}",
+                    connector.source_id.as_deref().unwrap_or("unknown"),
+                    connector.manifest_path.display()
+                )
+            })?;
+            crawler_target_count = Some(lint.target_count);
+            crawler_source_maturity = Some(lint.source_maturity.as_str().to_string());
+            crawler_expected_shape = lint.expected_shape.map(|shape| shape.as_str().to_string());
+            manifest_lint = "crawler_manifest_lint".to_string();
+        }
+        ProfileConnectorType::CsvImport | ProfileConnectorType::NdjsonImport => {}
+    }
+
+    Ok(IngestQualityDoctorConnector {
+        connector_type: connector.connector_type.as_str().to_string(),
+        source_class: connector.source_class.as_str().to_string(),
+        manifest_kind: connector.manifest_kind.clone(),
+        source_id: connector.source_id.clone(),
+        field_mapping: connector
+            .field_mapping
+            .as_ref()
+            .map(|mapping| mapping.as_str().to_string()),
+        field_mapping_runtime_executable: connector
+            .field_mapping
+            .as_ref()
+            .map(|mapping| mapping.is_runtime_executable()),
+        manifest_lint,
+        source_manifest_file_count,
+        crawler_target_count,
+        crawler_source_maturity,
+        crawler_expected_shape,
+        local_reference_only: connector.safety.local_reference_only,
+        dynamic_loading_enabled: connector.safety.dynamic_loading_enabled,
+        live_fetch_default: connector.safety.live_fetch_default,
+        allowlist_required: connector.safety.allowlist_required,
+        manifest_path: connector.manifest_path.clone(),
+    })
+}
+
 fn ranking_config_doctor_file(file: RankingConfigLintFile) -> RankingConfigDoctorFile {
     RankingConfigDoctorFile {
         path: file.path,
@@ -1158,8 +1459,8 @@ mod tests {
 
     use super::{
         explanation_integrity_summary_from_replay, ranking_config_doctor_summary_from_lint,
-        run_context_coverage_doctor, run_explanation_integrity_doctor, run_profile_pack_doctor,
-        run_retrieval_parity_doctor, run_storage_compatibility_doctor,
+        run_context_coverage_doctor, run_explanation_integrity_doctor, run_ingest_quality_doctor,
+        run_profile_pack_doctor, run_retrieval_parity_doctor, run_storage_compatibility_doctor,
     };
     use crate::{
         explanation_integrity::{QualityCheckStatus, QualitySeverity},
@@ -1273,6 +1574,53 @@ mod tests {
             .connector_registry
             .iter()
             .any(|entry| entry.safety.allowlist_required));
+    }
+
+    #[test]
+    fn committed_profile_packs_pass_ingest_quality_doctor() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let summary = run_ingest_quality_doctor(repo_root.join("configs/profiles"))
+            .expect("ingest quality doctor");
+
+        assert_eq!(summary.profile_packs, 2);
+        assert_eq!(summary.connector_references, 9);
+        assert_eq!(summary.source_class_counts.get("csv_import"), Some(&6));
+        assert_eq!(summary.source_class_counts.get("ndjson_import"), Some(&2));
+        assert_eq!(summary.source_class_counts.get("html_crawl"), Some(&1));
+        assert_eq!(summary.manifest_kind_counts.get("import_source"), Some(&4));
+        assert_eq!(summary.manifest_kind_counts.get("csv_file"), Some(&2));
+        assert_eq!(summary.manifest_kind_counts.get("ndjson_file"), Some(&2));
+        assert_eq!(summary.manifest_kind_counts.get("crawler_source"), Some(&1));
+        assert_eq!(summary.runtime_executable_mappings, 4);
+        assert_eq!(summary.non_runtime_mappings, 0);
+        assert_eq!(summary.source_manifest_file_count, 4);
+        assert_eq!(summary.crawler_target_count, 1);
+        assert_eq!(summary.crawler_allowlist_required_connectors, 1);
+        assert_eq!(
+            summary.crawler_source_maturity_counts.get("parser_only"),
+            Some(&1)
+        );
+        assert_eq!(
+            summary
+                .crawler_expected_shape_counts
+                .get("html_heading_page"),
+            Some(&1)
+        );
+        assert_eq!(summary.execution_scope, "no_import_or_live_crawl");
+
+        let school_event_jp = summary
+            .profiles
+            .iter()
+            .find(|profile| profile.profile_id == "school-event-jp")
+            .expect("school event jp profile");
+        assert_eq!(school_event_jp.connector_references, 7);
+        assert_eq!(school_event_jp.source_manifest_file_count, 4);
+        assert_eq!(school_event_jp.crawler_target_count, 1);
+        assert!(school_event_jp.connectors.iter().any(|connector| {
+            connector.connector_type == "crawler_manifest"
+                && connector.allowlist_required
+                && connector.manifest_lint == "crawler_manifest_lint"
+        }));
     }
 
     #[test]

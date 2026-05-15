@@ -3,9 +3,9 @@ use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 
 use crate::{
     doctor::{
-        ContextCoverageDoctorSummary, ExplanationIntegrityDoctorSummary, ProfilePackDoctorSummary,
-        RankingConfigDoctorSummary, RetrievalParityDoctorSummary,
-        StorageCompatibilityDoctorSummary,
+        ContextCoverageDoctorSummary, ExplanationIntegrityDoctorSummary,
+        IngestQualityDoctorSummary, ProfilePackDoctorSummary, RankingConfigDoctorSummary,
+        RetrievalParityDoctorSummary, StorageCompatibilityDoctorSummary,
     },
     explanation_integrity::QualityCheckStatus,
     fixtures::FixtureDoctorSummary,
@@ -468,6 +468,99 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
                 connector.safety.dynamic_loading_enabled,
                 connector.safety.live_fetch_default,
                 connector.safety.allowlist_required,
+                connector.manifest_path.display()
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary) -> String {
+    let mut lines = vec![format!(
+        "doctor ingest-quality completed: profile_packs={}, connectors={}, source_classes={}, manifest_kinds={}, runtime_executable_mappings={}, non_runtime_mappings={}, source_manifest_files={}, crawler_targets={}, local_reference_only={}, dynamic_loading_enabled={}, live_fetch_default={}, crawler_allowlist_required={}",
+        summary.profile_packs,
+        summary.connector_references,
+        format_counts(&summary.source_class_counts),
+        format_counts(&summary.manifest_kind_counts),
+        summary.runtime_executable_mappings,
+        summary.non_runtime_mappings,
+        summary.source_manifest_file_count,
+        summary.crawler_target_count,
+        summary.local_reference_only_connectors,
+        summary.dynamic_loading_enabled_connectors,
+        summary.live_fetch_default_connectors,
+        summary.crawler_allowlist_required_connectors
+    )];
+    lines.push(format!(
+        "evidence_scope: {} execution_scope: {}",
+        summary.evidence_scope, summary.execution_scope
+    ));
+    lines.push(format!(
+        "profile_references: source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
+        summary.source_manifest_references,
+        summary.event_csv_example_references,
+        summary.optional_crawler_manifest_references
+    ));
+    lines.push(format!(
+        "crawler_source_maturity: {}",
+        format_counts(&summary.crawler_source_maturity_counts)
+    ));
+    lines.push(format!(
+        "crawler_expected_shapes: {}",
+        format_counts(&summary.crawler_expected_shape_counts)
+    ));
+
+    for profile in &summary.profiles {
+        lines.push(format!(
+            "  profile_id={} connectors={} source_classes={} manifest_kinds={} runtime_executable_mappings={} non_runtime_mappings={} source_manifest_files={} crawler_targets={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} crawler_allowlist_required={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={}",
+            profile.profile_id,
+            profile.connector_references,
+            format_counts(&profile.source_class_counts),
+            format_counts(&profile.manifest_kind_counts),
+            profile.runtime_executable_mappings,
+            profile.non_runtime_mappings,
+            profile.source_manifest_file_count,
+            profile.crawler_target_count,
+            profile.local_reference_only_connectors,
+            profile.dynamic_loading_enabled_connectors,
+            profile.live_fetch_default_connectors,
+            profile.crawler_allowlist_required_connectors,
+            profile.source_manifest_references,
+            profile.event_csv_example_references,
+            profile.optional_crawler_manifest_references,
+            profile.path.display()
+        ));
+        for connector in &profile.connectors {
+            lines.push(format!(
+                "    connector type={} source_class={} manifest_kind={} source_id={} field_mapping={} field_mapping_runtime_executable={} lint={} source_manifest_files={} crawler_targets={} crawler_source_maturity={} crawler_expected_shape={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} allowlist_required={} manifest={}",
+                connector.connector_type,
+                connector.source_class,
+                connector.manifest_kind,
+                connector.source_id.as_deref().unwrap_or("none"),
+                connector.field_mapping.as_deref().unwrap_or("none"),
+                connector
+                    .field_mapping_runtime_executable
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                connector.manifest_lint,
+                connector
+                    .source_manifest_file_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                connector
+                    .crawler_target_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                connector
+                    .crawler_source_maturity
+                    .as_deref()
+                    .unwrap_or("none"),
+                connector.crawler_expected_shape.as_deref().unwrap_or("none"),
+                connector.local_reference_only,
+                connector.dynamic_loading_enabled,
+                connector.live_fetch_default,
+                connector.allowlist_required,
                 connector.manifest_path.display()
             ));
         }

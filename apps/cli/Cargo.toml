@@ -22,6 +22,7 @@ chrono.workspace = true
 clap.workspace = true
 config = { path = "../../crates/config" }
 context = { path = "../../crates/context" }
+crawler-core = { path = "../../crates/crawler-core" }
 domain = { path = "../../crates/domain" }
 generic-csv = { path = "../../crates/connectors/generic-csv" }
 jp-postal = { path = "../../crates/connectors/jp-postal" }

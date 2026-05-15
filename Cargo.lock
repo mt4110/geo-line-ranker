@@ -391,6 +391,7 @@ dependencies = [
  "clap",
  "config",
  "context",
+ "crawler-core",
  "csv",
  "domain",
  "generic-csv",
