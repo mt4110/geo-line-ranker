@@ -1,11 +1,15 @@
+use generic_csv::{SourceFileSpec, SourceManifest, SourceManifestKind};
 use serde_json::json;
 use storage::{
     EvaluationRunCaseRecord, EvaluationRunCaseStatus, EvaluationRunKind, EvaluationRunRecord,
-    EvaluationRunStatus, ProfileCompatibilityStatus, ProfileCompatibilityStatusRecord,
-    ProfileManifestRecord, ProfileRegistryRepository,
+    EvaluationRunStatus, IngestRunLineageRecord, ProfileCompatibilityStatus,
+    ProfileCompatibilityStatusRecord, ProfileManifestRecord, ProfileRegistryRepository,
 };
-use storage_postgres::{run_migrations, PgRepository};
-use tokio_postgres::NoTls;
+use storage_postgres::{
+    begin_crawl_run, begin_crawl_run_with_lineage, begin_import_run, begin_import_run_with_lineage,
+    run_migrations, PgRepository, SourceManifestAudit,
+};
+use tokio_postgres::{NoTls, Row};
 
 mod common;
 
@@ -124,6 +128,259 @@ async fn profile_registry_persists_manifest_status_and_evaluation_runs() -> anyh
     test_result
 }
 
+#[tokio::test]
+async fn import_and_crawl_runs_can_reference_profile_manifest_lineage() -> anyhow::Result<()> {
+    let Ok((admin_database_url, database_url, database_name)) =
+        create_empty_database("glr_ingest_lineage").await
+    else {
+        eprintln!(
+            "skipping ingest lineage persistence test because PostgreSQL admin access is unavailable"
+        );
+        return Ok(());
+    };
+
+    let test_result = async {
+        run_migrations(
+            &database_url,
+            repo_root().join("storage/migrations/postgres"),
+        )
+        .await?;
+        let repository = PgRepository::new(&database_url);
+        let manifest = profile_manifest_record();
+        let lineage_id = repository.upsert_profile_manifest(&manifest).await?;
+        let lineage = ingest_run_lineage_record(&manifest.profile_id, lineage_id);
+        let source_manifest = SourceManifest {
+            schema_version: 1,
+            kind: SourceManifestKind::ImportSource,
+            source_id: "event-archive".to_string(),
+            source_name: "Event Archive".to_string(),
+            manifest_version: 1,
+            parser_version: Some("event-archive-v1".to_string()),
+            description: None,
+            files: vec![SourceFileSpec {
+                logical_name: "events".to_string(),
+                path: "events.csv".to_string(),
+                format: "csv".to_string(),
+            }],
+        };
+        let import_run_id = begin_import_run_with_lineage(
+            &database_url,
+            "/tmp/event-archive.yaml",
+            &source_manifest,
+            "event-archive-v1",
+            Some(&lineage),
+        )
+        .await?;
+        let crawl_manifest = SourceManifestAudit {
+            manifest_path: "/tmp/crawler.yaml".to_string(),
+            source_id: "event-crawl".to_string(),
+            source_name: "Event Crawl".to_string(),
+            manifest_version: 1,
+            parser_version: "single_title_page_v1".to_string(),
+            manifest_json: json!({
+                "source_id": "event-crawl",
+                "kind": "crawler_source"
+            }),
+        };
+        let crawl_lineage = IngestRunLineageRecord {
+            connector_type: Some("crawler_manifest".to_string()),
+            source_class: Some("html_crawl".to_string()),
+            manifest_kind: Some("crawler_source".to_string()),
+            field_mapping: None,
+            lineage_evidence: json!({
+                "source_id": "event-crawl",
+                "connector_manifest_path": "/tmp/crawler.yaml"
+            }),
+            ..lineage.clone()
+        };
+        let crawl_run_id = begin_crawl_run_with_lineage(
+            &database_url,
+            &crawl_manifest,
+            "single_title_page_v1",
+            Some(&crawl_lineage),
+        )
+        .await?;
+        let legacy_source_manifest = SourceManifest {
+            schema_version: 1,
+            kind: SourceManifestKind::ImportSource,
+            source_id: "event-csv".to_string(),
+            source_name: "Event CSV".to_string(),
+            manifest_version: 1,
+            parser_version: Some("event-csv-v1".to_string()),
+            description: None,
+            files: vec![SourceFileSpec {
+                logical_name: "events".to_string(),
+                path: "events.csv".to_string(),
+                format: "csv".to_string(),
+            }],
+        };
+        let legacy_import_run_id = begin_import_run(
+            &database_url,
+            "/tmp/legacy-event-csv.yaml",
+            &legacy_source_manifest,
+            "event-csv-v1",
+        )
+        .await?;
+        let legacy_crawl_manifest = SourceManifestAudit {
+            manifest_path: "/tmp/legacy-crawler.yaml".to_string(),
+            source_id: "legacy-event-crawl".to_string(),
+            source_name: "Legacy Event Crawl".to_string(),
+            manifest_version: 1,
+            parser_version: "single_title_page_v1".to_string(),
+            manifest_json: json!({
+                "source_id": "legacy-event-crawl",
+                "kind": "crawler_source"
+            }),
+        };
+        let legacy_crawl_run_id = begin_crawl_run(
+            &database_url,
+            &legacy_crawl_manifest,
+            "single_title_page_v1",
+        )
+        .await?;
+
+        let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let import_row = client
+            .query_one(
+                "SELECT profile_id,
+                        profile_manifest_lineage_id,
+                        connector_type,
+                        source_class,
+                        manifest_kind,
+                        manifest_schema_version,
+                        field_mapping,
+                        lineage_evidence
+                 FROM import_runs
+                 WHERE id = $1",
+                &[&import_run_id],
+            )
+            .await?;
+        assert_eq!(
+            import_row.get::<_, Option<String>>("profile_id"),
+            Some(manifest.profile_id.clone())
+        );
+        assert_eq!(
+            import_row.get::<_, Option<i64>>("profile_manifest_lineage_id"),
+            Some(lineage_id)
+        );
+        assert_eq!(
+            import_row.get::<_, Option<String>>("connector_type"),
+            Some("archive_source".to_string())
+        );
+        assert_eq!(
+            import_row.get::<_, Option<String>>("source_class"),
+            Some("archive_import".to_string())
+        );
+        assert_eq!(
+            import_row.get::<_, Option<String>>("manifest_kind"),
+            Some("archive_source".to_string())
+        );
+        assert_eq!(
+            import_row.get::<_, Option<i32>>("manifest_schema_version"),
+            Some(1)
+        );
+        assert_eq!(
+            import_row.get::<_, Option<String>>("field_mapping"),
+            Some("event_v1".to_string())
+        );
+        assert_eq!(
+            import_row
+                .get::<_, serde_json::Value>("lineage_evidence")
+                .get("source_id"),
+            Some(&json!("event-archive"))
+        );
+
+        let crawl_row = client
+            .query_one(
+                "SELECT profile_id,
+                        profile_manifest_lineage_id,
+                        connector_type,
+                        source_class,
+                        manifest_kind,
+                        manifest_schema_version,
+                        field_mapping,
+                        lineage_evidence
+                 FROM crawl_runs
+                 WHERE id = $1",
+                &[&crawl_run_id],
+            )
+            .await?;
+        assert_eq!(
+            crawl_row.get::<_, Option<String>>("profile_id"),
+            Some(manifest.profile_id.clone())
+        );
+        assert_eq!(
+            crawl_row.get::<_, Option<i64>>("profile_manifest_lineage_id"),
+            Some(lineage_id)
+        );
+        assert_eq!(
+            crawl_row.get::<_, Option<String>>("connector_type"),
+            Some("crawler_manifest".to_string())
+        );
+        assert_eq!(
+            crawl_row.get::<_, Option<String>>("source_class"),
+            Some("html_crawl".to_string())
+        );
+        assert_eq!(
+            crawl_row.get::<_, Option<String>>("manifest_kind"),
+            Some("crawler_source".to_string())
+        );
+        assert_eq!(
+            crawl_row.get::<_, Option<i32>>("manifest_schema_version"),
+            Some(1)
+        );
+        assert_eq!(crawl_row.get::<_, Option<String>>("field_mapping"), None);
+        assert_eq!(
+            crawl_row
+                .get::<_, serde_json::Value>("lineage_evidence")
+                .get("source_id"),
+            Some(&json!("event-crawl"))
+        );
+
+        let legacy_import_row = client
+            .query_one(
+                "SELECT profile_id,
+                        profile_manifest_lineage_id,
+                        connector_type,
+                        source_class,
+                        manifest_kind,
+                        manifest_schema_version,
+                        field_mapping,
+                        lineage_evidence
+                 FROM import_runs
+                 WHERE id = $1",
+                &[&legacy_import_run_id],
+            )
+            .await?;
+        assert_empty_run_lineage(&legacy_import_row);
+        let legacy_crawl_row = client
+            .query_one(
+                "SELECT profile_id,
+                        profile_manifest_lineage_id,
+                        connector_type,
+                        source_class,
+                        manifest_kind,
+                        manifest_schema_version,
+                        field_mapping,
+                        lineage_evidence
+                 FROM crawl_runs
+                 WHERE id = $1",
+                &[&legacy_crawl_run_id],
+            )
+            .await?;
+        assert_empty_run_lineage(&legacy_crawl_row);
+
+        Ok(())
+    }
+    .await;
+
+    drop_database(&admin_database_url, &database_name).await?;
+    test_result
+}
+
 fn evaluation_run_record(profile_id: &str, lineage_id: i64) -> EvaluationRunRecord {
     EvaluationRunRecord {
         profile_id: Some(profile_id.to_string()),
@@ -179,4 +436,37 @@ fn profile_manifest_record() -> ProfileManifestRecord {
         connector_count: 1,
         evaluation_reference_count: 1,
     }
+}
+
+fn ingest_run_lineage_record(profile_id: &str, lineage_id: i64) -> IngestRunLineageRecord {
+    IngestRunLineageRecord {
+        profile_id: Some(profile_id.to_string()),
+        profile_manifest_lineage_id: Some(lineage_id),
+        connector_type: Some("archive_source".to_string()),
+        source_class: Some("archive_import".to_string()),
+        manifest_kind: Some("archive_source".to_string()),
+        manifest_schema_version: Some(1),
+        field_mapping: Some("event_v1".to_string()),
+        lineage_evidence: json!({
+            "source_id": "event-archive",
+            "connector_manifest_path": "/tmp/event-archive.yaml"
+        }),
+    }
+}
+
+fn assert_empty_run_lineage(row: &Row) {
+    assert_eq!(row.get::<_, Option<String>>("profile_id"), None);
+    assert_eq!(
+        row.get::<_, Option<i64>>("profile_manifest_lineage_id"),
+        None
+    );
+    assert_eq!(row.get::<_, Option<String>>("connector_type"), None);
+    assert_eq!(row.get::<_, Option<String>>("source_class"), None);
+    assert_eq!(row.get::<_, Option<String>>("manifest_kind"), None);
+    assert_eq!(row.get::<_, Option<i32>>("manifest_schema_version"), None);
+    assert_eq!(row.get::<_, Option<String>>("field_mapping"), None);
+    assert_eq!(
+        row.get::<_, serde_json::Value>("lineage_evidence"),
+        json!({})
+    );
 }

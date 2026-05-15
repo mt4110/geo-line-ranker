@@ -402,7 +402,7 @@ pub fn format_health_summary(summary: &ParserHealthSummary) -> String {
     lines.push("recent runs:".to_string());
     for run in &summary.recent_runs {
         lines.push(format!(
-            "#{} {} fetched={} parsed={} imported={} started={} completed={} fetch[{}] parse[{}] dedupe={}",
+            "#{} {} fetched={} parsed={} imported={} started={} completed={} fetch[{}] parse[{}] dedupe={} lineage={}",
             run.crawl_run_id,
             run.status,
             run.fetched_targets,
@@ -412,7 +412,8 @@ pub fn format_health_summary(summary: &ParserHealthSummary) -> String {
             run.completed_at.as_deref().unwrap_or("-"),
             format_count_map(&run.fetch_status_counts),
             format_count_map(&run.parse_level_counts),
-            run.dedupe_count
+            run.dedupe_count,
+            format_crawl_run_lineage(run)
         ));
         if let Some(error) = &run.latest_error {
             lines.push(format!(
@@ -687,6 +688,34 @@ fn format_count_map(counts: &BTreeMap<String, i64>) -> String {
         .map(|(key, value)| format!("{key}:{value}"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn format_crawl_run_lineage(run: &CrawlRunHealthSnapshot) -> String {
+    if run.profile_id.is_none()
+        && run.profile_manifest_lineage_id.is_none()
+        && run.connector_type.is_none()
+        && run.source_class.is_none()
+        && run.manifest_kind.is_none()
+        && run.manifest_schema_version.is_none()
+        && run.field_mapping.is_none()
+    {
+        return "none".to_string();
+    }
+
+    format!(
+        "profile_id={} manifest_lineage_id={} connector_type={} source_class={} manifest_kind={} manifest_schema_version={} field_mapping={}",
+        run.profile_id.as_deref().unwrap_or("none"),
+        run.profile_manifest_lineage_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        run.connector_type.as_deref().unwrap_or("none"),
+        run.source_class.as_deref().unwrap_or("none"),
+        run.manifest_kind.as_deref().unwrap_or("none"),
+        run.manifest_schema_version
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        run.field_mapping.as_deref().unwrap_or("none")
+    )
 }
 
 fn format_string_set(values: &BTreeSet<String>) -> String {

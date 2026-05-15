@@ -4,6 +4,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+#[cfg(feature = "storage-backends")]
+use cli::{
+    build_profile_manifest_record, format_context_inspect_summary, format_eval_replay_summary,
+    format_explain_trace_report, format_job_enqueue_summary, format_job_inspection,
+    format_job_list, format_job_mutation_summary, format_replay_evaluation_summary,
+    format_replay_scenario_summary, format_snapshot_refresh_summary, format_summary,
+    run_context_inspect, run_derive_school_station_links, run_event_csv_import,
+    run_event_ndjson_import, run_explain_trace, run_import_command, run_job_due, run_job_enqueue,
+    run_job_inspect, run_job_list, run_job_retry, run_profile_source_import, run_replay_evaluate,
+    run_replay_scenarios, run_snapshot_refresh, ContextInspectInput, ImportTarget,
+    DEFAULT_EVENT_NDJSON_SOURCE_ID,
+};
 use cli::{
     format_context_coverage_doctor_summary, format_eval_golden_summary,
     format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
@@ -16,18 +28,6 @@ use cli::{
     run_storage_compatibility_doctor, ReplayScenarioSource, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 #[cfg(feature = "storage-backends")]
-use cli::{
-    format_context_inspect_summary, format_eval_replay_summary, format_explain_trace_report,
-    format_job_enqueue_summary, format_job_inspection, format_job_list,
-    format_job_mutation_summary, format_replay_evaluation_summary, format_replay_scenario_summary,
-    format_snapshot_refresh_summary, format_summary, run_context_inspect,
-    run_derive_school_station_links, run_event_csv_import, run_event_ndjson_import,
-    run_explain_trace, run_import_command, run_job_due, run_job_enqueue, run_job_inspect,
-    run_job_list, run_job_retry, run_profile_source_import, run_replay_evaluate,
-    run_replay_scenarios, run_snapshot_refresh, ContextInspectInput, ImportTarget,
-    DEFAULT_EVENT_NDJSON_SOURCE_ID,
-};
-#[cfg(feature = "storage-backends")]
 use config::AppSettings;
 use config::{
     lint_profile_pack_dir, lint_ranking_config_dir, load_and_lint_profile_pack_file,
@@ -38,12 +38,10 @@ use config::{
 };
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
 #[cfg(feature = "storage-backends")]
-use sha2::{Digest, Sha256};
-#[cfg(feature = "storage-backends")]
 use storage::{
     EvaluationRunCaseRecord, EvaluationRunCaseStatus, EvaluationRunKind, EvaluationRunRecord,
     EvaluationRunStatus, ProfileCompatibilityStatus, ProfileCompatibilityStatusRecord,
-    ProfileManifestRecord, ProfileRegistryRepository,
+    ProfileRegistryRepository,
 };
 #[cfg(feature = "storage-backends")]
 use storage_opensearch::ProjectionSyncService;
@@ -1296,7 +1294,7 @@ async fn persist_profile_lint_summary(
     let mut lineage_ids = Vec::new();
     for lint_file in &summary.files {
         let (manifest, loaded_lint_file) = load_and_lint_profile_pack_file(&lint_file.path)?;
-        let record = profile_manifest_record(&manifest, &loaded_lint_file)?;
+        let record = build_profile_manifest_record(&manifest, &loaded_lint_file)?;
         let lineage_id = repository.upsert_profile_manifest(&record).await?;
         repository
             .record_profile_compatibility_status(&ProfileCompatibilityStatusRecord {
@@ -1338,7 +1336,7 @@ async fn persist_eval_golden_summary(
     let profile_manifest_lineage_id = match profile_manifest {
         Some(profile_manifest) => {
             let (manifest, lint_file) = load_and_lint_profile_pack_file(profile_manifest)?;
-            let record = profile_manifest_record(&manifest, &lint_file)?;
+            let record = build_profile_manifest_record(&manifest, &lint_file)?;
             let lineage_id = repository.upsert_profile_manifest(&record).await?;
             repository
                 .record_profile_compatibility_status(&ProfileCompatibilityStatusRecord {
@@ -1397,88 +1395,6 @@ async fn persist_eval_golden_summary(
     _profile_manifest: Option<&Path>,
 ) -> anyhow::Result<i64> {
     anyhow::bail!("evaluation run persistence requires the storage-backends feature")
-}
-
-#[cfg(feature = "storage-backends")]
-fn profile_manifest_record(
-    manifest: &ProfilePackManifest,
-    lint_file: &ProfilePackLintFile,
-) -> anyhow::Result<ProfileManifestRecord> {
-    let raw = std::fs::read(&lint_file.path)
-        .with_context(|| format!("failed to read profile pack {}", lint_file.path.display()))?;
-    let checksum = format!("{:x}", Sha256::digest(&raw));
-    Ok(ProfileManifestRecord {
-        profile_id: manifest.profile_id.clone(),
-        display_name: manifest.display_name.clone(),
-        schema_version: manifest.schema_version.try_into()?,
-        manifest_kind: manifest.kind.as_str().to_string(),
-        manifest_version: manifest.manifest_version.try_into()?,
-        compatibility_level: manifest.compatibility_level.as_str().to_string(),
-        default_locale: manifest.default_locale.clone(),
-        description: manifest.description.clone(),
-        manifest_path: lint_file
-            .path
-            .canonicalize()
-            .with_context(|| {
-                format!(
-                    "failed to canonicalize profile pack {}",
-                    lint_file.path.display()
-                )
-            })?
-            .display()
-            .to_string(),
-        manifest_checksum_sha256: checksum,
-        manifest_payload: serde_json::to_value(manifest)?,
-        ranking_config_dir: canonicalize_profile_registry_path(
-            "ranking config dir",
-            &lint_file.ranking_config_dir,
-        )?,
-        reason_catalog_path: canonicalize_profile_registry_path(
-            "reason catalog",
-            &lint_file.reason_catalog_path,
-        )?,
-        content_kind_registry: lint_file
-            .content_kind_registry
-            .iter()
-            .map(|kind| kind.as_str().to_string())
-            .collect(),
-        supported_content_kinds: lint_file
-            .supported_content_kinds
-            .iter()
-            .map(|kind| kind.as_str().to_string())
-            .collect(),
-        context_inputs: manifest
-            .context_inputs
-            .iter()
-            .map(|input| input.as_str().to_string())
-            .collect(),
-        placements: lint_file
-            .placements
-            .iter()
-            .map(|placement| placement.as_str().to_string())
-            .collect(),
-        fallback_policy: manifest.fallback_policy.display(),
-        fixture_count: usize_to_i32("fixture_count", lint_file.fixture_count)?,
-        connector_count: usize_to_i32("connector_count", lint_file.connector_count)?,
-        evaluation_reference_count: usize_to_i32(
-            "evaluation_reference_count",
-            lint_file.evaluation_reference_count,
-        )?,
-    })
-}
-
-#[cfg(feature = "storage-backends")]
-fn canonicalize_profile_registry_path(field: &str, path: &Path) -> anyhow::Result<String> {
-    Ok(path
-        .canonicalize()
-        .with_context(|| {
-            format!(
-                "failed to canonicalize profile registry {field} {}",
-                path.display()
-            )
-        })?
-        .display()
-        .to_string())
 }
 
 #[cfg(feature = "storage-backends")]
@@ -2974,6 +2890,10 @@ evaluation:
         assert!(rendered.contains("crawler_allowlist_required=1"));
         assert!(rendered.contains("evidence_scope: db_free_profile_connector_manifest_coverage"));
         assert!(rendered.contains("execution_scope: no_import_or_live_crawl"));
+        assert!(rendered.contains(
+            "run_lineage: profile_source_import_connectors=9 crawler_contract_connectors=1"
+        ));
+        assert!(rendered.contains("fields=profile_id,profile_manifest_lineage_id,connector_type"));
         assert!(rendered.contains("archive_formats: tar=1"));
         assert!(rendered.contains("crawler_source_maturity: parser_only=1"));
         assert!(rendered.contains("crawler_expected_shapes: html_heading_page=1"));

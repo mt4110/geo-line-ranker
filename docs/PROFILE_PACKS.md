@@ -221,6 +221,14 @@ PostgreSQL: `profile_registry`, `profile_pack_manifest_lineage`, and
 PostgreSQL and `DATABASE_URL`, and does not make profile packs mandatory for
 DB-free authoring commands.
 
+Profile-source imports also persist manifest lineage automatically. When
+`import profile-source --source-id ...` runs, the selected profile manifest is
+written or updated in `profile_pack_manifest_lineage`, and the resulting
+`import_runs` row records `profile_id`, `profile_manifest_lineage_id`,
+connector type, source class, manifest kind, manifest schema version, field
+mapping, and bounded connector evidence. Direct legacy imports keep those
+columns null.
+
 ## Runtime Selection
 
 API, worker, and ranking/fixture-consuming CLI commands select
@@ -303,6 +311,11 @@ boundary (`Entity`, `Occurrence`, `Candidate`, `FeatureContribution`, and
 (`CanonicalIngestOutput`, `CanonicalIngestRecord`, location context, and
 lineage). These types let connector/profile/import responsibilities line up
 without rewriting the current ranking path in one step.
+
+Run lineage is evidence, not payload storage. `import_runs.lineage_evidence` and
+`crawl_runs.lineage_evidence` may store connector identifiers, manifest paths,
+safety flags, and mapping identifiers; they must not store raw imported rows,
+raw HTML, external profile payloads, secrets, or user/account data.
 
 `school-event-jp` stays the best-maintained reference profile, but JP source
 manifests and crawler examples live behind that profile boundary. The

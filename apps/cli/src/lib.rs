@@ -10,6 +10,8 @@ mod formatting;
 mod import;
 #[cfg(feature = "storage-backends")]
 mod jobs;
+#[cfg(feature = "storage-backends")]
+mod profile_persistence;
 mod replay;
 #[cfg(feature = "storage-backends")]
 mod repository;
@@ -69,6 +71,8 @@ pub use import::{
 pub use jobs::{
     run_job_due, run_job_enqueue, run_job_inspect, run_job_list, run_job_retry, JobEnqueueSummary,
 };
+#[cfg(feature = "storage-backends")]
+pub use profile_persistence::build_profile_manifest_record;
 #[cfg(feature = "storage-backends")]
 pub use replay::run_replay_evaluate;
 pub use replay::{

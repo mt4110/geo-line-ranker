@@ -118,6 +118,8 @@ pub struct ProfilePackDoctorFile {
 pub struct IngestQualityDoctorSummary {
     pub profile_packs: usize,
     pub connector_references: usize,
+    pub profile_source_import_lineage_connectors: usize,
+    pub crawler_lineage_contract_connectors: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
     pub archive_source_references: usize,
@@ -137,6 +139,7 @@ pub struct IngestQualityDoctorSummary {
     pub archive_format_counts: BTreeMap<String, usize>,
     pub crawler_source_maturity_counts: BTreeMap<String, usize>,
     pub crawler_expected_shape_counts: BTreeMap<String, usize>,
+    pub run_lineage_fields: Vec<String>,
     pub evidence_scope: String,
     pub execution_scope: String,
     pub connector_schema_contract_version: String,
@@ -149,6 +152,8 @@ pub struct IngestQualityDoctorProfile {
     pub path: PathBuf,
     pub profile_id: String,
     pub connector_references: usize,
+    pub profile_source_import_lineage_connectors: usize,
+    pub crawler_lineage_contract_connectors: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
     pub archive_source_references: usize,
@@ -1271,6 +1276,14 @@ fn ingest_quality_doctor_summary_from_lint(
             .iter()
             .map(|profile| profile.connector_references)
             .sum(),
+        profile_source_import_lineage_connectors: profiles
+            .iter()
+            .map(|profile| profile.profile_source_import_lineage_connectors)
+            .sum(),
+        crawler_lineage_contract_connectors: profiles
+            .iter()
+            .map(|profile| profile.crawler_lineage_contract_connectors)
+            .sum(),
         source_manifest_references: profiles
             .iter()
             .map(|profile| profile.source_manifest_references)
@@ -1329,6 +1342,7 @@ fn ingest_quality_doctor_summary_from_lint(
         archive_format_counts,
         crawler_source_maturity_counts,
         crawler_expected_shape_counts,
+        run_lineage_fields: run_lineage_fields(),
         evidence_scope: "db_free_profile_connector_manifest_coverage".to_string(),
         execution_scope: "no_import_or_live_crawl".to_string(),
         connector_schema_contract_version: PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION.to_string(),
@@ -1375,6 +1389,14 @@ fn ingest_quality_doctor_profile(file: ProfilePackLintFile) -> Result<IngestQual
         path: file.path,
         profile_id: file.profile_id,
         connector_references: connectors.len(),
+        profile_source_import_lineage_connectors: connectors
+            .iter()
+            .filter(|connector| connector.connector_type != "crawler_manifest")
+            .count(),
+        crawler_lineage_contract_connectors: connectors
+            .iter()
+            .filter(|connector| connector.connector_type == "crawler_manifest")
+            .count(),
         source_manifest_references: file.source_manifest_count,
         event_csv_example_references: file.event_csv_example_count,
         archive_source_references: file.archive_source_count,
@@ -1528,6 +1550,22 @@ fn connector_schema_contract_summaries() -> Vec<ConnectorSchemaContractSummary> 
             allowlist_required: contract.safety.allowlist_required,
         })
         .collect()
+}
+
+fn run_lineage_fields() -> Vec<String> {
+    [
+        "profile_id",
+        "profile_manifest_lineage_id",
+        "connector_type",
+        "source_class",
+        "manifest_kind",
+        "manifest_schema_version",
+        "field_mapping",
+        "lineage_evidence",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 fn ensure_archive_source_event_v1_runtime(

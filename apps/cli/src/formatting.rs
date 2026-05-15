@@ -516,6 +516,12 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
         summary.optional_crawler_manifest_references
     ));
     lines.push(format!(
+        "run_lineage: profile_source_import_connectors={} crawler_contract_connectors={} fields={}",
+        summary.profile_source_import_lineage_connectors,
+        summary.crawler_lineage_contract_connectors,
+        summary.run_lineage_fields.join(",")
+    ));
+    lines.push(format!(
         "archive_formats: {}",
         format_counts(&summary.archive_format_counts)
     ));
@@ -530,9 +536,11 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
 
     for profile in &summary.profiles {
         lines.push(format!(
-            "  profile_id={} connectors={} source_classes={} manifest_kinds={} manifest_schema_versions={} runtime_executable_mappings={} non_runtime_mappings={} source_manifest_files={} archive_files={} crawler_targets={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} crawler_allowlist_required={} source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={} manifest={}",
+            "  profile_id={} connectors={} profile_source_import_lineage_connectors={} crawler_lineage_contract_connectors={} source_classes={} manifest_kinds={} manifest_schema_versions={} runtime_executable_mappings={} non_runtime_mappings={} source_manifest_files={} archive_files={} crawler_targets={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} crawler_allowlist_required={} source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={} manifest={}",
             profile.profile_id,
             profile.connector_references,
+            profile.profile_source_import_lineage_connectors,
+            profile.crawler_lineage_contract_connectors,
             format_counts(&profile.source_class_counts),
             format_counts(&profile.manifest_kind_counts),
             format_counts(&profile.manifest_schema_version_counts),
