@@ -486,19 +486,39 @@ async fn run_event_archive_import(
             manifest_path.as_ref().display()
         )
     })?;
-    let manifest = load_archive_manifest(&manifest_path)?;
-    ensure!(
-        manifest.source_id == source_id,
-        "archive source manifest {} source_id {} does not match requested source_id {}",
-        manifest_path.display(),
-        manifest.source_id,
-        source_id
-    );
+    let manifest = match load_archive_manifest(&manifest_path) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            let preflight_manifest = archive_preflight_audit_manifest(source_id);
+            let import_run_id = begin_import_run(
+                &settings.database_url,
+                &manifest_path,
+                &preflight_manifest,
+                EVENT_ARCHIVE_PARSER_VERSION,
+            )
+            .await?;
+            let _ = record_import_report(
+                &settings.database_url,
+                import_run_id,
+                &ImportReportEntry {
+                    level: "error".to_string(),
+                    code: "event_archive_import_failed".to_string(),
+                    message: error.to_string(),
+                    row_count: None,
+                    details: json!({
+                        "source_id": source_id,
+                        "manifest_path": manifest_path.display().to_string(),
+                        "phase": "load_manifest"
+                    }),
+                },
+            )
+            .await;
+            let _ = finish_import_run(&settings.database_url, import_run_id, "failed", 0).await;
+            return Err(error);
+        }
+    };
     let parser_version = manifest.effective_parser_version(EVENT_ARCHIVE_PARSER_VERSION);
-    let unpack_dir = tempfile::tempdir().context("failed to create archive unpack tempdir")?;
-    let unpacked = unpack_loaded_archive_manifest(&manifest_path, &manifest, unpack_dir.path())?;
-    let event_file = select_archive_event_file(&manifest_path, &unpacked)?;
-    let audit_manifest = archive_audit_manifest(&manifest, &unpacked, &parser_version);
+    let audit_manifest = archive_audit_manifest(&manifest, &parser_version);
     let import_run_id = begin_import_run(
         &settings.database_url,
         &manifest_path,
@@ -508,6 +528,16 @@ async fn run_event_archive_import(
     .await?;
 
     let result: Result<CommandSummary> = async {
+        ensure!(
+            manifest.source_id == source_id,
+            "archive source manifest {} source_id {} does not match requested source_id {}",
+            manifest_path.display(),
+            manifest.source_id,
+            source_id
+        );
+        let unpack_dir = tempfile::tempdir().context("failed to create archive unpack tempdir")?;
+        let unpacked = unpack_loaded_archive_manifest(&manifest_path, &manifest, unpack_dir.path())?;
+        let event_file = select_archive_event_file(&manifest_path, &unpacked)?;
         record_archive_evidence(
             &settings.database_url,
             import_run_id,
@@ -613,6 +643,22 @@ async fn run_event_archive_import(
     }
 }
 
+fn archive_preflight_audit_manifest(source_id: &str) -> SourceManifest {
+    SourceManifest {
+        schema_version: SOURCE_MANIFEST_SCHEMA_VERSION,
+        kind: SourceManifestKind::ImportSource,
+        source_id: source_id.to_string(),
+        source_name: "Archive source preflight".to_string(),
+        manifest_version: 0,
+        parser_version: Some(EVENT_ARCHIVE_PARSER_VERSION.to_string()),
+        description: Some(
+            "Archive source import preflight; manifest could not be loaded or validated."
+                .to_string(),
+        ),
+        files: Vec::new(),
+    }
+}
+
 async fn record_archive_evidence(
     database_url: &str,
     import_run_id: i64,
@@ -674,9 +720,13 @@ fn select_archive_event_file<'a>(
 
 fn archive_audit_manifest(
     manifest: &ArchiveSourceManifest,
-    unpacked: &UnpackedArchiveSource,
     parser_version: &str,
 ) -> SourceManifest {
+    let archive_checksum_sha256 = manifest
+        .archive
+        .checksum_sha256
+        .as_deref()
+        .unwrap_or("unknown");
     SourceManifest {
         schema_version: SOURCE_MANIFEST_SCHEMA_VERSION,
         kind: SourceManifestKind::ImportSource,
@@ -686,15 +736,15 @@ fn archive_audit_manifest(
         parser_version: Some(parser_version.to_string()),
         description: Some(format!(
             "Archive source import; archive_format={}, archive_checksum_sha256={}",
-            unpacked.archive_format.as_str(),
-            unpacked.archive_checksum_sha256
+            manifest.archive.format.as_str(),
+            archive_checksum_sha256
         )),
-        files: unpacked
+        files: manifest
             .files
             .iter()
             .map(|file| SourceFileSpec {
                 logical_name: file.logical_name.clone(),
-                path: file.archive_entry_path.clone(),
+                path: file.path.clone(),
                 format: file.format.clone(),
             })
             .collect(),
@@ -936,8 +986,9 @@ mod tests {
     use storage_postgres::EventCsvRecord;
 
     use super::{
-        archive_audit_manifest, ensure_event_v1_mapping, ensure_import_source_id,
-        read_event_ndjson_records, select_archive_event_file, validate_event_csv_records,
+        archive_audit_manifest, archive_preflight_audit_manifest, ensure_event_v1_mapping,
+        ensure_import_source_id, read_event_ndjson_records, select_archive_event_file,
+        validate_event_csv_records,
     };
 
     #[test]
@@ -1164,22 +1215,20 @@ mod tests {
                 format: "csv".to_string(),
             }],
         };
-        let unpacked = UnpackedArchiveSource {
-            archive_path: PathBuf::from("events.tar"),
-            archive_format: ArchiveFormat::Tar,
-            archive_checksum_sha256:
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
-            archive_size_bytes: 512,
-            files: vec![UnpackedArchiveFile {
-                logical_name: "events".to_string(),
-                format: "csv".to_string(),
-                archive_entry_path: "events.csv".to_string(),
-                source_path: PathBuf::from("/tmp/archive-unpack/events/events.csv"),
-            }],
-        };
-
-        let audit_manifest = archive_audit_manifest(&manifest, &unpacked, "archive-event-v1");
+        let audit_manifest = archive_audit_manifest(&manifest, "archive-event-v1");
 
         assert_eq!(audit_manifest.files[0].path, "events.csv");
+    }
+
+    #[test]
+    fn archive_preflight_audit_manifest_uses_requested_source_id() {
+        let audit_manifest = archive_preflight_audit_manifest("event-archive");
+
+        assert_eq!(audit_manifest.source_id, "event-archive");
+        assert_eq!(
+            audit_manifest.parser_version.as_deref(),
+            Some("event-archive-v1")
+        );
+        assert!(audit_manifest.files.is_empty());
     }
 }
