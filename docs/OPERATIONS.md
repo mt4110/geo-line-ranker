@@ -796,7 +796,7 @@ If the user has a `search_execute` with `target_station_id` in the last 72
 hours and the request has no explicit context, the resolver can report
 `recent_search_context` with `search_execute` evidence. The confidence starts at
 `0.88` for fresh evidence and decays non-linearly toward the end of the 72-hour
-window, so older searches remain inspectable but can lose to a stronger user
+window, so older searches remain visible but can lose to a stronger user
 profile context. Explicit station, line, or area request context still wins.
 Route-aware score tuning remains deferred; this path only changes context
 confidence selection.
