@@ -724,6 +724,7 @@ pub struct ProfilePackLintFile {
     pub evaluation_reference_count: usize,
     pub source_manifest_count: usize,
     pub event_csv_example_count: usize,
+    pub archive_source_count: usize,
     pub optional_crawler_manifest_count: usize,
 }
 
@@ -1705,6 +1706,11 @@ fn lint_loaded_profile_pack_file(
         );
     }
 
+    let archive_source_count = connector_registry
+        .iter()
+        .filter(|entry| entry.connector_type == ProfileConnectorType::ArchiveSource)
+        .count();
+
     Ok(ProfilePackLintFile {
         path: path.to_path_buf(),
         profile_id: manifest.profile_id.clone(),
@@ -1732,6 +1738,7 @@ fn lint_loaded_profile_pack_file(
             .unwrap_or(0),
         source_manifest_count: manifest.source_manifests.len(),
         event_csv_example_count: manifest.event_csv_examples.len(),
+        archive_source_count,
         optional_crawler_manifest_count: manifest.optional_crawler_manifests.len(),
     })
 }
@@ -3735,6 +3742,24 @@ reasons:
         )
         .expect("source");
         fs::write(
+            source_dir.join("events.archive.yaml"),
+            r#"schema_version: 1
+kind: archive_source
+source_id: example-events-archive
+source_name: Example event archive
+manifest_version: 1
+archive:
+  path: events.tar
+  format: tar
+  checksum_sha256: 0000000000000000000000000000000000000000000000000000000000000000
+files:
+  - logical_name: events
+    path: events.csv
+    format: csv
+"#,
+        )
+        .expect("archive manifest");
+        fs::write(
             profile_dir.join("evaluation").join("pairwise.yaml"),
             "schema_version: 1\n",
         )
@@ -3780,6 +3805,10 @@ connectors:
     manifest: sources/events.ndjson
     source_id: example-events-ndjson
     field_mapping: event_v1
+  - type: archive_source
+    manifest: sources/events.archive.yaml
+    source_id: example-events-archive
+    field_mapping: event_v1
 evaluation:
   scenario_pack: evaluation/scenarios
   pairwise_pack: evaluation/pairwise.yaml
@@ -3791,7 +3820,7 @@ evaluation:
 
         assert_eq!(lint.reason_catalog_locale_count, 2);
         assert_eq!(lint.reason_count, 1);
-        assert_eq!(lint.connector_count, 2);
+        assert_eq!(lint.connector_count, 3);
         assert_eq!(
             lint.connector_registry[0].connector_type,
             ProfileConnectorType::CsvImport
@@ -3828,6 +3857,20 @@ evaluation:
                 .map(|mapping| mapping.as_str()),
             Some("event_v1")
         );
+        assert_eq!(
+            lint.connector_registry[2].connector_type,
+            ProfileConnectorType::ArchiveSource
+        );
+        assert_eq!(
+            lint.connector_registry[2].source_class,
+            ProfileSourceClass::ArchiveImport
+        );
+        assert_eq!(lint.connector_registry[2].manifest_kind, "archive_source");
+        assert_eq!(
+            lint.connector_registry[2].source_id.as_deref(),
+            Some("example-events-archive")
+        );
+        assert_eq!(lint.archive_source_count, 1);
         assert!(!lint.connector_registry[0].safety.dynamic_loading_enabled);
         assert_eq!(lint.evaluation_reference_count, 2);
         assert_eq!(

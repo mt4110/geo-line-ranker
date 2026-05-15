@@ -38,10 +38,10 @@ sha2.workspace = true
 storage = { path = "../../crates/storage" }
 storage-opensearch = { path = "../../crates/storage-opensearch", optional = true }
 storage-postgres = { path = "../../crates/storage-postgres", optional = true }
+tempfile.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 tokio-postgres.workspace = true
 
 [[test]]

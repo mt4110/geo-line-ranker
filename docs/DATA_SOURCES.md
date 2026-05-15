@@ -65,21 +65,29 @@ Profile connector registry model:
 5. `ndjson_import` entries point directly to NDJSON files, declare their
    profile source id plus a portable `field_mapping` ref, and are classified as
    `ndjson_import`.
-6. `crawler_manifest` entries must point to `kind: crawler_source` YAML and
+6. `archive_source` entries point to local `kind: archive_source` YAML,
+   declare `field_mapping: event_v1`, and are classified as `archive_import`.
+   Archive manifests are local-file only, declare one archive path plus a
+   checksum, and list the CSV/NDJSON entries to unpack. The current import
+   runtime accepts exactly one `logical_name: events` entry and bridges it to
+   the existing event CSV/NDJSON importer.
+7. `crawler_manifest` entries must point to `kind: crawler_source` YAML and
    are classified as `html_crawl`; registry metadata marks them as
    allowlist-required and live-fetch disabled by default at the profile
    boundary.
-7. `cargo run -p cli -- import profile-source --source-id <id>` resolves the
+8. `cargo run -p cli -- import profile-source --source-id <id>` resolves the
    selected profile connector and runs the matching one-shot importer for JP
-   source manifests, event CSV, or event NDJSON. The current file-import runtime
-   executes only `field_mapping: event_v1`; other valid mapping refs fail
+   source manifests, event CSV, event NDJSON, or local archive sources. The
+   current file-import runtime executes only `field_mapping: event_v1`; other
+   valid mapping refs fail
    validation, doctor, and import rather than becoming silent half-support.
    Crawler manifests still use the crawler commands.
-8. `cargo run -p cli -- doctor ingest-quality` is DB-free coverage evidence for
+9. `cargo run -p cli -- doctor ingest-quality` is DB-free coverage evidence for
    this registry. It reuses profile validation, lints declared source manifests
-   and crawler manifests, and reports source-class, manifest-kind,
-   runtime-executable mapping, source-manifest file, crawler target, and
-   safety-boundary counts without importing data or making live crawl requests.
+   archive manifests, and crawler manifests, and reports source-class,
+   manifest-kind, runtime-executable mapping, source-manifest file, archive
+   file/format, crawler target, and safety-boundary counts without importing
+   data or making live crawl requests.
 
 Connector and import `source_id` values must be portable path segments: lowercase
 letters, digits, and hyphens, with no leading or trailing hyphen.

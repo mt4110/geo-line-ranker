@@ -11,7 +11,9 @@ use config::{
 use context::ContextSource;
 use crawler_core::lint_manifest_file as lint_crawl_manifest_file;
 use domain::SchoolStationLink;
-use generic_csv::lint_source_manifest_file;
+use generic_csv::{
+    lint_archive_manifest_file, lint_source_manifest_file, ArchiveSourceManifestLintFile,
+};
 use serde::Serialize;
 use storage::{
     candidate_retrieval_opensearch_sort_contract, candidate_retrieval_ordering_contract,
@@ -76,6 +78,7 @@ pub struct ProfilePackDoctorSummary {
     pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
+    pub archive_source_references: usize,
     pub optional_crawler_manifest_references: usize,
     pub files: Vec<ProfilePackDoctorFile>,
 }
@@ -104,6 +107,7 @@ pub struct ProfilePackDoctorFile {
     pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
+    pub archive_source_references: usize,
     pub optional_crawler_manifest_references: usize,
 }
 
@@ -113,6 +117,7 @@ pub struct IngestQualityDoctorSummary {
     pub connector_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
+    pub archive_source_references: usize,
     pub optional_crawler_manifest_references: usize,
     pub source_class_counts: BTreeMap<String, usize>,
     pub manifest_kind_counts: BTreeMap<String, usize>,
@@ -123,7 +128,9 @@ pub struct IngestQualityDoctorSummary {
     pub live_fetch_default_connectors: usize,
     pub crawler_allowlist_required_connectors: usize,
     pub source_manifest_file_count: usize,
+    pub archive_file_count: usize,
     pub crawler_target_count: usize,
+    pub archive_format_counts: BTreeMap<String, usize>,
     pub crawler_source_maturity_counts: BTreeMap<String, usize>,
     pub crawler_expected_shape_counts: BTreeMap<String, usize>,
     pub evidence_scope: String,
@@ -138,6 +145,7 @@ pub struct IngestQualityDoctorProfile {
     pub connector_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
+    pub archive_source_references: usize,
     pub optional_crawler_manifest_references: usize,
     pub source_class_counts: BTreeMap<String, usize>,
     pub manifest_kind_counts: BTreeMap<String, usize>,
@@ -148,7 +156,9 @@ pub struct IngestQualityDoctorProfile {
     pub live_fetch_default_connectors: usize,
     pub crawler_allowlist_required_connectors: usize,
     pub source_manifest_file_count: usize,
+    pub archive_file_count: usize,
     pub crawler_target_count: usize,
+    pub archive_format_counts: BTreeMap<String, usize>,
     pub crawler_source_maturity_counts: BTreeMap<String, usize>,
     pub crawler_expected_shape_counts: BTreeMap<String, usize>,
     pub connectors: Vec<IngestQualityDoctorConnector>,
@@ -164,6 +174,9 @@ pub struct IngestQualityDoctorConnector {
     pub field_mapping_runtime_executable: Option<bool>,
     pub manifest_lint: String,
     pub source_manifest_file_count: Option<usize>,
+    pub archive_file_count: Option<usize>,
+    pub archive_format: Option<String>,
+    pub archive_checksum_sha256: Option<String>,
     pub crawler_target_count: Option<usize>,
     pub crawler_source_maturity: Option<String>,
     pub crawler_expected_shape: Option<String>,
@@ -192,6 +205,7 @@ pub struct RankingConfigDoctorSummary {
     pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
+    pub archive_source_references: usize,
     pub optional_crawler_manifest_references: usize,
     pub files: Vec<RankingConfigDoctorFile>,
     pub profiles: Vec<RankingConfigDoctorProfile>,
@@ -224,6 +238,7 @@ pub struct RankingConfigDoctorProfile {
     pub evaluation_references: usize,
     pub source_manifest_references: usize,
     pub event_csv_example_references: usize,
+    pub archive_source_references: usize,
     pub optional_crawler_manifest_references: usize,
 }
 
@@ -454,6 +469,10 @@ pub fn ranking_config_doctor_summary_from_lint(
         event_csv_example_references: profiles
             .iter()
             .map(|profile| profile.event_csv_example_references)
+            .sum(),
+        archive_source_references: profiles
+            .iter()
+            .map(|profile| profile.archive_source_references)
             .sum(),
         optional_crawler_manifest_references: profiles
             .iter()
@@ -1126,6 +1145,10 @@ fn profile_pack_doctor_summary_from_lint(
             .iter()
             .map(|file| file.event_csv_example_references)
             .sum(),
+        archive_source_references: files
+            .iter()
+            .map(|file| file.archive_source_references)
+            .sum(),
         optional_crawler_manifest_references: files
             .iter()
             .map(|file| file.optional_crawler_manifest_references)
@@ -1178,6 +1201,7 @@ fn profile_pack_doctor_file(file: ProfilePackLintFile) -> ProfilePackDoctorFile 
         evaluation_references: file.evaluation_reference_count,
         source_manifest_references: file.source_manifest_count,
         event_csv_example_references: file.event_csv_example_count,
+        archive_source_references: file.archive_source_count,
         optional_crawler_manifest_references: file.optional_crawler_manifest_count,
     }
 }
@@ -1192,12 +1216,14 @@ fn ingest_quality_doctor_summary_from_lint(
         .collect::<Result<Vec<_>>>()?;
     let mut source_class_counts = BTreeMap::new();
     let mut manifest_kind_counts = BTreeMap::new();
+    let mut archive_format_counts = BTreeMap::new();
     let mut crawler_source_maturity_counts = BTreeMap::new();
     let mut crawler_expected_shape_counts = BTreeMap::new();
 
     for profile in &profiles {
         merge_counts(&mut source_class_counts, &profile.source_class_counts);
         merge_counts(&mut manifest_kind_counts, &profile.manifest_kind_counts);
+        merge_counts(&mut archive_format_counts, &profile.archive_format_counts);
         merge_counts(
             &mut crawler_source_maturity_counts,
             &profile.crawler_source_maturity_counts,
@@ -1221,6 +1247,10 @@ fn ingest_quality_doctor_summary_from_lint(
         event_csv_example_references: profiles
             .iter()
             .map(|profile| profile.event_csv_example_references)
+            .sum(),
+        archive_source_references: profiles
+            .iter()
+            .map(|profile| profile.archive_source_references)
             .sum(),
         optional_crawler_manifest_references: profiles
             .iter()
@@ -1256,10 +1286,15 @@ fn ingest_quality_doctor_summary_from_lint(
             .iter()
             .map(|profile| profile.source_manifest_file_count)
             .sum(),
+        archive_file_count: profiles
+            .iter()
+            .map(|profile| profile.archive_file_count)
+            .sum(),
         crawler_target_count: profiles
             .iter()
             .map(|profile| profile.crawler_target_count)
             .sum(),
+        archive_format_counts,
         crawler_source_maturity_counts,
         crawler_expected_shape_counts,
         evidence_scope: "db_free_profile_connector_manifest_coverage".to_string(),
@@ -1276,12 +1311,16 @@ fn ingest_quality_doctor_profile(file: ProfilePackLintFile) -> Result<IngestQual
         .collect::<Result<Vec<_>>>()?;
     let mut source_class_counts = BTreeMap::new();
     let mut manifest_kind_counts = BTreeMap::new();
+    let mut archive_format_counts = BTreeMap::new();
     let mut crawler_source_maturity_counts = BTreeMap::new();
     let mut crawler_expected_shape_counts = BTreeMap::new();
 
     for connector in &connectors {
         increment(&mut source_class_counts, &connector.source_class);
         increment(&mut manifest_kind_counts, &connector.manifest_kind);
+        if let Some(archive_format) = connector.archive_format.as_deref() {
+            increment(&mut archive_format_counts, archive_format);
+        }
         if let Some(source_maturity) = connector.crawler_source_maturity.as_deref() {
             increment(&mut crawler_source_maturity_counts, source_maturity);
         }
@@ -1296,6 +1335,7 @@ fn ingest_quality_doctor_profile(file: ProfilePackLintFile) -> Result<IngestQual
         connector_references: connectors.len(),
         source_manifest_references: file.source_manifest_count,
         event_csv_example_references: file.event_csv_example_count,
+        archive_source_references: file.archive_source_count,
         optional_crawler_manifest_references: file.optional_crawler_manifest_count,
         source_class_counts,
         manifest_kind_counts,
@@ -1327,10 +1367,15 @@ fn ingest_quality_doctor_profile(file: ProfilePackLintFile) -> Result<IngestQual
             .iter()
             .filter_map(|connector| connector.source_manifest_file_count)
             .sum(),
+        archive_file_count: connectors
+            .iter()
+            .filter_map(|connector| connector.archive_file_count)
+            .sum(),
         crawler_target_count: connectors
             .iter()
             .filter_map(|connector| connector.crawler_target_count)
             .sum(),
+        archive_format_counts,
         crawler_source_maturity_counts,
         crawler_expected_shape_counts,
         connectors,
@@ -1343,6 +1388,9 @@ fn ingest_quality_doctor_connector(
 ) -> Result<IngestQualityDoctorConnector> {
     let mut manifest_lint = "file_reference".to_string();
     let mut source_manifest_file_count = None;
+    let mut archive_file_count = None;
+    let mut archive_format = None;
+    let mut archive_checksum_sha256 = None;
     let mut crawler_target_count = None;
     let mut crawler_source_maturity = None;
     let mut crawler_expected_shape = None;
@@ -1372,6 +1420,20 @@ fn ingest_quality_doctor_connector(
             crawler_expected_shape = lint.expected_shape.map(|shape| shape.as_str().to_string());
             manifest_lint = "crawler_manifest_lint".to_string();
         }
+        ProfileConnectorType::ArchiveSource => {
+            let lint = lint_archive_manifest_file(&connector.manifest_path).with_context(|| {
+                format!(
+                    "failed to lint profile {profile_id} archive_source connector source_id={} manifest {}",
+                    connector.source_id.as_deref().unwrap_or("unknown"),
+                    connector.manifest_path.display()
+                )
+            })?;
+            ensure_archive_source_event_v1_runtime(profile_id, connector, &lint)?;
+            archive_file_count = Some(lint.file_count);
+            archive_format = Some(lint.archive_format.as_str().to_string());
+            archive_checksum_sha256 = Some(lint.archive_checksum_sha256);
+            manifest_lint = "archive_source_lint".to_string();
+        }
         ProfileConnectorType::CsvImport | ProfileConnectorType::NdjsonImport => {}
     }
 
@@ -1390,6 +1452,9 @@ fn ingest_quality_doctor_connector(
             .map(|mapping| mapping.is_runtime_executable()),
         manifest_lint,
         source_manifest_file_count,
+        archive_file_count,
+        archive_format,
+        archive_checksum_sha256,
         crawler_target_count,
         crawler_source_maturity,
         crawler_expected_shape,
@@ -1399,6 +1464,45 @@ fn ingest_quality_doctor_connector(
         allowlist_required: connector.safety.allowlist_required,
         manifest_path: connector.manifest_path.clone(),
     })
+}
+
+fn ensure_archive_source_event_v1_runtime(
+    profile_id: &str,
+    connector: &ProfileConnectorRegistryEntry,
+    lint: &ArchiveSourceManifestLintFile,
+) -> Result<()> {
+    if !connector
+        .field_mapping
+        .as_ref()
+        .is_some_and(|mapping| mapping.is_runtime_executable())
+    {
+        return Ok(());
+    }
+
+    anyhow::ensure!(
+        lint.files.len() == 1,
+        "profile {profile_id} archive_source connector source_id={} manifest {} has {} files; current event_v1 archive import runtime supports exactly one CSV or NDJSON file",
+        connector.source_id.as_deref().unwrap_or("unknown"),
+        connector.manifest_path.display(),
+        lint.files.len()
+    );
+    let file = &lint.files[0];
+    anyhow::ensure!(
+        file.logical_name == "events",
+        "profile {profile_id} archive_source connector source_id={} manifest {} file logical_name {} is unsupported by event_v1 archive import; expected events",
+        connector.source_id.as_deref().unwrap_or("unknown"),
+        connector.manifest_path.display(),
+        file.logical_name
+    );
+    anyhow::ensure!(
+        matches!(file.format.as_str(), "csv" | "ndjson"),
+        "profile {profile_id} archive_source connector source_id={} manifest {} file {} uses unsupported runtime format {}; expected csv or ndjson",
+        connector.source_id.as_deref().unwrap_or("unknown"),
+        connector.manifest_path.display(),
+        file.logical_name,
+        file.format
+    );
+    Ok(())
 }
 
 fn ranking_config_doctor_file(file: RankingConfigLintFile) -> RankingConfigDoctorFile {
@@ -1449,6 +1553,7 @@ fn ranking_config_doctor_profile(file: ProfilePackLintFile) -> RankingConfigDoct
         evaluation_references: file.evaluation_reference_count,
         source_manifest_references: file.source_manifest_count,
         event_csv_example_references: file.event_csv_example_count,
+        archive_source_references: file.archive_source_count,
         optional_crawler_manifest_references: file.optional_crawler_manifest_count,
     }
 }
@@ -1539,6 +1644,14 @@ mod tests {
                 .sum::<usize>()
         );
         assert_eq!(
+            summary.archive_source_references,
+            summary
+                .files
+                .iter()
+                .map(|file| file.archive_source_references)
+                .sum::<usize>()
+        );
+        assert_eq!(
             summary.optional_crawler_manifest_references,
             summary
                 .files
@@ -1553,6 +1666,7 @@ mod tests {
             .find(|file| file.profile_id == "local-discovery-generic")
             .expect("local discovery profile");
         assert!(local_discovery.fixture_references > 0);
+        assert_eq!(local_discovery.archive_source_references, 1);
 
         let school_event_jp = summary
             .files
@@ -1583,19 +1697,23 @@ mod tests {
             .expect("ingest quality doctor");
 
         assert_eq!(summary.profile_packs, 2);
-        assert_eq!(summary.connector_references, 9);
+        assert_eq!(summary.connector_references, 10);
+        assert_eq!(summary.source_class_counts.get("archive_import"), Some(&1));
         assert_eq!(summary.source_class_counts.get("csv_import"), Some(&6));
         assert_eq!(summary.source_class_counts.get("ndjson_import"), Some(&2));
         assert_eq!(summary.source_class_counts.get("html_crawl"), Some(&1));
+        assert_eq!(summary.manifest_kind_counts.get("archive_source"), Some(&1));
         assert_eq!(summary.manifest_kind_counts.get("import_source"), Some(&4));
         assert_eq!(summary.manifest_kind_counts.get("csv_file"), Some(&2));
         assert_eq!(summary.manifest_kind_counts.get("ndjson_file"), Some(&2));
         assert_eq!(summary.manifest_kind_counts.get("crawler_source"), Some(&1));
-        assert_eq!(summary.runtime_executable_mappings, 4);
+        assert_eq!(summary.runtime_executable_mappings, 5);
         assert_eq!(summary.non_runtime_mappings, 0);
         assert_eq!(summary.source_manifest_file_count, 4);
+        assert_eq!(summary.archive_file_count, 1);
         assert_eq!(summary.crawler_target_count, 1);
         assert_eq!(summary.crawler_allowlist_required_connectors, 1);
+        assert_eq!(summary.archive_format_counts.get("tar"), Some(&1));
         assert_eq!(
             summary.crawler_source_maturity_counts.get("parser_only"),
             Some(&1)
@@ -1620,6 +1738,20 @@ mod tests {
             connector.connector_type == "crawler_manifest"
                 && connector.allowlist_required
                 && connector.manifest_lint == "crawler_manifest_lint"
+        }));
+
+        let local_discovery = summary
+            .profiles
+            .iter()
+            .find(|profile| profile.profile_id == "local-discovery-generic")
+            .expect("local discovery profile");
+        assert_eq!(local_discovery.archive_source_references, 1);
+        assert_eq!(local_discovery.archive_file_count, 1);
+        assert!(local_discovery.connectors.iter().any(|connector| {
+            connector.connector_type == "archive_source"
+                && connector.manifest_lint == "archive_source_lint"
+                && connector.archive_format.as_deref() == Some("tar")
+                && connector.archive_checksum_sha256.is_some()
         }));
     }
 

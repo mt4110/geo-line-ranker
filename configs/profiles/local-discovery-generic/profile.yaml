@@ -39,6 +39,10 @@ connectors:
     manifest: ../../../examples/import/events.sample.ndjson
     source_id: event-ndjson
     field_mapping: event_v1
+  - type: archive_source
+    manifest: ../../../examples/import/events.archive.yaml
+    source_id: event-archive
+    field_mapping: event_v1
 evaluation:
   scenario_pack: ../../evaluation/scenarios
 examples:

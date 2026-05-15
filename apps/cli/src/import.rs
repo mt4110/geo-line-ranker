@@ -7,9 +7,11 @@ use config::{
     ProfileConnectorRegistryEntry, ProfileConnectorType, ProfilePackRegistry, DEFAULT_PROFILE_ID,
 };
 use generic_csv::{
-    count_csv_rows, is_source_id, load_manifest, read_csv_rows, stage_raw_files,
-    stage_single_csv_file, stage_single_source_file, SourceFileSpec, SourceManifest,
-    SourceManifestKind, SOURCE_ID_RULE_DESCRIPTION, SOURCE_MANIFEST_SCHEMA_VERSION,
+    count_csv_rows, is_source_id, load_archive_manifest, load_manifest, read_csv_rows,
+    stage_raw_files, stage_single_csv_file, stage_single_source_file,
+    unpack_loaded_archive_manifest, ArchiveSourceManifest, SourceFileSpec, SourceManifest,
+    SourceManifestKind, UnpackedArchiveFile, UnpackedArchiveSource, SOURCE_ID_RULE_DESCRIPTION,
+    SOURCE_MANIFEST_SCHEMA_VERSION,
 };
 use jp_postal::{parse_postal_codes, PARSER_VERSION as JP_POSTAL_PARSER_VERSION};
 use jp_rail::{parse_rail_stations, PARSER_VERSION as JP_RAIL_PARSER_VERSION};
@@ -31,6 +33,7 @@ const EVENT_CSV_PARSER_VERSION: &str = "event-csv-v1";
 const EVENT_CSV_SOURCE_ID: &str = "event-csv";
 const EVENT_NDJSON_PARSER_VERSION: &str = "event-ndjson-v1";
 pub const DEFAULT_EVENT_NDJSON_SOURCE_ID: &str = "event-ndjson";
+const EVENT_ARCHIVE_PARSER_VERSION: &str = "event-archive-v1";
 
 #[derive(Debug, Clone, Copy)]
 pub enum ImportTarget {
@@ -236,6 +239,11 @@ pub async fn run_profile_source_import(
             ensure_event_v1_mapping(connector)?;
             let source_id = connector.source_id.as_deref().unwrap_or(source_id);
             run_event_ndjson_import(settings, &connector.manifest_path, source_id).await
+        }
+        ProfileConnectorType::ArchiveSource => {
+            ensure_event_v1_mapping(connector)?;
+            let source_id = connector.source_id.as_deref().unwrap_or(source_id);
+            run_event_archive_import(settings, source_id, &connector.manifest_path).await
         }
         ProfileConnectorType::CrawlerManifest => {
             anyhow::bail!(
@@ -466,6 +474,233 @@ pub async fn run_event_ndjson_import(
     }
 }
 
+async fn run_event_archive_import(
+    settings: &AppSettings,
+    source_id: &str,
+    manifest_path: impl AsRef<Path>,
+) -> Result<CommandSummary> {
+    ensure_import_source_id("event archive", source_id)?;
+    let manifest_path = fs::canonicalize(manifest_path.as_ref()).with_context(|| {
+        format!(
+            "failed to resolve event archive manifest {}",
+            manifest_path.as_ref().display()
+        )
+    })?;
+    let manifest = load_archive_manifest(&manifest_path)?;
+    ensure!(
+        manifest.source_id == source_id,
+        "archive source manifest {} source_id {} does not match requested source_id {}",
+        manifest_path.display(),
+        manifest.source_id,
+        source_id
+    );
+    let parser_version = manifest.effective_parser_version(EVENT_ARCHIVE_PARSER_VERSION);
+    let unpack_dir = tempfile::tempdir().context("failed to create archive unpack tempdir")?;
+    let unpacked = unpack_loaded_archive_manifest(&manifest_path, &manifest, unpack_dir.path())?;
+    let event_file = select_archive_event_file(&manifest_path, &unpacked)?;
+    let audit_manifest = archive_audit_manifest(&manifest, &unpacked, &parser_version);
+    let import_run_id = begin_import_run(
+        &settings.database_url,
+        &manifest_path,
+        &audit_manifest,
+        &parser_version,
+    )
+    .await?;
+
+    let result: Result<CommandSummary> = async {
+        record_archive_evidence(
+            &settings.database_url,
+            import_run_id,
+            &manifest_path,
+            &manifest,
+            &unpacked,
+        )
+        .await?;
+        let prepared_file = stage_single_source_file(
+            source_id,
+            &event_file.logical_name,
+            &event_file.format,
+            &event_file.source_path,
+            &settings.raw_storage_dir,
+        )?;
+        register_staged_files(
+            settings,
+            import_run_id,
+            std::slice::from_ref(&prepared_file),
+        )
+        .await?;
+
+        let summary = match event_file.format.as_str() {
+            "csv" => {
+                let row_count = count_csv_rows(&prepared_file)?;
+                update_file_row_counts(
+                    settings,
+                    import_run_id,
+                    std::slice::from_ref(&prepared_file),
+                    &[(&event_file.logical_name, row_count)],
+                )
+                .await?;
+                let records = read_csv_rows::<EventCsvRecord>(&prepared_file)?;
+                validate_event_csv_records(&records)?;
+                import_event_csv(&settings.database_url, source_id, &records).await?
+            }
+            "ndjson" => {
+                let records = read_event_ndjson_records(&prepared_file.staged_path)?;
+                let row_count = records.len() as i64;
+                update_file_row_counts(
+                    settings,
+                    import_run_id,
+                    std::slice::from_ref(&prepared_file),
+                    &[(&event_file.logical_name, row_count)],
+                )
+                .await?;
+                validate_event_csv_records(&records)?;
+                import_event_ndjson(&settings.database_url, source_id, &records).await?
+            }
+            other => anyhow::bail!(
+                "archive source {} file {} uses unsupported runtime format {}; expected csv or ndjson",
+                source_id,
+                event_file.logical_name,
+                other
+            ),
+        };
+
+        persist_success_reports(
+            &settings.database_url,
+            import_run_id,
+            &parser_version,
+            &summary,
+        )
+        .await?;
+        finish_import_run(
+            &settings.database_url,
+            import_run_id,
+            "succeeded",
+            summary.normalized_rows,
+        )
+        .await?;
+
+        Ok(CommandSummary {
+            label: source_id.to_string(),
+            import_run_id: Some(import_run_id),
+            row_count: summary.core_rows,
+            report_count: summary.report_entries.len() + 2,
+        })
+    }
+    .await;
+
+    match result {
+        Ok(summary) => Ok(summary),
+        Err(error) => {
+            let _ = record_import_report(
+                &settings.database_url,
+                import_run_id,
+                &ImportReportEntry {
+                    level: "error".to_string(),
+                    code: "event_archive_import_failed".to_string(),
+                    message: error.to_string(),
+                    row_count: None,
+                    details: json!({
+                        "source_id": source_id,
+                        "manifest_path": manifest_path.display().to_string()
+                    }),
+                },
+            )
+            .await;
+            let _ = finish_import_run(&settings.database_url, import_run_id, "failed", 0).await;
+            Err(error)
+        }
+    }
+}
+
+async fn record_archive_evidence(
+    database_url: &str,
+    import_run_id: i64,
+    manifest_path: &Path,
+    manifest: &ArchiveSourceManifest,
+    unpacked: &UnpackedArchiveSource,
+) -> Result<()> {
+    record_import_report(
+        database_url,
+        import_run_id,
+        &ImportReportEntry {
+            level: "info".to_string(),
+            code: "archive_source_evidence".to_string(),
+            message: "Recorded archive source manifest and checksum evidence.".to_string(),
+            row_count: None,
+            details: json!({
+                "manifest_path": manifest_path.display().to_string(),
+                "archive_path": unpacked.archive_path.display().to_string(),
+                "archive_format": unpacked.archive_format.as_str(),
+                "archive_checksum_sha256": &unpacked.archive_checksum_sha256,
+                "archive_size_bytes": unpacked.archive_size_bytes,
+                "files": manifest.files.iter().map(|file| json!({
+                    "logical_name": &file.logical_name,
+                    "path": &file.path,
+                    "format": &file.format
+                })).collect::<Vec<_>>()
+            }),
+        },
+    )
+    .await
+}
+
+fn select_archive_event_file<'a>(
+    manifest_path: &Path,
+    unpacked: &'a UnpackedArchiveSource,
+) -> Result<&'a UnpackedArchiveFile> {
+    ensure!(
+        unpacked.files.len() == 1,
+        "archive source manifest {} has {} files; current event_v1 archive import runtime supports exactly one CSV or NDJSON file",
+        manifest_path.display(),
+        unpacked.files.len()
+    );
+    let event_file = &unpacked.files[0];
+    ensure!(
+        event_file.logical_name == "events",
+        "archive source manifest {} file logical_name {} is unsupported by event_v1 archive import; expected events",
+        manifest_path.display(),
+        event_file.logical_name
+    );
+    ensure!(
+        matches!(event_file.format.as_str(), "csv" | "ndjson"),
+        "archive source manifest {} file {} uses unsupported runtime format {}; expected csv or ndjson",
+        manifest_path.display(),
+        event_file.logical_name,
+        event_file.format
+    );
+    Ok(event_file)
+}
+
+fn archive_audit_manifest(
+    manifest: &ArchiveSourceManifest,
+    unpacked: &UnpackedArchiveSource,
+    parser_version: &str,
+) -> SourceManifest {
+    SourceManifest {
+        schema_version: SOURCE_MANIFEST_SCHEMA_VERSION,
+        kind: SourceManifestKind::ImportSource,
+        source_id: manifest.source_id.clone(),
+        source_name: manifest.source_name.clone(),
+        manifest_version: manifest.manifest_version,
+        parser_version: Some(parser_version.to_string()),
+        description: Some(format!(
+            "Archive source import; archive_format={}, archive_checksum_sha256={}",
+            unpacked.archive_format.as_str(),
+            unpacked.archive_checksum_sha256
+        )),
+        files: unpacked
+            .files
+            .iter()
+            .map(|file| SourceFileSpec {
+                logical_name: file.logical_name.clone(),
+                path: file.archive_entry_path.clone(),
+                format: file.format.clone(),
+            })
+            .collect(),
+    }
+}
+
 fn select_profile_source_connector<'a>(
     connectors: &'a [ProfileConnectorRegistryEntry],
     profile_id: &str,
@@ -693,12 +928,16 @@ mod tests {
         ProfileCompatibilityLevel, ProfileConnectorFieldMapping, ProfileConnectorRegistryEntry,
         ProfileConnectorSafetyMetadata, ProfileConnectorType, ProfileSourceClass,
     };
+    use generic_csv::{
+        ArchiveEntrySpec, ArchiveFileSpec, ArchiveFormat, ArchiveSourceManifest,
+        ArchiveSourceManifestKind, UnpackedArchiveFile, UnpackedArchiveSource,
+    };
     use serde_json::json;
     use storage_postgres::EventCsvRecord;
 
     use super::{
-        ensure_event_v1_mapping, ensure_import_source_id, read_event_ndjson_records,
-        validate_event_csv_records,
+        archive_audit_manifest, ensure_event_v1_mapping, ensure_import_source_id,
+        read_event_ndjson_records, select_archive_event_file, validate_event_csv_records,
     };
 
     #[test]
@@ -847,5 +1086,100 @@ mod tests {
 
         assert!(records[0].details.is_object());
         validate_event_csv_records(&records).expect("valid event records");
+    }
+
+    #[test]
+    fn archive_event_runtime_accepts_single_events_csv_or_ndjson_file() {
+        let unpacked = UnpackedArchiveSource {
+            archive_path: PathBuf::from("events.tar"),
+            archive_format: ArchiveFormat::Tar,
+            archive_checksum_sha256:
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            archive_size_bytes: 512,
+            files: vec![UnpackedArchiveFile {
+                logical_name: "events".to_string(),
+                format: "csv".to_string(),
+                archive_entry_path: "events.csv".to_string(),
+                source_path: PathBuf::from("events.csv"),
+            }],
+        };
+
+        let file = select_archive_event_file(&PathBuf::from("events.archive.yaml"), &unpacked)
+            .expect("archive event file");
+
+        assert_eq!(file.logical_name, "events");
+        assert_eq!(file.format, "csv");
+    }
+
+    #[test]
+    fn archive_event_runtime_rejects_multiple_files() {
+        let unpacked = UnpackedArchiveSource {
+            archive_path: PathBuf::from("events.tar"),
+            archive_format: ArchiveFormat::Tar,
+            archive_checksum_sha256:
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            archive_size_bytes: 512,
+            files: vec![
+                UnpackedArchiveFile {
+                    logical_name: "events".to_string(),
+                    format: "csv".to_string(),
+                    archive_entry_path: "events.csv".to_string(),
+                    source_path: PathBuf::from("events.csv"),
+                },
+                UnpackedArchiveFile {
+                    logical_name: "extra".to_string(),
+                    format: "csv".to_string(),
+                    archive_entry_path: "extra.csv".to_string(),
+                    source_path: PathBuf::from("extra.csv"),
+                },
+            ],
+        };
+
+        let error = select_archive_event_file(&PathBuf::from("events.archive.yaml"), &unpacked)
+            .expect_err("multiple files");
+
+        assert!(format!("{error:#}").contains("supports exactly one CSV or NDJSON file"));
+    }
+
+    #[test]
+    fn archive_audit_manifest_keeps_archive_entry_paths() {
+        let manifest = ArchiveSourceManifest {
+            schema_version: 1,
+            kind: ArchiveSourceManifestKind::ArchiveSource,
+            source_id: "event-archive".to_string(),
+            source_name: "Event archive".to_string(),
+            manifest_version: 1,
+            parser_version: None,
+            description: None,
+            archive: ArchiveFileSpec {
+                path: "events.tar".to_string(),
+                format: ArchiveFormat::Tar,
+                checksum_sha256: Some(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                ),
+            },
+            files: vec![ArchiveEntrySpec {
+                logical_name: "events".to_string(),
+                path: "events.csv".to_string(),
+                format: "csv".to_string(),
+            }],
+        };
+        let unpacked = UnpackedArchiveSource {
+            archive_path: PathBuf::from("events.tar"),
+            archive_format: ArchiveFormat::Tar,
+            archive_checksum_sha256:
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            archive_size_bytes: 512,
+            files: vec![UnpackedArchiveFile {
+                logical_name: "events".to_string(),
+                format: "csv".to_string(),
+                archive_entry_path: "events.csv".to_string(),
+                source_path: PathBuf::from("/tmp/archive-unpack/events/events.csv"),
+            }],
+        };
+
+        let audit_manifest = archive_audit_manifest(&manifest, &unpacked, "archive-event-v1");
+
+        assert_eq!(audit_manifest.files[0].path, "events.csv");
     }
 }
