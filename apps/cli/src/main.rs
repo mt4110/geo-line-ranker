@@ -7,11 +7,12 @@ use clap::{Parser, Subcommand};
 use cli::{
     format_context_coverage_doctor_summary, format_eval_golden_summary,
     format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
-    format_profile_pack_doctor_summary, format_ranking_config_doctor_summary,
-    format_retrieval_parity_doctor_summary, format_storage_compatibility_doctor_summary,
-    generate_demo_jp_fixture, ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
-    run_explanation_integrity_doctor, run_fixture_doctor, run_profile_pack_doctor,
-    run_replay_scenarios_with_source, run_retrieval_parity_doctor,
+    format_ingest_quality_doctor_summary, format_profile_pack_doctor_summary,
+    format_ranking_config_doctor_summary, format_retrieval_parity_doctor_summary,
+    format_storage_compatibility_doctor_summary, generate_demo_jp_fixture,
+    ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
+    run_explanation_integrity_doctor, run_fixture_doctor, run_ingest_quality_doctor,
+    run_profile_pack_doctor, run_replay_scenarios_with_source, run_retrieval_parity_doctor,
     run_storage_compatibility_doctor, ReplayScenarioSource, DEFAULT_REPLAY_SCENARIO_PATH,
 };
 #[cfg(feature = "storage-backends")]
@@ -423,6 +424,20 @@ enum DoctorCommand {
             help = "Persist validated profile registry and compatibility status to PostgreSQL"
         )]
         persist: bool,
+    },
+    #[command(
+        name = "ingest-quality",
+        about = "Run the DB-free ingest quality doctor for profile connector coverage",
+        long_about = "Run the DB-free ingest quality doctor for profile connector coverage. This reuses the same profile-pack lint path as `profile validate`, then validates declared source manifests and crawler manifests without running imports, touching PostgreSQL, or making live crawl requests. It summarizes source classes, manifest kinds, runtime-executable field mappings, registry-only mapping boundaries, crawler allowlist requirements, source-manifest file counts, and crawler target coverage.\n\nExamples:\n  geo-line-ranker-cli doctor ingest-quality\n  geo-line-ranker-cli doctor ingest-quality --json\n  geo-line-ranker-cli doctor ingest-quality --profiles-path configs/profiles"
+    )]
+    IngestQuality {
+        #[arg(
+            long,
+            help = "Profile pack root directory or explicit profile.yaml file to diagnose. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+        )]
+        profiles_path: Option<PathBuf>,
+        #[arg(long, help = "Print the doctor report as JSON")]
+        json: bool,
     },
     #[command(
         name = "context-coverage",
@@ -870,6 +885,21 @@ async fn main() -> anyhow::Result<()> {
                     let persisted =
                         persist_profile_lint_summary(&lint_summary, "doctor profile-pack").await?;
                     print_profile_registry_persisted(persisted.len(), &persisted, json);
+                }
+            }
+            DoctorCommand::IngestQuality {
+                profiles_path,
+                json,
+            } => {
+                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                    "PROFILE_PACKS_DIR",
+                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                )?);
+                let summary = run_ingest_quality_doctor(&profiles_path)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("{}", format_ingest_quality_doctor_summary(&summary));
                 }
             }
             DoctorCommand::ContextCoverage { path, json } => {
@@ -2558,6 +2588,30 @@ evaluation:
     }
 
     #[test]
+    fn ingest_quality_doctor_help_points_to_db_free_connector_coverage() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let ingest_quality = doctor
+            .find_subcommand_mut("ingest-quality")
+            .expect("doctor ingest-quality command");
+        let mut buffer = Vec::new();
+        ingest_quality
+            .write_long_help(&mut buffer)
+            .expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("profile connector coverage"));
+        assert!(help.contains("without running imports"));
+        assert!(help.contains("touching PostgreSQL"));
+        assert!(help.contains("making live crawl requests"));
+        assert!(help.contains("runtime-executable field mappings"));
+        assert!(help.contains("doctor ingest-quality --json"));
+        assert!(help.contains("--profiles-path configs/profiles"));
+    }
+
+    #[test]
     fn context_coverage_doctor_help_points_to_replay_metadata_coverage() {
         let mut command = Cli::command();
         let doctor = command
@@ -2638,6 +2692,20 @@ evaluation:
 
         assert!(help.contains("retrieval-parity"));
         assert!(help.contains("Run the DB-free retrieval parity doctor"));
+    }
+
+    #[test]
+    fn doctor_help_lists_ingest_quality_doctor() {
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor command");
+        let mut buffer = Vec::new();
+        doctor.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8 help");
+
+        assert!(help.contains("ingest-quality"));
+        assert!(help.contains("Run the DB-free ingest quality doctor"));
     }
 
     #[test]
@@ -2863,6 +2931,33 @@ evaluation:
         assert!(json.contains("\"compatibility_level\":\"reference\""));
         assert!(json.contains("\"runtime_executable_content_kinds\":[\"school\",\"event\"]"));
         assert!(json.contains("\"registry_only_content_kinds\":[]"));
+    }
+
+    #[test]
+    fn ingest_quality_doctor_summary_reports_connector_coverage() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let summary = cli::run_ingest_quality_doctor(repo_root.join("configs/profiles"))
+            .expect("ingest quality doctor");
+        let rendered = format_ingest_quality_doctor_summary(&summary);
+
+        assert!(rendered.contains("doctor ingest-quality completed: profile_packs=2"));
+        assert!(rendered.contains("connectors=9"));
+        assert!(rendered.contains("source_classes=csv_import=6,html_crawl=1,ndjson_import=2"));
+        assert!(rendered
+            .contains("manifest_kinds=crawler_source=1,csv_file=2,import_source=4,ndjson_file=2"));
+        assert!(rendered.contains("runtime_executable_mappings=4"));
+        assert!(rendered.contains("non_runtime_mappings=0"));
+        assert!(rendered.contains("source_manifest_files=4"));
+        assert!(rendered.contains("crawler_targets=1"));
+        assert!(rendered.contains("crawler_allowlist_required=1"));
+        assert!(rendered.contains("evidence_scope: db_free_profile_connector_manifest_coverage"));
+        assert!(rendered.contains("execution_scope: no_import_or_live_crawl"));
+        assert!(rendered.contains("crawler_source_maturity: parser_only=1"));
+        assert!(rendered.contains("crawler_expected_shapes: html_heading_page=1"));
+        assert!(rendered.contains("profile_id=school-event-jp connectors=7"));
+        assert!(rendered.contains("connector type=crawler_manifest source_class=html_crawl"));
+        assert!(rendered.contains("lint=crawler_manifest_lint"));
+        assert!(rendered.contains("field_mapping_runtime_executable=true"));
     }
 
     #[test]

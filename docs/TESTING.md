@@ -113,6 +113,8 @@ cargo run -p cli -- profile validate
 cargo run -p cli -- profile inspect --profile-id local-discovery-generic
 cargo run -p cli -- doctor profile-pack
 cargo run -p cli -- doctor profile-pack --json
+cargo run -p cli -- doctor ingest-quality
+cargo run -p cli -- doctor ingest-quality --json
 ```
 
 Use `profile validate`, `profile list`, and `profile inspect` when changing or
@@ -122,6 +124,13 @@ operator-facing quality evidence: it reuses the same profile-pack validation
 logic, then summarizes profile count, reason count, fixture references, source
 manifest references, event CSV example references, optional crawler manifest
 references, and each profile's compatibility level.
+Use `doctor ingest-quality` when a connector or source coverage change needs
+more specific evidence: it validates declared source manifests and crawler
+manifests, then reports source classes, manifest kinds, executable field
+mappings, source-manifest file counts, crawler target counts, crawler maturity,
+expected shapes, local-reference/dynamic-loading/live-fetch safety boundaries,
+and allowlist requirements. It does not import data, touch PostgreSQL, or make
+live crawl requests.
 
 When PostgreSQL is migrated and you want durable profile evidence, add
 `--persist` to `profile validate` or `doctor profile-pack`. That opt-in path
@@ -274,6 +283,7 @@ cargo run -p cli -- doctor explanation-integrity
 cargo run -p cli -- doctor context-coverage
 cargo run -p cli -- doctor retrieval-parity
 cargo run -p cli -- doctor profile-pack
+cargo run -p cli -- doctor ingest-quality
 cargo run -p cli -- doctor storage-compatibility
 just mvp-acceptance
 git diff --check
@@ -380,6 +390,16 @@ optional crawler manifest validation from `profile validate`, then emits
 compact coverage metrics for release evidence. It is not a replacement for
 `config lint`; ranking config contract drift still belongs to the combined
 config lint gate. Use `--json` when capturing evidence artifacts.
+
+`cargo run -p cli -- doctor ingest-quality` is the Quality doctor v2 slice for
+profile-declared ingest coverage. It is DB-free and reuses profile-pack
+validation, then lints connector source manifests and crawler manifests to
+summarize source classes, manifest kinds, runtime-executable field mappings,
+source-manifest file counts, crawler target counts, crawler maturity,
+expected shapes, local-reference/dynamic-loading/live-fetch safety boundaries,
+and allowlist-required counts. This is coverage and quality evidence only: it
+does not run imports, modify PostgreSQL, fetch live pages, or promote crawler
+sources.
 
 `cargo run -p cli -- doctor storage-compatibility` is the DB-free status report
 for the static storage/cache/index compatibility registry. It reports

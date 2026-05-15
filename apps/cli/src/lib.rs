@@ -22,13 +22,15 @@ pub use context_inspect::{
 };
 pub use doctor::{
     ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
-    run_explanation_integrity_doctor, run_profile_pack_doctor, run_retrieval_parity_doctor,
-    run_storage_compatibility_doctor, ContextCoverageDoctorCase, ContextCoverageDoctorSummary,
-    ContextCoverageRequirement, ContextCoverageShapeMismatch, ExplanationIntegrityDoctorCase,
-    ExplanationIntegrityDoctorSummary, ProfilePackDoctorFile, ProfilePackDoctorSummary,
-    RankingConfigDoctorFile, RankingConfigDoctorProfile, RankingConfigDoctorSummary,
-    RetrievalParityDoctorCase, RetrievalParityDoctorSummary, RetrievalParitySortField,
-    StorageCompatibilityDoctorSummary, StorageCompatibilityEntry,
+    run_explanation_integrity_doctor, run_ingest_quality_doctor, run_profile_pack_doctor,
+    run_retrieval_parity_doctor, run_storage_compatibility_doctor, ContextCoverageDoctorCase,
+    ContextCoverageDoctorSummary, ContextCoverageRequirement, ContextCoverageShapeMismatch,
+    ExplanationIntegrityDoctorCase, ExplanationIntegrityDoctorSummary,
+    IngestQualityDoctorConnector, IngestQualityDoctorProfile, IngestQualityDoctorSummary,
+    ProfilePackDoctorFile, ProfilePackDoctorSummary, RankingConfigDoctorFile,
+    RankingConfigDoctorProfile, RankingConfigDoctorSummary, RetrievalParityDoctorCase,
+    RetrievalParityDoctorSummary, RetrievalParitySortField, StorageCompatibilityDoctorSummary,
+    StorageCompatibilityEntry,
 };
 #[cfg(feature = "storage-backends")]
 pub use explain::{
@@ -47,9 +49,10 @@ pub use formatting::format_eval_replay_summary;
 pub use formatting::{
     format_context_coverage_doctor_summary, format_eval_golden_summary,
     format_explanation_integrity_doctor_summary, format_fixture_doctor_summary,
-    format_profile_pack_doctor_summary, format_ranking_config_doctor_summary,
-    format_replay_evaluation_summary, format_replay_scenario_summary,
-    format_retrieval_parity_doctor_summary, format_storage_compatibility_doctor_summary,
+    format_ingest_quality_doctor_summary, format_profile_pack_doctor_summary,
+    format_ranking_config_doctor_summary, format_replay_evaluation_summary,
+    format_replay_scenario_summary, format_retrieval_parity_doctor_summary,
+    format_storage_compatibility_doctor_summary,
 };
 #[cfg(feature = "storage-backends")]
 pub use formatting::{
