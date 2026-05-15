@@ -428,7 +428,7 @@ enum DoctorCommand {
     #[command(
         name = "ingest-quality",
         about = "Run the DB-free ingest quality doctor for profile connector coverage",
-        long_about = "Run the DB-free ingest quality doctor for profile connector coverage. This reuses the same profile-pack lint path as `profile validate`, then validates declared source manifests and crawler manifests without running imports, touching PostgreSQL, or making live crawl requests. It summarizes source classes, manifest kinds, runtime-executable field mappings, registry-only mapping boundaries, crawler allowlist requirements, source-manifest file counts, and crawler target coverage.\n\nExamples:\n  geo-line-ranker-cli doctor ingest-quality\n  geo-line-ranker-cli doctor ingest-quality --json\n  geo-line-ranker-cli doctor ingest-quality --profiles-path configs/profiles"
+        long_about = "Run the DB-free ingest quality doctor for profile connector coverage. This reuses the same profile-pack lint path as `profile validate`, then validates declared source manifests, archive manifests, and crawler manifests without running imports, touching PostgreSQL, or making live crawl requests. It summarizes source classes, manifest kinds, runtime-executable field mappings, registry-only mapping boundaries, crawler allowlist requirements, source-manifest file counts, archive file/format counts, and crawler target coverage.\n\nExamples:\n  geo-line-ranker-cli doctor ingest-quality\n  geo-line-ranker-cli doctor ingest-quality --json\n  geo-line-ranker-cli doctor ingest-quality --profiles-path configs/profiles"
     )]
     IngestQuality {
         #[arg(
@@ -1748,7 +1748,7 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
+        "- {} profile_id={} schema_version={} kind={} manifest_version={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={}",
         file.path.display(),
         file.profile_id,
         file.schema_version,
@@ -1767,6 +1767,7 @@ fn format_profile_lint_file_line(file: &ProfilePackLintFile) -> String {
         file.evaluation_reference_count,
         file.source_manifest_count,
         file.event_csv_example_count,
+        file.archive_source_count,
         file.optional_crawler_manifest_count
     )
 }
@@ -2860,6 +2861,7 @@ evaluation:
             evaluation_references: 1,
             source_manifest_references: 4,
             event_csv_example_references: 1,
+            archive_source_references: 0,
             optional_crawler_manifest_references: 1,
             files: vec![cli::ProfilePackDoctorFile {
                 path: PathBuf::from("configs/profiles/school-event-jp/profile.yaml"),
@@ -2903,6 +2905,7 @@ evaluation:
                 evaluation_references: 1,
                 source_manifest_references: 4,
                 event_csv_example_references: 1,
+                archive_source_references: 0,
                 optional_crawler_manifest_references: 1,
             }],
         };
@@ -2916,6 +2919,7 @@ evaluation:
         assert!(rendered.contains("evaluation_references=1"));
         assert!(rendered.contains("source_manifest_references=4"));
         assert!(rendered.contains("event_csv_example_references=1"));
+        assert!(rendered.contains("archive_source_references=0"));
         assert!(rendered.contains("optional_crawler_manifest_references=1"));
         assert!(rendered.contains("event_csv_examples=1"));
         assert!(rendered.contains("connector type=source_manifest source_class=csv_import"));
@@ -2941,20 +2945,27 @@ evaluation:
         let rendered = format_ingest_quality_doctor_summary(&summary);
 
         assert!(rendered.contains("doctor ingest-quality completed: profile_packs=2"));
-        assert!(rendered.contains("connectors=9"));
-        assert!(rendered.contains("source_classes=csv_import=6,html_crawl=1,ndjson_import=2"));
+        assert!(rendered.contains("connectors=10"));
         assert!(rendered
-            .contains("manifest_kinds=crawler_source=1,csv_file=2,import_source=4,ndjson_file=2"));
-        assert!(rendered.contains("runtime_executable_mappings=4"));
+            .contains("source_classes=archive_import=1,csv_import=6,html_crawl=1,ndjson_import=2"));
+        assert!(rendered.contains(
+            "manifest_kinds=archive_source=1,crawler_source=1,csv_file=2,import_source=4,ndjson_file=2"
+        ));
+        assert!(rendered.contains("runtime_executable_mappings=5"));
         assert!(rendered.contains("non_runtime_mappings=0"));
         assert!(rendered.contains("source_manifest_files=4"));
+        assert!(rendered.contains("archive_files=1"));
         assert!(rendered.contains("crawler_targets=1"));
         assert!(rendered.contains("crawler_allowlist_required=1"));
         assert!(rendered.contains("evidence_scope: db_free_profile_connector_manifest_coverage"));
         assert!(rendered.contains("execution_scope: no_import_or_live_crawl"));
+        assert!(rendered.contains("archive_formats: tar=1"));
         assert!(rendered.contains("crawler_source_maturity: parser_only=1"));
         assert!(rendered.contains("crawler_expected_shapes: html_heading_page=1"));
         assert!(rendered.contains("profile_id=school-event-jp connectors=7"));
+        assert!(rendered.contains("profile_id=local-discovery-generic connectors=3"));
+        assert!(rendered.contains("connector type=archive_source source_class=archive_import"));
+        assert!(rendered.contains("lint=archive_source_lint"));
         assert!(rendered.contains("connector type=crawler_manifest source_class=html_crawl"));
         assert!(rendered.contains("lint=crawler_manifest_lint"));
         assert!(rendered.contains("field_mapping_runtime_executable=true"));
@@ -2982,6 +2993,7 @@ evaluation:
             evaluation_references: 1,
             source_manifest_references: 2,
             event_csv_example_references: 1,
+            archive_source_references: 0,
             optional_crawler_manifest_references: 1,
             files: vec![cli::RankingConfigDoctorFile {
                 path: PathBuf::from("configs/ranking/schools.default.yaml"),
@@ -3014,6 +3026,7 @@ evaluation:
                 evaluation_references: 1,
                 source_manifest_references: 2,
                 event_csv_example_references: 1,
+                archive_source_references: 0,
                 optional_crawler_manifest_references: 1,
             }],
         };
@@ -3101,6 +3114,7 @@ evaluation:
                     evaluation_reference_count: 1,
                     source_manifest_count: 2,
                     event_csv_example_count: 1,
+                    archive_source_count: 0,
                     optional_crawler_manifest_count: 1,
                 },
                 ProfilePackLintFile {
@@ -3133,6 +3147,7 @@ evaluation:
                     evaluation_reference_count: 1,
                     source_manifest_count: 1,
                     event_csv_example_count: 0,
+                    archive_source_count: 0,
                     optional_crawler_manifest_count: 0,
                 },
             ],
@@ -3197,6 +3212,7 @@ evaluation:
                 evaluation_reference_count: 1,
                 source_manifest_count: 0,
                 event_csv_example_count: 0,
+                archive_source_count: 0,
                 optional_crawler_manifest_count: 0,
             }],
             ranking_configs: Vec::new(),
@@ -3268,6 +3284,7 @@ article_support: reserved
             evaluation_reference_count: 0,
             source_manifest_count: 0,
             event_csv_example_count: 0,
+            archive_source_count: 0,
             optional_crawler_manifest_count: 0,
         };
         let runtime_manifest_path = PathBuf::from("repo")

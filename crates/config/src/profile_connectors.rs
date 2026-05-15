@@ -21,6 +21,7 @@ pub enum ProfileConnectorType {
     SourceManifest,
     CsvImport,
     NdjsonImport,
+    ArchiveSource,
     CrawlerManifest,
 }
 
@@ -30,6 +31,7 @@ impl ProfileConnectorType {
             Self::SourceManifest => "source_manifest",
             Self::CsvImport => "csv_import",
             Self::NdjsonImport => "ndjson_import",
+            Self::ArchiveSource => "archive_source",
             Self::CrawlerManifest => "crawler_manifest",
         }
     }
@@ -38,6 +40,7 @@ impl ProfileConnectorType {
         match self {
             Self::SourceManifest | Self::CsvImport => ProfileSourceClass::CsvImport,
             Self::NdjsonImport => ProfileSourceClass::NdjsonImport,
+            Self::ArchiveSource => ProfileSourceClass::ArchiveImport,
             Self::CrawlerManifest => ProfileSourceClass::HtmlCrawl,
         }
     }
@@ -47,6 +50,7 @@ impl ProfileConnectorType {
             Self::SourceManifest => "import_source",
             Self::CsvImport => "csv_file",
             Self::NdjsonImport => "ndjson_file",
+            Self::ArchiveSource => "archive_source",
             Self::CrawlerManifest => "crawler_source",
         }
     }
@@ -55,7 +59,7 @@ impl ProfileConnectorType {
         match self {
             Self::CsvImport => Some("csv"),
             Self::NdjsonImport => Some("ndjson"),
-            Self::SourceManifest | Self::CrawlerManifest => None,
+            Self::SourceManifest | Self::ArchiveSource | Self::CrawlerManifest => None,
         }
     }
 }
@@ -71,6 +75,7 @@ impl fmt::Display for ProfileConnectorType {
 pub enum ProfileSourceClass {
     CsvImport,
     NdjsonImport,
+    ArchiveImport,
     HtmlCrawl,
 }
 
@@ -79,6 +84,7 @@ impl ProfileSourceClass {
         match self {
             Self::CsvImport => "csv_import",
             Self::NdjsonImport => "ndjson_import",
+            Self::ArchiveImport => "archive_import",
             Self::HtmlCrawl => "html_crawl",
         }
     }
@@ -280,6 +286,16 @@ fn profile_connector_registry_entry(
             validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
             (header.kind, Some(source_id), None)
         }
+        ProfileConnectorType::ArchiveSource => {
+            let header = load_connector_manifest_header(path, &resolved)?;
+            ensure_connector_manifest_kind(path, &resolved, connector, &header)?;
+            let source_id =
+                require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
+            validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
+            let field_mapping =
+                require_runtime_executable_import_field_mapping(path, manifest, connector)?;
+            (header.kind, Some(source_id), Some(field_mapping))
+        }
         ProfileConnectorType::CsvImport | ProfileConnectorType::NdjsonImport => {
             let expected_extension = connector
                 .connector_type
@@ -298,7 +314,7 @@ fn profile_connector_registry_entry(
                 expected_extension
             );
             let field_mapping =
-                require_runtime_executable_file_field_mapping(path, manifest, connector)?;
+                require_runtime_executable_import_field_mapping(path, manifest, connector)?;
             (
                 connector
                     .connector_type
@@ -428,14 +444,14 @@ fn ensure_no_file_field_mapping(
 ) -> Result<()> {
     ensure!(
         connector.field_mapping.is_none(),
-        "profile pack {} connector {} must not declare field_mapping; field_mapping is only supported for file import connectors",
+        "profile pack {} connector {} must not declare field_mapping; field_mapping is only supported for file or archive import connectors",
         profile_path.display(),
         connector.connector_type.as_str()
     );
     Ok(())
 }
 
-fn require_runtime_executable_file_field_mapping(
+fn require_runtime_executable_import_field_mapping(
     profile_path: &Path,
     manifest: &ProfilePackManifest,
     connector: &ProfileConnectorRef,

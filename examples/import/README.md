@@ -29,11 +29,12 @@ cargo run -p cli -- import event-ndjson --file examples/import/events.sample.ndj
 ```
 
 Import a profile-declared source by `source_id`. The default profile includes
-the event CSV and NDJSON samples, while the JP reference profile also maps JP
-source manifests:
+the event CSV, NDJSON, and local archive samples, while the JP reference
+profile also maps JP source manifests:
 
 ```bash
 cargo run -p cli -- import profile-source --source-id event-ndjson
+cargo run -p cli -- import profile-source --source-id event-archive
 cargo run -p cli -- import profile-source --profile-id school-event-jp --source-id jp-rail
 ```
 

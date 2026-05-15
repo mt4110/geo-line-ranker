@@ -99,6 +99,14 @@ The file has 4 event rows and exercises the public-MVP operational input path:
 checksum staging, import audit rows, active event updates, and replacement
 semantics. It is not a crawler path.
 
+The default profile also declares the same sample as a local archive source.
+Use this when checking the archive manifest/checksum path without widening the
+runtime beyond the existing event importer:
+
+```bash
+cargo run -p cli -- import profile-source --source-id event-archive
+```
+
 ## 6. Run the worker and API
 
 ```bash

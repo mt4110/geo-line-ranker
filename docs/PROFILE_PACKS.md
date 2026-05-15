@@ -82,14 +82,14 @@ Each `profile.yaml` declares:
   explanations while preserving the stable public `reason_code` values.
 - `fixtures`: committed fixture sets that exercise the profile.
 - `connectors`: optional registry-facing local connector references. Supported
-  connector types are `source_manifest`, `csv_import`, `ndjson_import`, and
-  `crawler_manifest`. File import connectors must declare a portable
-  `field_mapping` ref. The manifest contract can parse future mapping refs, but
-  the current import runtime executes only the deterministic
-  `field_mapping: event_v1` mapping. Validation resolves each manifest path,
-  derives source class, manifest kind, profile compatibility, field mapping,
-  and safety metadata, and keeps the references local. This is not dynamic
-  runtime connector loading or arbitrary mapping execution.
+  connector types are `source_manifest`, `csv_import`, `ndjson_import`,
+  `archive_source`, and `crawler_manifest`. File and archive import connectors
+  must declare a portable `field_mapping` ref. The manifest contract can parse
+  future mapping refs, but the current import runtime executes only the
+  deterministic `field_mapping: event_v1` mapping. Validation resolves each
+  manifest path, derives source class, manifest kind, profile compatibility,
+  field mapping, and safety metadata, and keeps the references local. This is
+  not dynamic runtime connector loading or arbitrary mapping execution.
 - `evaluation`: optional committed evaluation references such as the golden
   scenario pack and an optional pairwise pack.
 - `source_manifests`, `event_csv_examples`, and `optional_crawler_manifests`:
@@ -117,16 +117,20 @@ catalog locale files, connector manifest refs, connector type / manifest-kind
 consistency, file-import field mapping refs, current import-runtime executable
 mapping boundaries, and evaluation refs.
 `source_manifest` refs must point to YAML with `kind: import_source`,
+`archive_source` refs must point to YAML with `kind: archive_source`,
 `crawler_manifest` refs must point to YAML with `kind: crawler_source`,
 `csv_import` refs must point to a CSV file, and `ndjson_import` refs must point
 to an NDJSON file. CSV/NDJSON file import refs must declare both a profile
-`source_id` and a portable field mapping ref. Connector `source_id` values use
-the same portable lowercase letters, digits, and hyphens rule as `profile_id`;
-`field_mapping` refs use lowercase letters, digits, underscores, and hyphens,
-with no leading or trailing separator. Only `field_mapping: event_v1` is
-executable today. Unsupported mapping refs fail `profile validate`, `doctor
-profile-pack`, and `import profile-source` instead of being treated as partial
-support.
+`source_id` and a portable field mapping ref. Archive import refs must point to
+a local archive manifest whose archive path stays beside the manifest, whose
+checksum is checked by `doctor ingest-quality`, whose listed CSV/NDJSON entries
+stay inside the archive, and whose unpacked files stay within bounded size
+limits. Connector `source_id` values use the same portable lowercase letters,
+digits, and hyphens rule as `profile_id`; `field_mapping` refs use lowercase
+letters, digits, underscores, and hyphens, with no leading or trailing
+separator. Only `field_mapping: event_v1` is executable today. Unsupported
+mapping refs fail `profile validate`, `doctor profile-pack`, and
+`import profile-source` instead of being treated as partial support.
 Optional `source_id` values on YAML-backed connectors must match the referenced
 manifest's `source_id`. For legacy schema-2 manifests that omit
 `content_kinds`, the validator treats `supported_content_kinds` as the inline
@@ -135,8 +139,8 @@ registry; new profile packs should declare `content_kinds` explicitly.
 The manifest spec draft also sketches richer connector families and per-profile
 evaluation packs. This repository has adopted the local-reference contract
 above, a small source connector registry metadata surface, `csv_import` /
-`ndjson_import` event file mapping refs with an explicit `event_v1` runtime
-boundary, the `import profile-source --source-id
+`ndjson_import` event file mapping refs, local archive-source manifests with an
+explicit `event_v1` runtime boundary, the `import profile-source --source-id
 <id>` path for profile-declared one-shot imports, selected-locale reason label
 rendering, nested fallback config path validation, and the `eval golden
 --profile-id <id>` execution path for `evaluation.scenario_pack`. When a

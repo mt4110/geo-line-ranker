@@ -1,0 +1,15 @@
+schema_version: 1
+kind: archive_source
+source_id: event-archive
+source_name: Archived operational event CSV
+manifest_version: 1
+parser_version: event-archive-v1
+description: Local archive fixture that bridges to the deterministic event_v1 CSV importer.
+archive:
+  path: events.sample.tar
+  format: tar
+  checksum_sha256: b707147496cba2f53ec1579b36f9882b5429c3749d8b91fd13922ee7c3006618
+files:
+  - logical_name: events
+    path: events.sample.csv
+    format: csv

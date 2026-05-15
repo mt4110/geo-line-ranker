@@ -412,7 +412,7 @@ pub fn format_explanation_integrity_doctor_summary(
 
 pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) -> String {
     let mut lines = vec![format!(
-        "doctor profile-pack completed: profile_packs={}, ranking_config_dirs={}, reason_catalog_locales={}, reasons={}, fixture_references={}, connector_references={}, evaluation_references={}, source_manifest_references={}, event_csv_example_references={}, optional_crawler_manifest_references={}",
+        "doctor profile-pack completed: profile_packs={}, ranking_config_dirs={}, reason_catalog_locales={}, reasons={}, fixture_references={}, connector_references={}, evaluation_references={}, source_manifest_references={}, event_csv_example_references={}, archive_source_references={}, optional_crawler_manifest_references={}",
         summary.profile_packs,
         summary.ranking_config_dirs,
         summary.reason_catalog_locales,
@@ -422,12 +422,13 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
         summary.evaluation_references,
         summary.source_manifest_references,
         summary.event_csv_example_references,
+        summary.archive_source_references,
         summary.optional_crawler_manifest_references
     )];
 
     for file in &summary.files {
         lines.push(format!(
-            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
             file.profile_id,
             file.compatibility_level,
             file.content_kind_registry.join(","),
@@ -442,6 +443,7 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
             file.evaluation_references,
             file.source_manifest_references,
             file.event_csv_example_references,
+            file.archive_source_references,
             file.optional_crawler_manifest_references,
             file.path.display(),
             file.ranking_config_dir.display(),
@@ -478,7 +480,7 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
 
 pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary) -> String {
     let mut lines = vec![format!(
-        "doctor ingest-quality completed: profile_packs={}, connectors={}, source_classes={}, manifest_kinds={}, runtime_executable_mappings={}, non_runtime_mappings={}, source_manifest_files={}, crawler_targets={}, local_reference_only={}, dynamic_loading_enabled={}, live_fetch_default={}, crawler_allowlist_required={}",
+        "doctor ingest-quality completed: profile_packs={}, connectors={}, source_classes={}, manifest_kinds={}, runtime_executable_mappings={}, non_runtime_mappings={}, source_manifest_files={}, archive_files={}, crawler_targets={}, local_reference_only={}, dynamic_loading_enabled={}, live_fetch_default={}, crawler_allowlist_required={}",
         summary.profile_packs,
         summary.connector_references,
         format_counts(&summary.source_class_counts),
@@ -486,6 +488,7 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
         summary.runtime_executable_mappings,
         summary.non_runtime_mappings,
         summary.source_manifest_file_count,
+        summary.archive_file_count,
         summary.crawler_target_count,
         summary.local_reference_only_connectors,
         summary.dynamic_loading_enabled_connectors,
@@ -497,10 +500,15 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
         summary.evidence_scope, summary.execution_scope
     ));
     lines.push(format!(
-        "profile_references: source_manifests={} event_csv_examples={} optional_crawler_manifests={}",
+        "profile_references: source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={}",
         summary.source_manifest_references,
         summary.event_csv_example_references,
+        summary.archive_source_references,
         summary.optional_crawler_manifest_references
+    ));
+    lines.push(format!(
+        "archive_formats: {}",
+        format_counts(&summary.archive_format_counts)
     ));
     lines.push(format!(
         "crawler_source_maturity: {}",
@@ -513,7 +521,7 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
 
     for profile in &summary.profiles {
         lines.push(format!(
-            "  profile_id={} connectors={} source_classes={} manifest_kinds={} runtime_executable_mappings={} non_runtime_mappings={} source_manifest_files={} crawler_targets={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} crawler_allowlist_required={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={}",
+            "  profile_id={} connectors={} source_classes={} manifest_kinds={} runtime_executable_mappings={} non_runtime_mappings={} source_manifest_files={} archive_files={} crawler_targets={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} crawler_allowlist_required={} source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={} manifest={}",
             profile.profile_id,
             profile.connector_references,
             format_counts(&profile.source_class_counts),
@@ -521,6 +529,7 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
             profile.runtime_executable_mappings,
             profile.non_runtime_mappings,
             profile.source_manifest_file_count,
+            profile.archive_file_count,
             profile.crawler_target_count,
             profile.local_reference_only_connectors,
             profile.dynamic_loading_enabled_connectors,
@@ -528,12 +537,13 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
             profile.crawler_allowlist_required_connectors,
             profile.source_manifest_references,
             profile.event_csv_example_references,
+            profile.archive_source_references,
             profile.optional_crawler_manifest_references,
             profile.path.display()
         ));
         for connector in &profile.connectors {
             lines.push(format!(
-                "    connector type={} source_class={} manifest_kind={} source_id={} field_mapping={} field_mapping_runtime_executable={} lint={} source_manifest_files={} crawler_targets={} crawler_source_maturity={} crawler_expected_shape={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} allowlist_required={} manifest={}",
+                "    connector type={} source_class={} manifest_kind={} source_id={} field_mapping={} field_mapping_runtime_executable={} lint={} source_manifest_files={} archive_files={} archive_format={} archive_checksum_sha256={} crawler_targets={} crawler_source_maturity={} crawler_expected_shape={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} allowlist_required={} manifest={}",
                 connector.connector_type,
                 connector.source_class,
                 connector.manifest_kind,
@@ -548,6 +558,15 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
                     .source_manifest_file_count
                     .map(|count| count.to_string())
                     .unwrap_or_else(|| "none".to_string()),
+                connector
+                    .archive_file_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                connector.archive_format.as_deref().unwrap_or("none"),
+                connector
+                    .archive_checksum_sha256
+                    .as_deref()
+                    .unwrap_or("none"),
                 connector
                     .crawler_target_count
                     .map(|count| count.to_string())
@@ -571,7 +590,7 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
 
 pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary) -> String {
     let mut lines = vec![format!(
-        "doctor ranking-config completed: active_profile_id={}, fixture_set_id={}, ranking_files={}, ranking_kinds={}, profile_packs={}, referenced_ranking_config_dirs={}, reason_catalog_references={}, reason_catalog_locales={}, reasons={}, fixture_references={}, connector_references={}, evaluation_references={}, source_manifest_references={}, event_csv_example_references={}, optional_crawler_manifest_references={}, profile_version={}",
+        "doctor ranking-config completed: active_profile_id={}, fixture_set_id={}, ranking_files={}, ranking_kinds={}, profile_packs={}, referenced_ranking_config_dirs={}, reason_catalog_references={}, reason_catalog_locales={}, reasons={}, fixture_references={}, connector_references={}, evaluation_references={}, source_manifest_references={}, event_csv_example_references={}, archive_source_references={}, optional_crawler_manifest_references={}, profile_version={}",
         summary.active_profile_id.as_deref().unwrap_or("not-selected"),
         summary.fixture_set_id.as_deref().unwrap_or("none"),
         summary.ranking_files,
@@ -586,6 +605,7 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
         summary.evaluation_references,
         summary.source_manifest_references,
         summary.event_csv_example_references,
+        summary.archive_source_references,
         summary.optional_crawler_manifest_references,
         summary.profile_version
     )];
@@ -606,7 +626,7 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
     lines.push("profile packs:".to_string());
     lines.extend(summary.profiles.iter().map(|profile| {
         format!(
-            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
+            "  profile_id={} compatibility_level={} content_kind_registry={} content_kinds={} runtime_executable_content_kinds={} registry_only_content_kinds={} placements={} reason_catalog_locales={} reasons={} fixtures={} connectors={} evaluation_refs={} source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={} manifest={} ranking_config_dir={} fallback_config={} reason_catalog={}",
             profile.profile_id,
             profile.compatibility_level,
             profile.content_kind_registry.join(","),
@@ -621,6 +641,7 @@ pub fn format_ranking_config_doctor_summary(summary: &RankingConfigDoctorSummary
             profile.evaluation_references,
             profile.source_manifest_references,
             profile.event_csv_example_references,
+            profile.archive_source_references,
             profile.optional_crawler_manifest_references,
             profile.path.display(),
             profile.ranking_config_dir.display(),
