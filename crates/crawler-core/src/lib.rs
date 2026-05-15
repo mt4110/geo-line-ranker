@@ -3055,6 +3055,46 @@ targets:
     }
 
     #[test]
+    fn lint_reports_explicit_source_maturity() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("crawler.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+schema_version: 1
+kind: crawler_source
+source_id: custom-example
+source_name: Custom example
+source_maturity: parser_only
+manifest_version: 1
+parser_key: single_title_page_v1
+allowlist:
+  allowed_domains: ["example.com"]
+  user_agent: geo-line-ranker-crawler/0.1
+  live_fetch_enabled: false
+  live_fetch_block_reason: parser coverage only
+  robots_txt_url: https://example.com/robots.txt
+  terms_url: https://example.com/terms
+  terms_note: Manual review completed.
+defaults:
+  school_id: school_seaside
+targets:
+  - logical_name: example_home
+    url: https://example.com/
+"#,
+        )
+        .expect("manifest");
+
+        let lint = lint_manifest_file(&manifest_path).expect("lint");
+        assert_eq!(lint.source_maturity, SourceMaturity::ParserOnly);
+        assert_eq!(lint.target_count, 1);
+        assert_eq!(
+            lint.expected_shape,
+            Some(ParserExpectedShape::HtmlHeadingPage)
+        );
+    }
+
+    #[test]
     fn manifest_rejects_live_ready_when_live_fetch_is_disabled() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_path = temp.path().join("crawler.yaml");
