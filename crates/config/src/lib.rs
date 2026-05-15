@@ -1528,10 +1528,19 @@ fn resolve_runtime_ranking_config_dir(
             ranking_config_dir.display()
         )
     })?;
-    let ranking_profiles = RankingProfiles::load_from_dir_with_optional_fallback(
-        &ranking_config_dir,
-        fallback_config_path,
-    )?;
+    let ranking_profiles = match fallback_config_path {
+        Some(fallback_config_path) => {
+            // Runtime fallback overrides do not relax the base ranking_config_dir
+            // contract; commands without a profile may still load its default
+            // fallback file.
+            RankingProfiles::load_from_dir(&ranking_config_dir)?;
+            RankingProfiles::load_from_dir_with_optional_fallback(
+                &ranking_config_dir,
+                Some(fallback_config_path),
+            )?
+        }
+        None => RankingProfiles::load_from_dir(&ranking_config_dir)?,
+    };
     validate_profile_content_kind_runtime_boundary(profile_pack_manifest, manifest)?;
     validate_profile_ranking_content_kinds(profile_pack_manifest, manifest, &ranking_profiles)?;
     Ok(ranking_config_dir)
@@ -4860,6 +4869,70 @@ article_support: reserved
         );
         let lint_summary = lint_profile_pack_dir(&profiles_dir).expect("profile lint");
         assert_eq!(lint_summary.ranking_configs.len(), 1);
+    }
+
+    #[test]
+    fn runtime_selection_validates_base_fallback_file_before_override() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let fallback_dir = profile_dir.join("fallback");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&fallback_dir).expect("fallback dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        fs::write(
+            ranking_dir.join("fallback.default.yaml"),
+            r#"schema_version: 1
+kind: ranking_events
+min_results: 2
+neighbor_penalty: 0.8
+neighbor_distance_cap_meters: 2500.0
+"#,
+        )
+        .expect("base fallback config");
+        fs::write(
+            fallback_dir.join("compact.yaml"),
+            fallback_config_yaml(4, &["strict_station", "same_line", "safe_global_popular"]),
+        )
+        .expect("profile fallback config");
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy:
+  config_file: fallback/compact.yaml
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let error = resolve_profile_pack_ranking_selection(&profiles_dir, "example-profile")
+            .expect_err("base fallback contract error");
+
+        assert!(error.to_string().contains(
+            "fallback.default.yaml.kind ranking_events is invalid; expected ranking_fallback"
+        ));
     }
 
     #[test]
