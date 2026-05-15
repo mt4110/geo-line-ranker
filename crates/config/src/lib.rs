@@ -1220,9 +1220,11 @@ fn validate_fallback_ladder(ladder: &[FallbackStage]) -> Result<()> {
         let next = &pair[1];
         ensure!(
             current.priority() < next.priority(),
-            "fallback.fallback_ladder must follow the default stage order; profile configs may omit stages but must not place {} after {}",
+            "fallback.fallback_ladder must follow the default stage order; profile configs may omit stages, but stage {} (priority {}) must come after {} (priority {}) in the default order",
             next.as_str(),
-            current.as_str()
+            next.priority(),
+            current.as_str(),
+            current.priority()
         );
     }
 
@@ -1715,21 +1717,18 @@ fn lint_loaded_profile_pack_file(
     // Keep the referenced ranking_config_dir contract strict even when a profile
     // supplies a runtime fallback override; the override is loaded below for
     // profile-specific runtime validation.
-    let cached_ranking_profiles = match ranking_config_cache {
-        Some(cache) => Some(
-            lint_ranking_config_dir_cached(&ranking_config_dir, cache)?
-                .profiles
-                .clone(),
-        ),
-        None => None,
-    };
     let ranking_profiles = if let Some(fallback_config_path) = fallback_config_path.as_deref() {
+        if let Some(cache) = ranking_config_cache {
+            let _ = lint_ranking_config_dir_cached(&ranking_config_dir, cache)?;
+        }
         RankingProfiles::load_from_dir_with_optional_fallback(
             &ranking_config_dir,
             Some(fallback_config_path),
         )?
-    } else if let Some(profiles) = cached_ranking_profiles {
-        profiles
+    } else if let Some(cache) = ranking_config_cache {
+        lint_ranking_config_dir_cached(&ranking_config_dir, cache)?
+            .profiles
+            .clone()
     } else {
         lint_ranking_config_dir_with_profiles(&ranking_config_dir)?.1
     };
