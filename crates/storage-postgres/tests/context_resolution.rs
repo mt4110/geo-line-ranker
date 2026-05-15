@@ -759,7 +759,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
                     NULL,
                     'search_execute',
                     'st_tamachi',
-                    NOW() - INTERVAL '72 hours',
+                    NOW() - INTERVAL '71 hours 59 minutes',
                     '{}'::jsonb
                 );",
             )
