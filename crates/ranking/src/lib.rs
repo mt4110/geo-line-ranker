@@ -287,6 +287,39 @@ mod tests {
     }
 
     #[test]
+    fn profile_specific_fallback_ladder_changes_selected_stage_without_db() {
+        let dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        let mut line_first_profiles =
+            RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        line_first_profiles.fallback.fallback_ladder = vec![
+            FallbackStage::StrictStation,
+            FallbackStage::SameLine,
+            FallbackStage::SafeGlobalPopular,
+        ];
+        let line_first_engine = RankingEngine::new(line_first_profiles, "profile-ladder-test");
+        let line_first_result = line_first_engine
+            .recommend(&dataset, &query("st_shinbashi", PlacementKind::Search))
+            .expect("line-first recommendation result");
+
+        let mut global_profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        global_profiles.fallback.fallback_ladder = vec![
+            FallbackStage::StrictStation,
+            FallbackStage::SafeGlobalPopular,
+        ];
+        let global_engine = RankingEngine::new(global_profiles, "profile-ladder-test");
+        let global_result = global_engine
+            .recommend(&dataset, &query("st_shinbashi", PlacementKind::Search))
+            .expect("global recommendation result");
+
+        assert_eq!(line_first_result.fallback_stage, FallbackStage::SameLine);
+        assert_eq!(
+            global_result.fallback_stage,
+            FallbackStage::SafeGlobalPopular
+        );
+        assert!(!global_result.candidate_counts.contains_key("same_line"));
+    }
+
+    #[test]
     fn underfilled_scoped_stages_use_safe_global_when_available() {
         let dataset = RankingDataset {
             schools: vec![

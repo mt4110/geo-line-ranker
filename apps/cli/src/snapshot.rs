@@ -1,6 +1,6 @@
 use anyhow::Result;
 use cache::RecommendationCache;
-use config::{AppSettings, RankingProfiles};
+use config::AppSettings;
 use storage::{RecommendationRepository, SnapshotTuning};
 use storage_opensearch::ProjectionSyncService;
 
@@ -18,7 +18,7 @@ pub struct SnapshotRefreshSummary {
 }
 
 pub async fn run_snapshot_refresh(settings: &AppSettings) -> Result<SnapshotRefreshSummary> {
-    let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
+    let profiles = settings.load_ranking_profiles()?;
     let tuning = SnapshotTuning {
         search_execute_school_signal_weight: profiles.tracking.search_execute_school_signal_weight,
         search_execute_area_signal_weight: profiles.tracking.search_execute_area_signal_weight,

@@ -73,10 +73,14 @@ Each `profile.yaml` declares:
   validates that the profile includes `home`, `search`, `detail`, and `mypage`
   because the active ranking config still requires those four placement files.
 - `fallback_policy`: profile-side fallback policy. The current manifest accepts
-  either a legacy policy name or a nested `config_file` reference. The nested
-  form is resolved and validated as a local runtime file reference; ranking
-  still uses the active `ranking_config_dir` fallback weights.
+  either a legacy policy name or a nested `config_file` reference. Legacy names
+  remain metadata for existing profiles. The nested form is resolved, validated
+  as a local `ranking_fallback` config, and used by runtime ranking/evaluation
+  as the active fallback config while the rest of the ranking files still come
+  from `ranking_config_dir`.
 - `ranking_config_dir`: active ranking config used by the profile.
+  The directory must still be a complete strict ranking config directory; a
+  nested `fallback_policy.config_file` replaces only the runtime fallback role.
 - `reason_catalog`: profile-owned reason labels and core/profile layering.
   The manifest accepts either a legacy single path or `locale_files`; when
   multiple locale files are declared, `default_locale` selects the runtime
@@ -151,18 +155,23 @@ above, a small source connector registry metadata surface, `csv_import` /
 `ndjson_import` event file mapping refs, local archive-source manifests with an
 explicit `event_v1` runtime boundary, the `import profile-source --source-id
 <id>` path for profile-declared one-shot imports, selected-locale reason label
-rendering, nested fallback config path validation, and the `eval golden
---profile-id <id>` execution path for `evaluation.scenario_pack`. When a
-profile declares `evaluation.pairwise_pack`, the same golden runner loads those
-pairwise expectations into the selected scenario run and reports the pack path
-in the summary metadata. Pairwise packs use `schema_version: 1`, `kind:
+rendering, nested fallback config runtime execution, and the `eval golden
+--profile-id <id>` execution path for `evaluation.scenario_pack`. Nested
+fallback configs may tune the existing fallback model, including minimum result
+counts, neighbor penalties, distance caps, and an additive ladder refinement
+that must start at `strict_station` and can omit later stages while preserving
+the default stage order. When a profile declares `evaluation.pairwise_pack`, the
+same golden runner loads those pairwise expectations into the selected scenario
+run and reports the pack path in the summary metadata. Pairwise packs use
+`schema_version: 1`, `kind:
 replay_pairwise_pack`, and `expectations` entries keyed by `scenario_id`. It has
-adopted profile-defined content-kind identifiers in manifests, while the
-current ranking runtime still emits the implemented school/event response
-shape. Non-executable identifiers are valid as registry entries, but exposing
-one through `supported_content_kinds` is a validation/runtime error instead of
-silent partial support. It has not adopted dynamic connector loading,
-arbitrary field mapping execution, or a replacement ranking engine.
+adopted profile-defined content-kind identifiers in manifests, while the current
+ranking runtime still emits the implemented school/event response shape.
+Non-executable identifiers are valid as registry entries, but exposing one
+through `supported_content_kinds` is a validation/runtime error instead of
+silent partial support. It has not adopted dynamic connector loading, arbitrary
+field mapping execution, arbitrary content-kind execution, live JSON feed
+execution, or a replacement ranking engine.
 
 Compatibility levels are profile-pack contract labels, not storage parity
 claims:
@@ -256,6 +265,12 @@ is loaded by the API and profile-aware replay/evaluation paths so item and
 top-level explanations render the profile's labels. Existing core score
 features must keep their stable `reason_code`; a profile catalog can override
 labels, not rewrite public reason-code identity.
+When `fallback_policy.config_file` is present, the API, worker, snapshot refresh
+path, and profile-aware golden replay load that file as the runtime fallback
+config. Profiles that still declare a named `fallback_policy` keep the previous
+default behavior and use `ranking_config_dir/fallback.default.yaml`. Profile
+pack lint still validates the referenced `ranking_config_dir` as a complete base
+ranking config so an override cannot hide broken default files.
 
 `eval golden` has a narrower profile-aware evaluation boundary. Without
 `--profile-id` or `PROFILE_ID`, it keeps the historical

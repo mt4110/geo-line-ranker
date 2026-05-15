@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use cache::RecommendationCache;
 use clap::{Parser, Subcommand};
-use config::{AppSettings, RankingProfiles};
+use config::AppSettings;
 use observability::init_tracing;
 use storage::{CandidateProjectionSync, RecommendationRepository, SnapshotTuning};
 use storage_opensearch::ProjectionSyncService;
@@ -110,7 +110,7 @@ fn build_projection_sync(
 }
 
 fn load_snapshot_tuning(settings: &AppSettings) -> anyhow::Result<SnapshotTuning> {
-    let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
+    let profiles = settings.load_ranking_profiles()?;
     Ok(SnapshotTuning {
         search_execute_school_signal_weight: profiles.tracking.search_execute_school_signal_weight,
         search_execute_area_signal_weight: profiles.tracking.search_execute_area_signal_weight,

@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use domain::{ContentKind, ContentKindRef, PlacementKind};
+use domain::{ContentKind, ContentKindRef, FallbackStage, PlacementKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -130,6 +130,14 @@ impl AppSettings {
         Self::from_env_with_profile_pack(
             ProfilePackRuntimeMode::Skip,
             FixtureRuntimeRequirement::Optional,
+        )
+    }
+
+    pub fn load_ranking_profiles(&self) -> Result<RankingProfiles> {
+        let fallback_config_path = optional_setting_path(&self.profile_fallback_config_path);
+        RankingProfiles::load_from_dir_with_optional_fallback(
+            &self.ranking_config_dir,
+            fallback_config_path,
         )
     }
 
@@ -264,6 +272,15 @@ impl AppSettings {
     }
 }
 
+fn optional_setting_path(value: &str) -> Option<&Path> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(Path::new(trimmed))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProfilePackRuntimeMode {
     Resolve,
@@ -364,6 +381,19 @@ pub struct FallbackProfile {
     pub min_results: usize,
     pub neighbor_penalty: f64,
     pub neighbor_distance_cap_meters: f64,
+    #[serde(default = "default_fallback_ladder")]
+    pub fallback_ladder: Vec<FallbackStage>,
+}
+
+fn default_fallback_ladder() -> Vec<FallbackStage> {
+    vec![
+        FallbackStage::StrictStation,
+        FallbackStage::SameLine,
+        FallbackStage::SameCity,
+        FallbackStage::SamePrefecture,
+        FallbackStage::NeighborArea,
+        FallbackStage::SafeGlobalPopular,
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -906,10 +936,30 @@ impl ProfilePackRegistry {
 
 impl RankingProfiles {
     pub fn load_from_dir(path: impl AsRef<Path>) -> Result<Self> {
+        Self::load_from_dir_with_optional_fallback(path, None)
+    }
+
+    pub fn load_from_dir_with_fallback_file(
+        path: impl AsRef<Path>,
+        fallback_config_path: impl AsRef<Path>,
+    ) -> Result<Self> {
+        Self::load_from_dir_with_optional_fallback(path, Some(fallback_config_path.as_ref()))
+    }
+
+    pub fn load_from_dir_with_optional_fallback(
+        path: impl AsRef<Path>,
+        fallback_config_path: Option<&Path>,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let schools_path = path.join("schools.default.yaml");
         let events_path = path.join("events.default.yaml");
-        let fallback_path = path.join("fallback.default.yaml");
+        let (fallback_path, fallback_config_label) = match fallback_config_path {
+            Some(path) => (path.to_path_buf(), path.display().to_string()),
+            None => (
+                path.join("fallback.default.yaml"),
+                "fallback.default.yaml".to_string(),
+            ),
+        };
         let tracking_path = path.join("tracking.default.yaml");
 
         let schools_raw = read_raw(&schools_path)?;
@@ -955,7 +1005,7 @@ impl RankingProfiles {
             })?,
             profile_version: format!("{:x}", digest.finalize()),
         };
-        profiles.validate()?;
+        profiles.validate(&fallback_config_label)?;
         Ok(profiles)
     }
 
@@ -965,7 +1015,7 @@ impl RankingProfiles {
             .unwrap_or_else(|| panic!("missing placement profile {}", placement.as_str()))
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, fallback_config_label: &str) -> Result<()> {
         validate_config_contract(
             "schools.default.yaml",
             self.schools.schema_version,
@@ -979,7 +1029,7 @@ impl RankingProfiles {
             RankingConfigKind::RankingEvents,
         )?;
         validate_config_contract(
-            "fallback.default.yaml",
+            fallback_config_label,
             self.fallback.schema_version,
             self.fallback.kind,
             RankingConfigKind::RankingFallback,
@@ -1023,6 +1073,7 @@ impl RankingProfiles {
             self.fallback.neighbor_distance_cap_meters > 0.0,
             "fallback.neighbor_distance_cap_meters must be greater than zero"
         );
+        validate_fallback_ladder(&self.fallback.fallback_ladder)?;
         ensure!(
             self.tracking.popularity_bonus_weight >= 0.0
                 && self.tracking.user_affinity_bonus_weight >= 0.0
@@ -1144,6 +1195,40 @@ impl RankingProfiles {
     }
 }
 
+fn validate_fallback_ladder(ladder: &[FallbackStage]) -> Result<()> {
+    ensure!(
+        !ladder.is_empty(),
+        "fallback.fallback_ladder must not be empty"
+    );
+    ensure!(
+        ladder.first() == Some(&FallbackStage::StrictStation),
+        "fallback.fallback_ladder must start with strict_station"
+    );
+
+    let mut seen = Vec::new();
+    for stage in ladder {
+        ensure!(
+            !seen.contains(stage),
+            "fallback.fallback_ladder contains duplicate {}",
+            stage.as_str()
+        );
+        seen.push(stage.clone());
+    }
+
+    for pair in ladder.windows(2) {
+        let current = &pair[0];
+        let next = &pair[1];
+        ensure!(
+            current.priority() < next.priority(),
+            "fallback.fallback_ladder must follow the default stage order; profile configs may omit stages but must not place {} after {}",
+            next.as_str(),
+            current.as_str()
+        );
+    }
+
+    Ok(())
+}
+
 pub fn resolve_profile_pack_runtime_selection(
     profile_packs_dir: impl AsRef<Path>,
     profile_id: &str,
@@ -1184,8 +1269,12 @@ fn resolve_profile_pack_runtime_selection_from_manifest(
     let fallback_config_path =
         resolve_runtime_fallback_config_path(&profile_pack_manifest, &manifest)?;
 
-    let ranking_config_dir =
-        resolve_runtime_ranking_config_dir(&profile_pack_manifest, &manifest, None)?;
+    let ranking_config_dir = resolve_runtime_ranking_config_dir(
+        &profile_pack_manifest,
+        &manifest,
+        fallback_config_path.as_deref(),
+        None,
+    )?;
 
     build_profile_pack_runtime_selection(
         profile_pack_manifest,
@@ -1223,6 +1312,7 @@ fn resolve_profile_pack_evaluation_selection_from_manifest(
     let ranking_config_dir = resolve_runtime_ranking_config_dir(
         &profile_pack_manifest,
         &manifest,
+        fallback_config_path.as_deref(),
         ranking_config_dir_override,
     )?;
 
@@ -1273,6 +1363,7 @@ fn resolve_profile_pack_ranking_selection_from_manifest(
     let ranking_config_dir = resolve_runtime_ranking_config_dir(
         &profile_pack_manifest,
         &manifest,
+        fallback_config_path.as_deref(),
         ranking_config_dir_override,
     )?;
 
@@ -1408,6 +1499,7 @@ fn resolve_runtime_fallback_config_path(
 fn resolve_runtime_ranking_config_dir(
     profile_pack_manifest: &Path,
     manifest: &ProfilePackManifest,
+    fallback_config_path: Option<&Path>,
     ranking_config_dir_override: Option<&Path>,
 ) -> Result<PathBuf> {
     let (ranking_config_label, ranking_config_dir) = match ranking_config_dir_override {
@@ -1434,7 +1526,10 @@ fn resolve_runtime_ranking_config_dir(
             ranking_config_dir.display()
         )
     })?;
-    let ranking_profiles = RankingProfiles::load_from_dir(&ranking_config_dir)?;
+    let ranking_profiles = RankingProfiles::load_from_dir_with_optional_fallback(
+        &ranking_config_dir,
+        fallback_config_path,
+    )?;
     validate_profile_content_kind_runtime_boundary(profile_pack_manifest, manifest)?;
     validate_profile_ranking_content_kinds(profile_pack_manifest, manifest, &ranking_profiles)?;
     Ok(ranking_config_dir)
@@ -1482,8 +1577,26 @@ pub fn lint_ranking_config_dir(path: impl AsRef<Path>) -> Result<RankingConfigLi
     Ok(lint_ranking_config_dir_with_profiles(path.as_ref())?.0)
 }
 
+pub fn lint_ranking_config_dir_with_fallback_file(
+    path: impl AsRef<Path>,
+    fallback_config_path: impl AsRef<Path>,
+) -> Result<RankingConfigLintSummary> {
+    Ok(lint_ranking_config_dir_with_optional_fallback(
+        path.as_ref(),
+        Some(fallback_config_path.as_ref()),
+    )?
+    .0)
+}
+
 fn lint_ranking_config_dir_with_profiles(
     path: &Path,
+) -> Result<(RankingConfigLintSummary, RankingProfiles)> {
+    lint_ranking_config_dir_with_optional_fallback(path, None)
+}
+
+fn lint_ranking_config_dir_with_optional_fallback(
+    path: &Path,
+    fallback_config_path: Option<&Path>,
 ) -> Result<(RankingConfigLintSummary, RankingProfiles)> {
     let canonical_path = path.canonicalize().with_context(|| {
         format!(
@@ -1491,7 +1604,11 @@ fn lint_ranking_config_dir_with_profiles(
             path.display()
         )
     })?;
-    let profiles = RankingProfiles::load_from_dir(path)?;
+    let profiles =
+        RankingProfiles::load_from_dir_with_optional_fallback(path, fallback_config_path)?;
+    let fallback_path = fallback_config_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| path.join("fallback.default.yaml"));
     let mut files = vec![
         RankingConfigLintFile {
             path: path.join("schools.default.yaml"),
@@ -1504,7 +1621,7 @@ fn lint_ranking_config_dir_with_profiles(
             kind: profiles.events.kind,
         },
         RankingConfigLintFile {
-            path: path.join("fallback.default.yaml"),
+            path: fallback_path,
             schema_version: profiles.fallback.schema_version,
             kind: profiles.fallback.kind,
         },
@@ -1594,10 +1711,25 @@ fn lint_loaded_profile_pack_file(
         path.display(),
         ranking_config_dir.display()
     );
-    let ranking_profiles = if let Some(cache) = ranking_config_cache {
-        lint_ranking_config_dir_cached(&ranking_config_dir, cache)?
-            .profiles
-            .clone()
+    let fallback_config_path = resolve_runtime_fallback_config_path(path, manifest)?;
+    // Keep the referenced ranking_config_dir contract strict even when a profile
+    // supplies a runtime fallback override; the override is loaded below for
+    // profile-specific runtime validation.
+    let cached_ranking_profiles = match ranking_config_cache {
+        Some(cache) => Some(
+            lint_ranking_config_dir_cached(&ranking_config_dir, cache)?
+                .profiles
+                .clone(),
+        ),
+        None => None,
+    };
+    let ranking_profiles = if let Some(fallback_config_path) = fallback_config_path.as_deref() {
+        RankingProfiles::load_from_dir_with_optional_fallback(
+            &ranking_config_dir,
+            Some(fallback_config_path),
+        )?
+    } else if let Some(profiles) = cached_ranking_profiles {
+        profiles
     } else {
         lint_ranking_config_dir_with_profiles(&ranking_config_dir)?.1
     };
@@ -1610,7 +1742,6 @@ fn lint_loaded_profile_pack_file(
             ranking_config_dir.display()
         )
     })?;
-    let fallback_config_path = resolve_runtime_fallback_config_path(path, manifest)?;
 
     let (reason_catalog_path, reason_catalog, reason_catalog_locale_count) =
         load_profile_reason_catalog_for_manifest(path, manifest)?;
@@ -2581,18 +2712,19 @@ mod tests {
 
     use super::{
         is_profile_id, lint_profile_pack_dir, lint_profile_pack_file, lint_ranking_config_dir,
-        load_profile_pack_manifest, load_profile_reason_catalog, parse_candidate_retrieval_mode,
-        parse_postgres_pool_max_size, resolve_profile_pack_evaluation_selection,
-        resolve_profile_pack_ranking_selection, resolve_profile_pack_runtime_selection,
-        validate_portable_relative_path, validate_profile_pack_contract,
-        validate_profile_reason_catalog, AppSettings, ArticleSupport, CandidateRetrievalMode,
-        ProfileCompatibilityLevel, ProfileConnectorType, ProfileContextInput,
-        ProfileFallbackPolicyRef, ProfilePackKind, ProfilePackManifest, ProfilePackRegistry,
-        ProfileReasonCatalog, ProfileReasonCatalogKind, ProfileReasonCatalogRef,
-        ProfileSourceClass, RankingConfigKind, RankingProfiles, DEFAULT_POSTGRES_POOL_MAX_SIZE,
+        lint_ranking_config_dir_with_fallback_file, load_profile_pack_manifest,
+        load_profile_reason_catalog, parse_candidate_retrieval_mode, parse_postgres_pool_max_size,
+        resolve_profile_pack_evaluation_selection, resolve_profile_pack_ranking_selection,
+        resolve_profile_pack_runtime_selection, validate_portable_relative_path,
+        validate_profile_pack_contract, validate_profile_reason_catalog, AppSettings,
+        ArticleSupport, CandidateRetrievalMode, ProfileCompatibilityLevel, ProfileConnectorType,
+        ProfileContextInput, ProfileFallbackPolicyRef, ProfilePackKind, ProfilePackManifest,
+        ProfilePackRegistry, ProfileReasonCatalog, ProfileReasonCatalogKind,
+        ProfileReasonCatalogRef, ProfileSourceClass, RankingConfigKind, RankingProfiles,
+        DEFAULT_POSTGRES_POOL_MAX_SIZE,
     };
 
-    use domain::{ContentKind, PlacementKind};
+    use domain::{ContentKind, FallbackStage, PlacementKind};
 
     fn repo_config_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
@@ -2611,6 +2743,38 @@ mod tests {
         ] {
             fs::copy(repo_config_root().join(name), target.join(name)).expect("copy config");
         }
+    }
+
+    fn fallback_config_yaml(min_results: usize, fallback_ladder: &[&str]) -> String {
+        let stages = fallback_ladder
+            .iter()
+            .map(|stage| format!("  - {stage}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            r#"schema_version: 1
+kind: ranking_fallback
+min_results: {min_results}
+neighbor_penalty: 0.8
+neighbor_distance_cap_meters: 2500.0
+fallback_ladder:
+{stages}
+"#
+        )
+    }
+
+    fn default_fallback_config_yaml() -> String {
+        fallback_config_yaml(
+            2,
+            &[
+                "strict_station",
+                "same_line",
+                "same_city",
+                "same_prefecture",
+                "neighbor_area",
+                "safe_global_popular",
+            ],
+        )
     }
 
     fn repo_profile_root() -> PathBuf {
@@ -2735,6 +2899,35 @@ files: []
             .files
             .iter()
             .any(|file| file.kind == RankingConfigKind::RankingPlacement));
+    }
+
+    #[test]
+    fn lints_ranking_config_with_fallback_file_override() {
+        let temp = tempdir().expect("tempdir");
+        let ranking_dir = temp.path().join("ranking");
+        let fallback_dir = temp.path().join("profile").join("fallback");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&fallback_dir).expect("fallback dir");
+        copy_default_configs(&ranking_dir);
+        let fallback_path = fallback_dir.join("compact.yaml");
+        fs::write(
+            &fallback_path,
+            fallback_config_yaml(4, &["strict_station", "same_line", "safe_global_popular"]),
+        )
+        .expect("fallback config");
+
+        let base_summary = lint_ranking_config_dir(&ranking_dir).expect("base lint");
+        let override_summary =
+            lint_ranking_config_dir_with_fallback_file(&ranking_dir, &fallback_path)
+                .expect("override lint");
+
+        assert_ne!(
+            base_summary.profile_version,
+            override_summary.profile_version
+        );
+        assert!(override_summary.files.iter().any(|file| {
+            file.path == fallback_path && file.kind == RankingConfigKind::RankingFallback
+        }));
     }
 
     #[test]
@@ -3045,6 +3238,40 @@ diversity:
 
             assert!(format!("{error:#}").contains(&format!("unknown field `{expected_field}`")));
         }
+    }
+
+    #[test]
+    fn rejects_reordered_fallback_ladder() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("fallback.default.yaml"),
+            fallback_config_yaml(2, &["strict_station", "safe_global_popular", "same_line"]),
+        )
+        .expect("write fallback config");
+
+        let error = RankingProfiles::load_from_dir(temp.path()).expect_err("fallback ladder");
+
+        assert!(error
+            .to_string()
+            .contains("fallback.fallback_ladder must follow the default stage order"));
+    }
+
+    #[test]
+    fn rejects_fallback_ladder_without_strict_station_start() {
+        let temp = tempdir().expect("tempdir");
+        copy_default_configs(temp.path());
+        fs::write(
+            temp.path().join("fallback.default.yaml"),
+            fallback_config_yaml(2, &["same_line", "safe_global_popular"]),
+        )
+        .expect("write fallback config");
+
+        let error = RankingProfiles::load_from_dir(temp.path()).expect_err("fallback ladder");
+
+        assert!(error
+            .to_string()
+            .contains("fallback.fallback_ladder must start with strict_station"));
     }
 
     #[test]
@@ -4506,8 +4733,11 @@ article_support: reserved
         fs::create_dir_all(&ranking_dir).expect("ranking dir");
         fs::create_dir_all(&fixture_dir).expect("fixture dir");
         copy_default_configs(&ranking_dir);
-        fs::write(fallback_dir.join("default.yaml"), "schema_version: 1\n")
-            .expect("fallback config");
+        fs::write(
+            fallback_dir.join("default.yaml"),
+            default_fallback_config_yaml(),
+        )
+        .expect("fallback config");
         write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
         write_minimal_fixture_manifest(
             &fixture_dir.join("fixture_manifest.yaml"),
@@ -4564,6 +4794,73 @@ fixtures:
             selection.fallback_config_path.as_deref(),
             Some(expected_fallback_config.as_path())
         );
+    }
+
+    #[test]
+    fn loads_nested_fallback_policy_config_as_runtime_override() {
+        let temp = tempdir().expect("tempdir");
+        let profiles_dir = temp.path().join("profiles");
+        let profile_dir = profiles_dir.join("example-profile");
+        let fallback_dir = profile_dir.join("fallback");
+        let ranking_dir = temp.path().join("ranking");
+        fs::create_dir_all(&fallback_dir).expect("fallback dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        copy_default_configs(&ranking_dir);
+        fs::write(
+            fallback_dir.join("compact.yaml"),
+            fallback_config_yaml(4, &["strict_station", "same_line", "safe_global_popular"]),
+        )
+        .expect("fallback config");
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy:
+  config_file: fallback/compact.yaml
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+"#,
+        )
+        .expect("profile");
+
+        let selection = resolve_profile_pack_ranking_selection(&profiles_dir, "example-profile")
+            .expect("runtime selection");
+        let profiles = RankingProfiles::load_from_dir_with_optional_fallback(
+            &selection.ranking_config_dir,
+            selection.fallback_config_path.as_deref(),
+        )
+        .expect("ranking profiles");
+
+        assert_eq!(profiles.fallback.min_results, 4);
+        assert_eq!(
+            profiles.fallback.fallback_ladder,
+            vec![
+                FallbackStage::StrictStation,
+                FallbackStage::SameLine,
+                FallbackStage::SafeGlobalPopular
+            ]
+        );
+        let lint_summary = lint_profile_pack_dir(&profiles_dir).expect("profile lint");
+        assert_eq!(lint_summary.ranking_configs.len(), 1);
     }
 
     #[test]

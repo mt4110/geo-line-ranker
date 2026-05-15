@@ -4,7 +4,7 @@ use anyhow::Context;
 use api::AppState;
 use cache::RecommendationCache;
 use clap::{Parser, Subcommand};
-use config::{load_profile_reason_catalog, AppSettings, RankingProfiles};
+use config::{load_profile_reason_catalog, AppSettings};
 use observability::init_tracing;
 use ranking::RankingEngine;
 use storage_opensearch::OpenSearchStore;
@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn serve() -> anyhow::Result<()> {
     let settings = AppSettings::from_env()?;
-    let profiles = RankingProfiles::load_from_dir(&settings.ranking_config_dir)?;
+    let profiles = settings.load_ranking_profiles()?;
     let profile_version = profiles.profile_version.clone();
     let neighbor_distance_cap_meters = profiles.fallback.neighbor_distance_cap_meters;
     let mut engine = RankingEngine::new(profiles, settings.algorithm_version.clone());
