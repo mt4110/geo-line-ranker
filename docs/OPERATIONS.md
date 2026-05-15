@@ -355,9 +355,9 @@ This doctor reuses the same profile pack validation path as
 `cargo run -p cli -- profile validate`: profile manifests, reason catalogs,
 ranking config references, fixture references, source manifest references,
 event CSV example references, local archive source references, optional crawler
-manifest references, and declared compatibility levels. Use `profile validate`,
-`profile list`, and `profile inspect` while authoring or reviewing a specific
-pack; use
+manifest references, the stable connector schema contract version, and declared
+compatibility levels. Use `profile validate`, `profile list`, and
+`profile inspect` while authoring or reviewing a specific pack; use
 `doctor profile-pack` for operator evidence that summarizes committed profile
 coverage and fails fast on the same deterministic contract errors.
 
@@ -372,12 +372,13 @@ cargo run -p cli -- doctor ingest-quality --json
 This doctor reuses profile-pack validation and then performs DB-free source
 manifest, archive manifest, and crawler manifest lint for profile-declared
 connectors. It reports source class counts, manifest kind counts,
-runtime-executable and non-runtime field mapping counts, source-manifest file
-counts, archive file/format counts, crawler target counts, crawler maturity,
-expected shapes, local-reference/dynamic-loading/live-fetch safety boundaries,
-and allowlist-required connectors. Treat the output as coverage and quality
-evidence only: it does not import data, mutate PostgreSQL, fetch live pages,
-unpack archives into runtime storage, or promote crawler sources.
+manifest schema-version coverage, runtime-executable and non-runtime field
+mapping counts, source-manifest file counts, archive file/format counts,
+crawler target counts, crawler maturity, expected shapes,
+local-reference/dynamic-loading/live-fetch safety boundaries, and
+allowlist-required connectors. Treat the output as coverage and quality evidence
+only: it does not import data, mutate PostgreSQL, fetch live pages, unpack
+archives into runtime storage, or promote crawler sources.
 
 Replay recent persisted recommendation traces against the current SQL-only
 ranking path:

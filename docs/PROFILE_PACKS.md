@@ -8,7 +8,9 @@ For the broader docs map, start with [Documentation Index](README.md).
 Profile-pack authoring starts here: use this document before changing profile
 manifests, fixture ownership, source mappings, or profile-owned reason labels.
 For the first local run, use [First 15 Minutes](FIRST_15_MINUTES.md) and
-[Quickstart](QUICKSTART.md) first.
+[Quickstart](QUICKSTART.md) first. For the connector schema matrix shared by
+profile validation and doctor output, use
+[Connector Manifest Schemas](CONNECTOR_MANIFESTS.md).
 
 ## Current Profiles
 
@@ -90,6 +92,11 @@ Each `profile.yaml` declares:
   manifest path, derives source class, manifest kind, profile compatibility,
   field mapping, and safety metadata, and keeps the references local. This is
   not dynamic runtime connector loading or arbitrary mapping execution.
+  `doctor profile-pack` and `doctor ingest-quality` report the stable connector
+  schema contract version, currently
+  `local_stable_connector_manifest_schema_v1`, plus each supported connector
+  type's source class, manifest kind, manifest schema version, source-id scope,
+  field-mapping boundary, lint path, runtime boundary, and safety flags.
 - `evaluation`: optional committed evaluation references such as the golden
   scenario pack and an optional pairwise pack.
 - `source_manifests`, `event_csv_examples`, and `optional_crawler_manifests`:
@@ -131,6 +138,8 @@ letters, digits, underscores, and hyphens, with no leading or trailing
 separator. Only `field_mapping: event_v1` is executable today. Unsupported
 mapping refs fail `profile validate`, `doctor profile-pack`, and
 `import profile-source` instead of being treated as partial support.
+YAML-backed connector refs must also declare `schema_version: 1`; CSV and
+NDJSON refs are raw files and therefore report `manifest_schema_version: none`.
 Optional `source_id` values on YAML-backed connectors must match the referenced
 manifest's `source_id`. For legacy schema-2 manifests that omit
 `content_kinds`, the validator treats `supported_content_kinds` as the inline

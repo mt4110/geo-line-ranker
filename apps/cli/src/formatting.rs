@@ -3,9 +3,10 @@ use storage_postgres::{JobInspection, JobMutationSummary, JobQueueSnapshot};
 
 use crate::{
     doctor::{
-        ContextCoverageDoctorSummary, ExplanationIntegrityDoctorSummary,
-        IngestQualityDoctorSummary, ProfilePackDoctorSummary, RankingConfigDoctorSummary,
-        RetrievalParityDoctorSummary, StorageCompatibilityDoctorSummary,
+        ConnectorSchemaContractSummary, ContextCoverageDoctorSummary,
+        ExplanationIntegrityDoctorSummary, IngestQualityDoctorSummary, ProfilePackDoctorSummary,
+        RankingConfigDoctorSummary, RetrievalParityDoctorSummary,
+        StorageCompatibilityDoctorSummary,
     },
     explanation_integrity::QualityCheckStatus,
     fixtures::FixtureDoctorSummary,
@@ -412,7 +413,7 @@ pub fn format_explanation_integrity_doctor_summary(
 
 pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) -> String {
     let mut lines = vec![format!(
-        "doctor profile-pack completed: profile_packs={}, ranking_config_dirs={}, reason_catalog_locales={}, reasons={}, fixture_references={}, connector_references={}, evaluation_references={}, source_manifest_references={}, event_csv_example_references={}, archive_source_references={}, optional_crawler_manifest_references={}",
+        "doctor profile-pack completed: profile_packs={}, ranking_config_dirs={}, reason_catalog_locales={}, reasons={}, fixture_references={}, connector_references={}, evaluation_references={}, source_manifest_references={}, event_csv_example_references={}, archive_source_references={}, optional_crawler_manifest_references={}, connector_schema_contract_version={}, connector_schema_contracts={}",
         summary.profile_packs,
         summary.ranking_config_dirs,
         summary.reason_catalog_locales,
@@ -423,8 +424,11 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
         summary.source_manifest_references,
         summary.event_csv_example_references,
         summary.archive_source_references,
-        summary.optional_crawler_manifest_references
+        summary.optional_crawler_manifest_references,
+        summary.connector_schema_contract_version,
+        summary.connector_schema_contracts.len()
     )];
+    push_connector_schema_contract_lines(&mut lines, &summary.connector_schema_contracts);
 
     for file in &summary.files {
         lines.push(format!(
@@ -455,10 +459,11 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
         ));
         for connector in &file.connector_registry {
             lines.push(format!(
-                "    connector type={} source_class={} manifest_kind={} source_id={} field_mapping={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
+                "    connector type={} source_class={} manifest_kind={} manifest_schema_version={} source_id={} field_mapping={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
                 connector.connector_type.as_str(),
                 connector.source_class.as_str(),
                 connector.manifest_kind,
+                format_option_u32(connector.manifest_schema_version),
                 connector.source_id.as_deref().unwrap_or("none"),
                 connector
                     .field_mapping
@@ -480,11 +485,12 @@ pub fn format_profile_pack_doctor_summary(summary: &ProfilePackDoctorSummary) ->
 
 pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary) -> String {
     let mut lines = vec![format!(
-        "doctor ingest-quality completed: profile_packs={}, connectors={}, source_classes={}, manifest_kinds={}, runtime_executable_mappings={}, non_runtime_mappings={}, source_manifest_files={}, archive_files={}, crawler_targets={}, local_reference_only={}, dynamic_loading_enabled={}, live_fetch_default={}, crawler_allowlist_required={}",
+        "doctor ingest-quality completed: profile_packs={}, connectors={}, source_classes={}, manifest_kinds={}, manifest_schema_versions={}, runtime_executable_mappings={}, non_runtime_mappings={}, source_manifest_files={}, archive_files={}, crawler_targets={}, local_reference_only={}, dynamic_loading_enabled={}, live_fetch_default={}, crawler_allowlist_required={}, connector_schema_contract_version={}, connector_schema_contracts={}",
         summary.profile_packs,
         summary.connector_references,
         format_counts(&summary.source_class_counts),
         format_counts(&summary.manifest_kind_counts),
+        format_counts(&summary.manifest_schema_version_counts),
         summary.runtime_executable_mappings,
         summary.non_runtime_mappings,
         summary.source_manifest_file_count,
@@ -493,8 +499,11 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
         summary.local_reference_only_connectors,
         summary.dynamic_loading_enabled_connectors,
         summary.live_fetch_default_connectors,
-        summary.crawler_allowlist_required_connectors
+        summary.crawler_allowlist_required_connectors,
+        summary.connector_schema_contract_version,
+        summary.connector_schema_contracts.len()
     )];
+    push_connector_schema_contract_lines(&mut lines, &summary.connector_schema_contracts);
     lines.push(format!(
         "evidence_scope: {} execution_scope: {}",
         summary.evidence_scope, summary.execution_scope
@@ -521,11 +530,12 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
 
     for profile in &summary.profiles {
         lines.push(format!(
-            "  profile_id={} connectors={} source_classes={} manifest_kinds={} runtime_executable_mappings={} non_runtime_mappings={} source_manifest_files={} archive_files={} crawler_targets={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} crawler_allowlist_required={} source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={} manifest={}",
+            "  profile_id={} connectors={} source_classes={} manifest_kinds={} manifest_schema_versions={} runtime_executable_mappings={} non_runtime_mappings={} source_manifest_files={} archive_files={} crawler_targets={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} crawler_allowlist_required={} source_manifests={} event_csv_examples={} archive_sources={} optional_crawler_manifests={} manifest={}",
             profile.profile_id,
             profile.connector_references,
             format_counts(&profile.source_class_counts),
             format_counts(&profile.manifest_kind_counts),
+            format_counts(&profile.manifest_schema_version_counts),
             profile.runtime_executable_mappings,
             profile.non_runtime_mappings,
             profile.source_manifest_file_count,
@@ -543,10 +553,11 @@ pub fn format_ingest_quality_doctor_summary(summary: &IngestQualityDoctorSummary
         ));
         for connector in &profile.connectors {
             lines.push(format!(
-                "    connector type={} source_class={} manifest_kind={} source_id={} field_mapping={} field_mapping_runtime_executable={} lint={} source_manifest_files={} archive_files={} archive_format={} archive_checksum_sha256={} crawler_targets={} crawler_source_maturity={} crawler_expected_shape={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} allowlist_required={} manifest={}",
+                "    connector type={} source_class={} manifest_kind={} manifest_schema_version={} source_id={} field_mapping={} field_mapping_runtime_executable={} lint={} source_manifest_files={} archive_files={} archive_format={} archive_checksum_sha256={} crawler_targets={} crawler_source_maturity={} crawler_expected_shape={} local_reference_only={} dynamic_loading_enabled={} live_fetch_default={} allowlist_required={} manifest={}",
                 connector.connector_type,
                 connector.source_class,
                 connector.manifest_kind,
+                format_option_u32(connector.manifest_schema_version),
                 connector.source_id.as_deref().unwrap_or("none"),
                 connector.field_mapping.as_deref().unwrap_or("none"),
                 connector
@@ -825,6 +836,41 @@ fn format_counts(counts: &std::collections::BTreeMap<String, usize>) -> String {
         .map(|(key, count)| format!("{key}={count}"))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn format_option_u32(value: Option<u32>) -> String {
+    value
+        .map(|version| version.to_string())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn push_connector_schema_contract_lines(
+    lines: &mut Vec<String>,
+    contracts: &[ConnectorSchemaContractSummary],
+) {
+    lines.push("connector_schema_contracts:".to_string());
+    if contracts.is_empty() {
+        lines.push("  - none".to_string());
+        return;
+    }
+
+    lines.extend(contracts.iter().map(|contract| {
+        format!(
+            "  connector_type={} source_class={} manifest_kind={} manifest_schema_version={} source_id_scope={} field_mapping_scope={} runtime_execution={} lint={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{}",
+            contract.connector_type,
+            contract.source_class,
+            contract.manifest_kind,
+            format_option_u32(contract.manifest_schema_version),
+            contract.source_id_scope,
+            contract.field_mapping_scope,
+            contract.runtime_execution,
+            contract.manifest_lint,
+            contract.local_reference_only,
+            contract.dynamic_loading_enabled,
+            contract.live_fetch_default,
+            contract.allowlist_required
+        )
+    }));
 }
 
 fn format_context_shape(has_area: bool, has_line: bool, has_station: bool) -> String {

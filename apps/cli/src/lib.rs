@@ -23,14 +23,14 @@ pub use context_inspect::{
 pub use doctor::{
     ranking_config_doctor_summary_from_lint, run_context_coverage_doctor,
     run_explanation_integrity_doctor, run_ingest_quality_doctor, run_profile_pack_doctor,
-    run_retrieval_parity_doctor, run_storage_compatibility_doctor, ContextCoverageDoctorCase,
-    ContextCoverageDoctorSummary, ContextCoverageRequirement, ContextCoverageShapeMismatch,
-    ExplanationIntegrityDoctorCase, ExplanationIntegrityDoctorSummary,
-    IngestQualityDoctorConnector, IngestQualityDoctorProfile, IngestQualityDoctorSummary,
-    ProfilePackDoctorFile, ProfilePackDoctorSummary, RankingConfigDoctorFile,
-    RankingConfigDoctorProfile, RankingConfigDoctorSummary, RetrievalParityDoctorCase,
-    RetrievalParityDoctorSummary, RetrievalParitySortField, StorageCompatibilityDoctorSummary,
-    StorageCompatibilityEntry,
+    run_retrieval_parity_doctor, run_storage_compatibility_doctor, ConnectorSchemaContractSummary,
+    ContextCoverageDoctorCase, ContextCoverageDoctorSummary, ContextCoverageRequirement,
+    ContextCoverageShapeMismatch, ExplanationIntegrityDoctorCase,
+    ExplanationIntegrityDoctorSummary, IngestQualityDoctorConnector, IngestQualityDoctorProfile,
+    IngestQualityDoctorSummary, ProfilePackDoctorFile, ProfilePackDoctorSummary,
+    RankingConfigDoctorFile, RankingConfigDoctorProfile, RankingConfigDoctorSummary,
+    RetrievalParityDoctorCase, RetrievalParityDoctorSummary, RetrievalParitySortField,
+    StorageCompatibilityDoctorSummary, StorageCompatibilityEntry,
 };
 #[cfg(feature = "storage-backends")]
 pub use explain::{

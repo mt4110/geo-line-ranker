@@ -36,8 +36,8 @@ Run these from the repository root after reading the first-run path:
 | New contributor | [Project README](../README.md), then [First 15 Minutes](FIRST_15_MINUTES.md) | [Quickstart](QUICKSTART.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md), [Testing](TESTING.md) |
 | Operator | [First 15 Minutes](FIRST_15_MINUTES.md), then [Quickstart](QUICKSTART.md) | [MVP Acceptance](MVP_ACCEPTANCE.md), [Operations](OPERATIONS.md), [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md) |
 | Maintainer | [Contributor Rules](../AGENTS.md), then [Architecture](ARCHITECTURE.md) | [API Spec](../API_SPEC.md), [Versioning](VERSIONING.md), [Deprecation Policy](DEPRECATION_POLICY.md), [Testing](TESTING.md), [v0.2.1 to v0.2.5 Design Plan](V0_2_1_TO_V0_2_5_DESIGN_PLAN.md) |
-| Profile author | [Profile Packs](PROFILE_PACKS.md) | [Local Discovery Generic](../examples/local-discovery-generic/README.md), [School Event JP Reference](../examples/school-event-jp/README.md), [Architecture](ARCHITECTURE.md), [Reason Catalog](REASON_CATALOG.md), [Versioning](VERSIONING.md) |
-| Connector author | [Data Sources](DATA_SOURCES.md), then [Data Licenses](DATA_LICENSES.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md), [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md) |
+| Profile author | [Profile Packs](PROFILE_PACKS.md) | [Connector Manifest Schemas](CONNECTOR_MANIFESTS.md), [Local Discovery Generic](../examples/local-discovery-generic/README.md), [School Event JP Reference](../examples/school-event-jp/README.md), [Architecture](ARCHITECTURE.md), [Reason Catalog](REASON_CATALOG.md), [Versioning](VERSIONING.md) |
+| Connector author | [Data Sources](DATA_SOURCES.md), then [Connector Manifest Schemas](CONNECTOR_MANIFESTS.md) and [Data Licenses](DATA_LICENSES.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md), [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md) |
 
 ## Choose By Task
 
@@ -56,7 +56,7 @@ Run these from the repository root after reading the first-run path:
 | Run or review the fixed public-MVP gate | [MVP Acceptance](MVP_ACCEPTANCE.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Testing](TESTING.md) |
 | Review optional crawler, full-mode, OpenSearch, or managed infrastructure evidence | [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md) | [Operations](OPERATIONS.md), [Data Sources](DATA_SOURCES.md), [Testing](TESTING.md) |
 | Add or adjust a profile pack | [Profile Packs](PROFILE_PACKS.md) | [Local Discovery Generic](../examples/local-discovery-generic/README.md), [School Event JP Reference](../examples/school-event-jp/README.md), [Versioning](VERSIONING.md) |
-| Add or adjust a connector or source manifest | [Data Sources](DATA_SOURCES.md) | [Data Licenses](DATA_LICENSES.md), [Operations](OPERATIONS.md), [Quickstart](QUICKSTART.md) |
+| Add or adjust a connector or source manifest | [Data Sources](DATA_SOURCES.md), then [Connector Manifest Schemas](CONNECTOR_MANIFESTS.md) | [Data Licenses](DATA_LICENSES.md), [Operations](OPERATIONS.md), [Quickstart](QUICKSTART.md) |
 | Understand the system without implementation detail first | [Non-engineer Friendly Design Docs](design_document/README_JA.md) | [Architecture](ARCHITECTURE.md), [Project README](../README.md) |
 
 ## Fixed Boundary
@@ -97,6 +97,9 @@ workspace easy to verify, but they do not change the fixed public-MVP boundary.
   and storage roles.
 - [Profile Packs](PROFILE_PACKS.md): reference profile manifests, profile CLI
   checks, fixture ownership, and source mapping boundaries.
+- [Connector Manifest Schemas](CONNECTOR_MANIFESTS.md): stable connector type,
+  manifest kind, schema-version, field-mapping, lint, runtime, and safety
+  matrix.
 - [Reason Catalog](REASON_CATALOG.md): stable score reason codes used by
   explanations.
 - [Versioning](VERSIONING.md): config, manifest, public API, reason-code, and

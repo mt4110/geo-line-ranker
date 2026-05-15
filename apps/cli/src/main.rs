@@ -409,7 +409,7 @@ enum DoctorCommand {
     #[command(
         name = "profile-pack",
         about = "Run the profile pack validation doctor against committed profile manifests",
-        long_about = "Run the profile pack validation doctor against committed profile manifests. This reuses the same manifest, reason catalog, ranking config, fixture, compatibility level, and local reference validation as `profile validate`, then prints operator-facing profile-pack coverage metrics.\n\nExamples:\n  geo-line-ranker-cli doctor profile-pack\n  geo-line-ranker-cli doctor profile-pack --json\n  geo-line-ranker-cli doctor profile-pack --profiles-path configs/profiles"
+        long_about = "Run the profile pack validation doctor against committed profile manifests. This reuses the same manifest, reason catalog, ranking config, fixture, connector schema, compatibility level, and local reference validation as `profile validate`, then prints operator-facing profile-pack coverage metrics.\n\nExamples:\n  geo-line-ranker-cli doctor profile-pack\n  geo-line-ranker-cli doctor profile-pack --json\n  geo-line-ranker-cli doctor profile-pack --profiles-path configs/profiles"
     )]
     ProfilePack {
         #[arg(
@@ -428,7 +428,7 @@ enum DoctorCommand {
     #[command(
         name = "ingest-quality",
         about = "Run the DB-free ingest quality doctor for profile connector coverage",
-        long_about = "Run the DB-free ingest quality doctor for profile connector coverage. This reuses the same profile-pack lint path as `profile validate`, then validates declared source manifests, archive manifests, and crawler manifests without running imports, touching PostgreSQL, or making live crawl requests. It summarizes source classes, manifest kinds, runtime-executable field mappings, registry-only mapping boundaries, crawler allowlist requirements, source-manifest file counts, archive file/format counts, and crawler target coverage.\n\nExamples:\n  geo-line-ranker-cli doctor ingest-quality\n  geo-line-ranker-cli doctor ingest-quality --json\n  geo-line-ranker-cli doctor ingest-quality --profiles-path configs/profiles"
+        long_about = "Run the DB-free ingest quality doctor for profile connector coverage. This reuses the same profile-pack lint path as `profile validate`, then validates declared source manifests, archive manifests, and crawler manifests without running imports, touching PostgreSQL, or making live crawl requests. It summarizes the stable connector schema contract, source classes, manifest kinds, manifest schema versions, runtime-executable field mappings, registry-only mapping boundaries, crawler allowlist requirements, source-manifest file counts, archive file/format counts, and crawler target coverage.\n\nExamples:\n  geo-line-ranker-cli doctor ingest-quality\n  geo-line-ranker-cli doctor ingest-quality --json\n  geo-line-ranker-cli doctor ingest-quality --profiles-path configs/profiles"
     )]
     IngestQuality {
         #[arg(
@@ -1952,10 +1952,14 @@ fn format_profile_inspect_summary(
     } else {
         lines.extend(lint_file.connector_registry.iter().map(|connector| {
             format!(
-                "- type={} source_class={} manifest_kind={} source_id={} field_mapping={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
+                "- type={} source_class={} manifest_kind={} manifest_schema_version={} source_id={} field_mapping={} profile_compatibility={} safety=local_reference_only:{},dynamic_loading_enabled:{},live_fetch_default:{},allowlist_required:{} manifest={}",
                 connector.connector_type.as_str(),
                 connector.source_class.as_str(),
                 connector.manifest_kind,
+                connector
+                    .manifest_schema_version
+                    .map(|version| version.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
                 connector.source_id.as_deref().unwrap_or("none"),
                 connector
                     .field_mapping
@@ -2863,6 +2867,9 @@ evaluation:
             event_csv_example_references: 1,
             archive_source_references: 0,
             optional_crawler_manifest_references: 1,
+            connector_schema_contract_version: "local_stable_connector_manifest_schema_v1"
+                .to_string(),
+            connector_schema_contracts: Vec::new(),
             files: vec![cli::ProfilePackDoctorFile {
                 path: PathBuf::from("configs/profiles/school-event-jp/profile.yaml"),
                 profile_id: "school-event-jp".to_string(),
@@ -2892,6 +2899,7 @@ evaluation:
                     source_class: ProfileSourceClass::CsvImport,
                     manifest_path: PathBuf::from("storage/sources/jp_rail/example.yaml"),
                     manifest_kind: "import_source".to_string(),
+                    manifest_schema_version: Some(1),
                     source_id: Some("jp-rail".to_string()),
                     field_mapping: None,
                     profile_compatibility: ProfileCompatibilityLevel::Reference,
@@ -2921,9 +2929,14 @@ evaluation:
         assert!(rendered.contains("event_csv_example_references=1"));
         assert!(rendered.contains("archive_source_references=0"));
         assert!(rendered.contains("optional_crawler_manifest_references=1"));
+        assert!(rendered.contains(
+            "connector_schema_contract_version=local_stable_connector_manifest_schema_v1"
+        ));
+        assert!(rendered.contains("connector_schema_contracts=0"));
         assert!(rendered.contains("event_csv_examples=1"));
         assert!(rendered.contains("connector type=source_manifest source_class=csv_import"));
         assert!(rendered.contains("manifest_kind=import_source"));
+        assert!(rendered.contains("manifest_schema_version=1"));
         assert!(rendered.contains("source_id=jp-rail"));
         assert!(rendered.contains("profile_id=school-event-jp"));
         assert!(rendered.contains("fallback_config=none"));
@@ -2933,6 +2946,7 @@ evaluation:
 
         let json = serde_json::to_string(&summary).expect("json");
         assert!(json.contains("\"compatibility_level\":\"reference\""));
+        assert!(json.contains("\"connector_schema_contract_version\""));
         assert!(json.contains("\"runtime_executable_content_kinds\":[\"school\",\"event\"]"));
         assert!(json.contains("\"registry_only_content_kinds\":[]"));
     }
@@ -2951,6 +2965,7 @@ evaluation:
         assert!(rendered.contains(
             "manifest_kinds=archive_source=1,crawler_source=1,csv_file=2,import_source=4,ndjson_file=2"
         ));
+        assert!(rendered.contains("manifest_schema_versions=1=6,none=4"));
         assert!(rendered.contains("runtime_executable_mappings=5"));
         assert!(rendered.contains("non_runtime_mappings=0"));
         assert!(rendered.contains("source_manifest_files=4"));
@@ -2962,9 +2977,17 @@ evaluation:
         assert!(rendered.contains("archive_formats: tar=1"));
         assert!(rendered.contains("crawler_source_maturity: parser_only=1"));
         assert!(rendered.contains("crawler_expected_shapes: html_heading_page=1"));
+        assert!(rendered.contains(
+            "connector_schema_contract_version=local_stable_connector_manifest_schema_v1"
+        ));
+        assert!(rendered.contains("connector_schema_contracts=5"));
+        assert!(rendered.contains(
+            "connector_type=archive_source source_class=archive_import manifest_kind=archive_source manifest_schema_version=1"
+        ));
         assert!(rendered.contains("profile_id=school-event-jp connectors=7"));
         assert!(rendered.contains("profile_id=local-discovery-generic connectors=3"));
         assert!(rendered.contains("connector type=archive_source source_class=archive_import"));
+        assert!(rendered.contains("manifest_schema_version=1"));
         assert!(rendered.contains("lint=archive_source_lint"));
         assert!(rendered.contains("connector type=crawler_manifest source_class=html_crawl"));
         assert!(rendered.contains("lint=crawler_manifest_lint"));
