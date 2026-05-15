@@ -1533,9 +1533,13 @@ fn build_config_lint_report(
         })
         .context("active profile selection is required to choose ranking config dir")?;
     let profile_summary = lint_profile_pack_dir(profiles_path)?;
-    let active_fallback_config_path = active_profile
-        .as_ref()
-        .and_then(|profile| profile.fallback_config_path.as_deref());
+    let active_fallback_config_path = if needs_active_profile {
+        active_profile
+            .as_ref()
+            .and_then(|profile| profile.fallback_config_path.as_deref())
+    } else {
+        None
+    };
     let ranking_summary = if let Some(fallback_config_path) = active_fallback_config_path {
         lint_ranking_config_dir_with_fallback_file(&path, fallback_config_path)?
     } else {
@@ -3110,6 +3114,31 @@ article_support: reserved
             .iter()
             .any(|file| file.path == fallback_path
                 && file.kind == RankingConfigKind::RankingFallback));
+
+        let explicit_path_report = build_config_lint_report(
+            Some(ranking_dir.clone()),
+            Some(profile_dir.join("profile.yaml")),
+        )
+        .expect("explicit path config lint report");
+        let base_profiles =
+            config::RankingProfiles::load_from_dir(&ranking_dir).expect("base ranking profiles");
+
+        assert_eq!(
+            explicit_path_report.ranking_summary.profile_version,
+            base_profiles.profile_version
+        );
+        assert!(explicit_path_report
+            .ranking_summary
+            .files
+            .iter()
+            .any(|file| file.path.file_name().and_then(|name| name.to_str())
+                == Some("fallback.default.yaml")
+                && file.kind == RankingConfigKind::RankingFallback));
+        assert!(!explicit_path_report
+            .ranking_summary
+            .files
+            .iter()
+            .any(|file| file.path == fallback_path));
     }
 
     #[test]
