@@ -736,7 +736,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
                     NULL,
                     'st_shibuya',
                     'user_profile_area',
-                    0.32,
+                    0.33,
                     'coarse_area'
                 )
                 ON CONFLICT (user_id) DO UPDATE
@@ -759,7 +759,7 @@ async fn area_context_resolves_without_raw_user_id_in_trace() -> anyhow::Result<
                     NULL,
                     'search_execute',
                     'st_tamachi',
-                    NOW() - INTERVAL '71 hours 59 minutes',
+                    NOW() - INTERVAL '72 hours',
                     '{}'::jsonb
                 );",
             )
