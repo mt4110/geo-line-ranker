@@ -7,6 +7,10 @@ The generated OpenAPI artifact is `schemas/openapi.json`.
 Resolves recommendation context without running ranking, writing tracking events,
 or creating context-resolution traces.
 
+This endpoint is intended for debug/operator/CLI workflows. It is available on
+the same API surface, but ranking correctness must not depend on clients
+calling it first.
+
 The request accepts:
 
 - `request_id`
@@ -20,6 +24,8 @@ The request accepts:
 - `context.area.prefecture_name`
 - `context.area.city_code`
 - `context.area.city_name`
+
+Unknown top-level request keys are rejected with `400`.
 
 The response includes:
 
@@ -54,6 +60,8 @@ Supported context inputs:
 - `context.area.prefecture_name`
 - `context.area.city_code`
 - `context.area.city_name`
+
+Unknown top-level request keys are rejected with `400`.
 
 The response includes:
 
@@ -122,6 +130,21 @@ Error responses use the common shape:
 
 ## `POST /v1/track`
 
+`event_kind` uses these values:
+
+- `school_view`
+- `school_save`
+- `search_execute`
+- `event_view`
+- `apply_click`
+- `share`
+
+Field requirements by `event_kind`:
+
+- `school_view` / `school_save` / `apply_click` / `share`: `school_id` is required
+- `search_execute`: `target_station_id` is required
+- `event_view`: at least one of `event_id` or `school_id` is required
+
 `occurred_at` is optional. When provided, it must be RFC3339, for example:
 
 ```text
@@ -130,6 +153,8 @@ Error responses use the common shape:
 ```
 
 `search_execute` requires `target_station_id` until context-derived tracking is persisted end-to-end.
+
+Request objects are strict. Unknown top-level keys are rejected with `400`.
 
 Invalid tracking requests and reference-validation failures use the common
 error response shape.

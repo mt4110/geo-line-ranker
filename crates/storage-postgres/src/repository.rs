@@ -70,6 +70,8 @@ const STALE_JOB_LOCK_TIMEOUT_SECS: i64 = 15 * 60;
 const STALE_JOB_LOCK_ERROR: &str = "worker lock expired before completion";
 const USER_EVENT_REFERENCE_VALIDATION_PREFIX: &str = "user event reference validation: ";
 const RECENT_SEARCH_CONTEXT_WINDOW_HOURS: i32 = 72;
+const RECENT_SEARCH_CONTEXT_MAX_CONFIDENCE: f64 = 0.88;
+const RECENT_SEARCH_CONTEXT_MIN_CONFIDENCE: f64 = 0.32;
 
 #[derive(Debug, Clone)]
 pub struct PgRepository {
@@ -404,13 +406,11 @@ impl PgRepository {
             }
         } else if let Some(user_id) = user_id {
             if use_recent_search_context {
-                if let Some(context) = self.resolve_recent_search_context(&client, user_id).await? {
-                    context
-                } else {
-                    self.resolve_user_profile_context(&client, user_id)
-                        .await?
-                        .unwrap_or_else(RankingContext::default_safe)
-                }
+                let recent_search_context =
+                    self.resolve_recent_search_context(&client, user_id).await?;
+                let profile_context = self.resolve_user_profile_context(&client, user_id).await?;
+                strongest_user_context(recent_search_context, profile_context)
+                    .unwrap_or_else(RankingContext::default_safe)
             } else {
                 self.resolve_user_profile_context(&client, user_id)
                     .await?
@@ -901,7 +901,10 @@ impl PgRepository {
     ) -> Result<Option<RankingContext>> {
         let row = client
             .query_opt(
-                "SELECT event.target_station_id
+                "SELECT
+                    event.target_station_id,
+                    EXTRACT(EPOCH FROM (NOW() - event.occurred_at))::DOUBLE PRECISION
+                        / 3600.0::DOUBLE PRECISION AS age_hours
                  FROM user_events AS event
                  INNER JOIN stations AS station
                    ON station.id = event.target_station_id
@@ -916,9 +919,11 @@ impl PgRepository {
             )
             .await?;
 
-        let Some(station_id) = row.map(|row| row.get::<_, String>("target_station_id")) else {
+        let Some(row) = row else {
             return Ok(None);
         };
+        let station_id = row.get::<_, String>("target_station_id");
+        let age_hours = row.get::<_, f64>("age_hours");
 
         let input = ContextInput {
             station_id: Some(station_id.clone()),
@@ -928,7 +933,7 @@ impl PgRepository {
             .resolve_station_context(client, &station_id, &input)
             .await?;
         context.context_source = ContextSource::RecentSearchContext;
-        context.confidence = 0.88;
+        context.confidence = recent_search_context_confidence(age_hours);
         Ok(Some(context))
     }
 
@@ -2161,6 +2166,29 @@ fn load_trace_hash_salt() -> String {
             generated
         }
     }
+}
+
+fn strongest_user_context(
+    recent_search_context: Option<RankingContext>,
+    profile_context: Option<RankingContext>,
+) -> Option<RankingContext> {
+    match (recent_search_context, profile_context) {
+        (Some(recent), Some(profile)) if profile.confidence >= recent.confidence => Some(profile),
+        (Some(recent), Some(_)) => Some(recent),
+        (None, Some(profile)) => Some(profile),
+        (Some(recent), None) => Some(recent),
+        (None, None) => None,
+    }
+}
+
+fn recent_search_context_confidence(age_hours: f64) -> f64 {
+    let window_hours = f64::from(RECENT_SEARCH_CONTEXT_WINDOW_HOURS);
+    let age_hours = age_hours.clamp(0.0, window_hours);
+    let freshness = 1.0 - (age_hours / window_hours);
+
+    RECENT_SEARCH_CONTEXT_MIN_CONFIDENCE
+        + (RECENT_SEARCH_CONTEXT_MAX_CONFIDENCE - RECENT_SEARCH_CONTEXT_MIN_CONFIDENCE)
+            * freshness.powi(2)
 }
 
 pub fn is_foreign_key_violation(error: &anyhow::Error) -> bool {
