@@ -49,10 +49,12 @@ No AI/ML/embeddings/vector search.
 - Run formatting, lint, and tests before reporting completion.
 - If a command cannot run, explain why and still prepare the command list.
 - Keep example fixtures and quickstart working.
+- **Use `cargo nextest` for all test runs** (parallel test runner; faster than `cargo test`).
+- Ensure `ensure_nextest.sh` is invoked before running nextest if not already cached.
 - Default workspace validation commands:
   - `cargo fmt --all --check`
   - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  - `just test`
+  - `just test` (uses nextest internally via `rust_test_fast.sh`)
 - PostgreSQL reference verification commands:
   - `docker compose -f .docker/docker-compose.yaml up -d postgres redis`
   - `cargo run -p cli -- migrate`
@@ -70,3 +72,13 @@ No AI/ML/embeddings/vector search.
 - There is no committed MySQL verification flow in this workspace today. Any change that introduces or touches MySQL write support must add exact local and CI verification commands in the same PR.
 
 See `docs/CONTRIBUTING_LOCAL.md` for the longer local contributor runbook.
+
+## Test runner: nextest
+- Use `cargo nextest run` for all parallel test execution (faster than `cargo test`).
+- Nextest is cached after first installation via `ensure_nextest.sh`.
+- Common nextest commands:
+  - `cargo nextest run --all` — run all tests in all workspaces
+  - `cargo nextest run -p <crate>` — run tests for a specific crate
+  - `cargo nextest run --lib` — run lib tests only (no integration tests)
+  - `./scripts/ensure_nextest.sh` — install/update nextest if needed
+- For CI and local validation, prefer nextest to `cargo test` to save time.
