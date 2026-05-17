@@ -2,6 +2,7 @@ mod diversity;
 mod explanation;
 mod fallback;
 mod feature;
+mod golden_scenarios;
 mod graph;
 mod planning;
 mod profile;
