@@ -1,6 +1,29 @@
 /// Golden scenarios for validating geo-first ranking stability.
 /// These are deterministic acceptance tests ensuring no remote surprises and
 /// correct fallback behavior.
+/// 
+/// # Usage (Phase 2)
+/// 
+/// These scenarios will be integrated into the acceptance test harness during
+/// Phase 2 (Candidate Plan Execution). They define the hard constraints that
+/// fallback ladder and retrieval planning must satisfy:
+/// 
+/// - **hokkaido_tokyo_no_okinawa**: Geo-first rule — user location must not be
+///   violated by fallback distance. Tokyo results must prioritize over Okinawa
+///   for Hokkaido residents.
+/// 
+/// - **area_only_no_remote_jump**: Area-context rule — requests with city context
+///   must expand only to adjacent areas, never skip to remote regions.
+/// 
+/// - **line_identity_preserved**: Line-context rule — requests with line info
+///   must keep line intent visible through fallback chain reasoning.
+/// 
+/// # Implementation Notes
+/// 
+/// - Scenarios are framework definitions; actual validation happens in ranking
+///   engine acceptance tests.
+/// - `TestContextBuilder` is for unit test setup; prefer `ContextNormalizer::resolve_hierarchy`
+///   for production context resolution.
 
 use context::{AreaContext, AreaContextInput, ContextInput, ContextSource, RankingContext};
 

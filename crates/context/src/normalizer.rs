@@ -9,6 +9,9 @@ pub struct ContextNormalizer;
 impl ContextNormalizer {
     /// Normalizes area-only context (no station ID) into retrieval context.
     /// Used when request has prefecture/city but no specific station.
+    /// 
+    /// Note: fallback_policy and gate_policy are hard-coded to school_event_jp profile defaults.
+    /// Profile-pack override is deferred to phase 2.
     pub fn normalize_area_context(
         area_input: &AreaContextInput,
         source: ContextSource,
@@ -39,6 +42,16 @@ impl ContextNormalizer {
     }
 
     /// Resolves context hierarchy: request > session > user profile > safe fallback.
+    /// 
+    /// Priority (highest to lowest):
+    /// 1. Request station (confidence 0.95)
+    /// 2. Request area (confidence 0.85)
+    /// 3. User profile area (confidence 0.60)
+    /// 4. Default safe context (confidence 0.20)
+    /// 
+    /// Note: StationContext is created with empty station_name; rank resolution phase
+    /// must look up the name from storage (station catalog). This separation enables
+    /// lightweight context resolution without DB lookups.
     pub fn resolve_hierarchy(
         request_context: Option<&ContextInput>,
         user_profile_area: Option<&AreaContextInput>,
@@ -90,6 +103,12 @@ impl ContextNormalizer {
 
     /// Decay confidence based on evidence age.
     /// Used for time-based context freshness.
+    /// 
+    /// Formula: confidence * (1 - (age / max_age)²)
+    /// 
+    /// Rationale: Non-linear decay makes recent evidence much stronger
+    /// (e.g., 24h-old evidence retains ~74%, 72h-old retains ~10%).
+    /// This prevents stale session data from overriding fresh request context.
     pub fn decay_confidence(base_confidence: f64, age_hours: f64, max_age_hours: f64) -> f64 {
         if age_hours <= 0.0 {
             return base_confidence;
