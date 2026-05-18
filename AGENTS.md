@@ -55,6 +55,7 @@ No AI/ML/embeddings/vector search.
   - `cargo fmt --all --check`
   - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
   - `just test` (uses nextest internally via `rust_test_fast.sh`)
+  - `./scripts/spellcheck.sh` (must pass before reporting completion; add new words to `cspell.json` if needed)
 - PostgreSQL reference verification commands:
   - `docker compose -f .docker/docker-compose.yaml up -d postgres redis`
   - `cargo run -p cli -- migrate`

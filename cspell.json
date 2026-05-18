@@ -154,13 +154,19 @@
     "Yamaguchi",
     "Yamanashi",
     "Yurakucho",
+    "Fukui",
+    "Ishikawa",
     "Kagawa",
-    "Ehime"
+    "Ehime",
+    "Shiga",
+    "Shimane",
+    "Tottori"
   ],
   "ignorePaths": [
     "target",
     ".next",
     "node_modules",
-    "package-lock.json"
+    "package-lock.json",
+    "*.tmp"
   ]
 }
