@@ -38,53 +38,53 @@ impl GeoGraph {
         // This is a simplified model; real borders would require cadastral data.
         // Canonical source: MLIT N02 adjacency (simplified for determinism).
         let borders = vec![
-            ("01", vec!["02"]),                               // Hokkaido - Aomori
-            ("02", vec!["01", "03"]),                         // Aomori - Hokkaido, Iwate
-            ("03", vec!["02", "04", "06"]),                   // Iwate - Aomori, Miyagi, Yamagata
-            ("04", vec!["03", "05", "06", "07"]), // Miyagi - Iwate, Akita, Yamagata, Fukushima
-            ("05", vec!["04", "06"]),             // Akita - Miyagi, Yamagata
-            ("06", vec!["03", "04", "05", "07"]), // Yamagata - Iwate, Miyagi, Akita, Fukushima
-            ("07", vec!["04", "06", "08"]),       // Fukushima - Miyagi, Yamagata, Ibaraki
-            ("08", vec!["07", "09", "10", "11"]), // Ibaraki - Fukushima, Tochigi, Gunma, Saitama
-            ("09", vec!["08", "10"]),             // Tochigi - Ibaraki, Gunma
-            ("10", vec!["08", "09", "11"]),       // Gunma - Ibaraki, Tochigi, Saitama
-            ("11", vec!["08", "10", "12", "13"]), // Saitama - Ibaraki, Gunma, Chiba, Tokyo
-            ("12", vec!["11", "13", "14"]),       // Chiba - Saitama, Tokyo, Kanagawa
+            ("01", vec!["02"]),                   // Hokkaido - Aomori (fallback bridge)
+            ("02", vec!["01", "03"]),             // Aomori - Hokkaido, Iwate
+            ("03", vec!["02", "04", "05"]),       // Iwate - Aomori, Miyagi, Akita
+            ("04", vec!["03", "06", "07"]),       // Miyagi - Iwate, Yamagata, Fukushima
+            ("05", vec!["03", "06"]),             // Akita - Iwate, Yamagata
+            ("06", vec!["04", "05", "07", "15"]), // Yamagata - Miyagi, Akita, Fukushima, Niigata
+            ("07", vec!["04", "06", "08", "09", "10", "15"]), // Fukushima - Miyagi, Yamagata, Ibaraki, Tochigi, Gunma, Niigata
+            ("08", vec!["07", "09", "11", "12"]), // Ibaraki - Fukushima, Tochigi, Saitama, Chiba
+            ("09", vec!["07", "08", "10", "11"]), // Tochigi - Fukushima, Ibaraki, Gunma, Saitama
+            ("10", vec!["07", "09", "11", "15", "20"]), // Gunma - Fukushima, Tochigi, Saitama, Niigata, Nagano
+            ("11", vec!["08", "09", "10", "12", "13", "19"]), // Saitama - Ibaraki, Tochigi, Gunma, Chiba, Tokyo, Yamanashi
+            ("12", vec!["08", "11", "13"]),                   // Chiba - Ibaraki, Saitama, Tokyo
             ("13", vec!["11", "12", "14", "19"]), // Tokyo - Saitama, Chiba, Kanagawa, Yamanashi
-            ("14", vec!["12", "13", "15"]),       // Kanagawa - Chiba, Tokyo, Shizuoka
-            ("15", vec!["14", "19", "22", "23"]), // Shizuoka - Kanagawa, Yamanashi, Aichi, Mie
-            ("16", vec!["17", "18"]),             // Niigata - Toyama, Nagano
-            ("17", vec!["16", "18", "22"]),       // Toyama - Niigata, Nagano, Aichi
-            ("18", vec!["16", "17", "19", "06"]), // Nagano - Niigata, Toyama, Yamanashi, Yamagata
-            ("19", vec!["13", "15", "18", "22"]), // Yamanashi - Tokyo, Shizuoka, Nagano, Aichi
-            ("20", vec!["16", "17", "19", "06"]), // Nagano (canonical JIS) - mirrors legacy 18 mapping
-            ("21", vec!["22", "24"]),             // Gifu - Aichi, Kyoto
-            ("22", vec!["15", "17", "19", "21", "23"]), // Aichi - Shizuoka, Toyama, Yamanashi, Gifu, Mie
-            ("23", vec!["15", "22", "24"]),             // Mie - Shizuoka, Aichi, Kyoto
-            ("24", vec!["21", "23", "25", "26", "27", "28"]), // Kyoto - Gifu, Mie, Osaka, Hyogo, Nara, Wakayama
-            ("25", vec!["24", "26", "27"]),                   // Osaka - Kyoto, Hyogo, Nara
-            ("26", vec!["24", "25", "27", "28", "30"]), // Hyogo - Kyoto, Osaka, Nara, Wakayama, Okayama
-            ("27", vec!["24", "25", "26"]),             // Nara - Kyoto, Osaka, Hyogo
-            ("28", vec!["24", "26", "29"]),             // Wakayama - Kyoto, Hyogo, Mie
-            ("29", vec!["28", "30", "31"]), // Mie - Wakayama, Okayama, Hiroshima (approx)
-            ("30", vec!["26", "31"]),       // Okayama - Hyogo, Hiroshima
-            ("31", vec!["29", "30", "32"]), // Hiroshima - Mie, Okayama, Yamaguchi
-            ("32", vec!["31", "33", "34"]), // Yamaguchi - Hiroshima, Tokushima, Kagawa
-            ("33", vec!["32", "34", "35"]), // Tokushima - Yamaguchi, Kagawa, Ehime
-            ("34", vec!["32", "33", "35"]), // Kagawa - Yamaguchi, Tokushima, Ehime
-            ("35", vec!["33", "34", "36"]), // Ehime - Tokushima, Kagawa, Kochi
-            ("36", vec!["35"]),             // Kochi - Ehime
-            ("37", vec!["38", "39", "40"]), // Fukuoka - Saga, Nagasaki, Kumamoto
-            ("38", vec!["37"]),             // Saga - Fukuoka
-            ("39", vec!["37", "40"]),       // Nagasaki - Fukuoka, Kumamoto
-            ("40", vec!["41", "42", "43", "44"]), // Fukuoka - Saga, Nagasaki, Kumamoto, Oita
-            ("41", vec!["40", "42"]),       // Saga - Fukuoka, Nagasaki
-            ("42", vec!["40", "41"]),       // Nagasaki - Fukuoka, Saga
+            ("14", vec!["13", "19", "22"]),       // Kanagawa - Tokyo, Yamanashi, Shizuoka
+            ("15", vec!["06", "07", "10", "16", "20"]), // Niigata - Yamagata, Fukushima, Gunma, Toyama, Nagano
+            ("16", vec!["15", "17", "20", "21"]),       // Toyama - Niigata, Ishikawa, Nagano, Gifu
+            ("17", vec!["16", "18", "21"]),             // Ishikawa - Toyama, Fukui, Gifu
+            ("18", vec!["17", "20", "21", "25", "26"]), // Fukui - Ishikawa, Nagano, Gifu, Shiga, Kyoto
+            ("19", vec!["11", "13", "14", "20", "22"]), // Yamanashi - Saitama, Tokyo, Kanagawa, Nagano, Shizuoka
+            ("20", vec!["10", "15", "16", "18", "19", "21", "22", "23"]), // Nagano - Gunma, Niigata, Toyama, Fukui, Yamanashi, Gifu, Shizuoka, Aichi
+            ("21", vec!["16", "17", "18", "20", "23", "24", "25"]), // Gifu - Toyama, Ishikawa, Fukui, Nagano, Aichi, Mie, Shiga
+            ("22", vec!["14", "19", "20", "23"]), // Shizuoka - Kanagawa, Yamanashi, Nagano, Aichi
+            ("23", vec!["20", "21", "22", "24"]), // Aichi - Nagano, Gifu, Shizuoka, Mie
+            ("24", vec!["21", "23", "25", "26", "29", "30"]), // Mie - Gifu, Aichi, Shiga, Kyoto, Nara, Wakayama
+            ("25", vec!["18", "21", "24", "26"]),             // Shiga - Fukui, Gifu, Mie, Kyoto
+            ("26", vec!["18", "24", "25", "27", "28", "29", "30"]), // Kyoto - Fukui, Mie, Shiga, Osaka, Hyogo, Nara, Wakayama
+            ("27", vec!["26", "28", "29"]),                         // Osaka - Kyoto, Hyogo, Nara
+            ("28", vec!["26", "27", "29", "31", "33"]), // Hyogo - Kyoto, Osaka, Nara, Tottori, Okayama
+            ("29", vec!["24", "26", "27", "28", "30"]), // Nara - Mie, Kyoto, Osaka, Hyogo, Wakayama
+            ("30", vec!["24", "26", "29"]),             // Wakayama - Mie, Kyoto, Nara
+            ("31", vec!["28", "32", "33", "34"]), // Tottori - Hyogo, Shimane, Okayama, Hiroshima
+            ("32", vec!["31", "34", "35"]),       // Shimane - Tottori, Hiroshima, Yamaguchi
+            ("33", vec!["28", "31", "34", "37"]), // Okayama - Hyogo, Tottori, Hiroshima, Kagawa
+            ("34", vec!["31", "32", "33", "35", "38"]), // Hiroshima - Tottori, Shimane, Okayama, Yamaguchi, Ehime
+            ("35", vec!["32", "34", "40"]),             // Yamaguchi - Shimane, Hiroshima, Fukuoka
+            ("36", vec!["37", "38", "39"]),             // Tokushima - Kagawa, Ehime, Kochi
+            ("37", vec!["33", "36", "38"]),             // Kagawa - Okayama, Tokushima, Ehime
+            ("38", vec!["34", "36", "37", "39"]), // Ehime - Hiroshima, Tokushima, Kagawa, Kochi
+            ("39", vec!["36", "38"]),             // Kochi - Tokushima, Ehime
+            ("40", vec!["35", "41", "43", "44"]), // Fukuoka - Yamaguchi, Saga, Kumamoto, Oita
+            ("41", vec!["40", "42"]),             // Saga - Fukuoka, Nagasaki
+            ("42", vec!["41"]),                   // Nagasaki - Saga
             ("43", vec!["40", "44", "45", "46"]), // Kumamoto - Fukuoka, Oita, Miyazaki, Kagoshima
-            ("44", vec!["40", "43", "45"]), // Oita - Fukuoka, Kumamoto, Miyazaki
-            ("45", vec!["43", "44", "46"]), // Miyazaki - Kumamoto, Oita, Kagoshima
-            ("46", vec!["43", "45"]),       // Kagoshima - Kumamoto, Miyazaki
-            ("47", vec![]),                 // Okinawa - isolated (no land borders)
+            ("44", vec!["40", "43", "45"]),       // Oita - Fukuoka, Kumamoto, Miyazaki
+            ("45", vec!["43", "44", "46"]),       // Miyazaki - Kumamoto, Oita, Kagoshima
+            ("46", vec!["43", "45"]),             // Kagoshima - Kumamoto, Miyazaki
+            ("47", vec![]),                       // Okinawa - isolated (no land borders)
         ];
 
         for (code, adjacent) in borders {

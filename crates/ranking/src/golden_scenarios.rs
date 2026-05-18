@@ -33,6 +33,8 @@ pub struct GoldenScenario {
     pub name: &'static str,
     pub description: &'static str,
     pub request_station_id: Option<&'static str>,
+    pub request_line_id: Option<&'static str>,
+    pub request_line_name: Option<&'static str>,
     pub request_area: Option<AreaContextInput>,
     pub user_profile_area: Option<AreaContextInput>,
     pub expected_min_confidence: f64,
@@ -48,6 +50,8 @@ impl GoldenScenario {
             description: "Hokkaido user searching in Tokyo area (Tamachi) \
                         must not return Okinawa stations in top candidates",
             request_station_id: Some("st_tamachi"),
+            request_line_id: None,
+            request_line_name: None,
             request_area: Some(AreaContextInput {
                 prefecture_code: Some("13".to_string()), // Tokyo
                 ..Default::default()
@@ -68,6 +72,8 @@ impl GoldenScenario {
             description: "Request with city context (Minato/Tokyo) but no station \
                         must expand within same area or adjacent prefectures only",
             request_station_id: None,
+            request_line_id: None,
+            request_line_name: None,
             request_area: Some(AreaContextInput {
                 prefecture_code: Some("13".to_string()), // Tokyo
                 city_code: Some("13103".to_string()),    // Minato
@@ -86,7 +92,9 @@ impl GoldenScenario {
             name: "line_identity_preserved",
             description: "Request with line context (Yamanote Line) must prioritize \
                         same-line candidates and preserve line intent in fallback reasoning",
-            request_station_id: Some("st_tamachi"),
+            request_station_id: None,
+            request_line_id: Some("line_jr_yamanote"),
+            request_line_name: Some("Yamanote Line"),
             request_area: None,
             user_profile_area: None,
             expected_min_confidence: 0.8,
@@ -168,6 +176,14 @@ mod tests {
         let scenario = GoldenScenario::area_only_no_remote_jump();
         assert_eq!(scenario.request_station_id, None);
         assert!(scenario.forbidden_prefectures.len() >= 3);
+    }
+
+    #[test]
+    fn golden_scenario_line_identity_uses_line_inputs() {
+        let scenario = GoldenScenario::line_identity_preserved();
+        assert_eq!(scenario.request_station_id, None);
+        assert!(scenario.request_line_id.is_some());
+        assert!(scenario.request_line_name.is_some());
     }
 
     #[test]
