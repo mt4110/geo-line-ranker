@@ -13,7 +13,8 @@ use crate::{
 };
 
 const FIELD_MAPPING_REF_RULE_DESCRIPTION: &str = "must be non-empty and trimmed, use only lowercase letters, digits, underscores, and hyphens, and must not start or end with a separator";
-const RUNTIME_EXECUTABLE_FIELD_MAPPING_IDS: &[&str] = &["event_v1"];
+const CUSTOM_FIELD_MAPPING_RUNTIME_RULE_DESCRIPTION: &str =
+    "custom field_mapping contracts must use runtime: contract_only; only event_v1 is executable in the current runtime";
 pub const PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION: &str =
     "local_stable_connector_manifest_schema_v1";
 const PROFILE_CONNECTOR_YAML_MANIFEST_SCHEMA_VERSION: u32 = 1;
@@ -269,6 +270,31 @@ impl fmt::Display for ProfileConnectorFieldMapping {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileConnectorFieldMappingRuntime {
+    RuntimeExecutable,
+    #[default]
+    ContractOnly,
+}
+
+impl ProfileConnectorFieldMappingRuntime {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RuntimeExecutable => "runtime_executable",
+            Self::ContractOnly => "contract_only",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileConnectorFieldMappingContractRef {
+    pub mapping_id: ProfileConnectorFieldMapping,
+    #[serde(default)]
+    pub runtime: ProfileConnectorFieldMappingRuntime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProfileConnectorRegistryEntry {
     pub connector_type: ProfileConnectorType,
@@ -321,6 +347,7 @@ pub(crate) fn build_profile_connector_registry(
 
 pub(crate) fn validate_profile_connector_ref_contract(
     profile_path: &Path,
+    manifest: &ProfilePackManifest,
     connector: &ProfileConnectorRef,
 ) -> Result<()> {
     if let Some(field_mapping) = connector.field_mapping.as_ref() {
@@ -332,7 +359,46 @@ pub(crate) fn validate_profile_connector_ref_contract(
             field_mapping.as_str(),
             FIELD_MAPPING_REF_RULE_DESCRIPTION
         );
+        ensure_field_mapping_declared_or_builtin(profile_path, manifest, field_mapping)?;
     }
+    Ok(())
+}
+
+pub(crate) fn validate_profile_field_mapping_contracts(
+    profile_path: &Path,
+    manifest: &ProfilePackManifest,
+) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for contract in &manifest.field_mapping_contracts {
+        let mapping_id = contract.mapping_id.as_str();
+        ensure!(
+            is_field_mapping_ref(mapping_id),
+            "profile pack {} field_mapping_contracts mapping_id '{}' is invalid; {}",
+            profile_path.display(),
+            mapping_id,
+            FIELD_MAPPING_REF_RULE_DESCRIPTION
+        );
+        ensure!(
+            mapping_id != "event_v1",
+            "profile pack {} field_mapping_contracts must not redeclare built-in mapping event_v1",
+            profile_path.display()
+        );
+        ensure!(
+            contract.runtime == ProfileConnectorFieldMappingRuntime::ContractOnly,
+            "profile pack {} field_mapping_contracts mapping_id {} runtime {} is invalid; {}",
+            profile_path.display(),
+            mapping_id,
+            contract.runtime.as_str(),
+            CUSTOM_FIELD_MAPPING_RUNTIME_RULE_DESCRIPTION
+        );
+        ensure!(
+            seen.insert(mapping_id.to_string()),
+            "profile pack {} field_mapping_contracts contains duplicate mapping_id {}",
+            profile_path.display(),
+            mapping_id
+        );
+    }
+
     Ok(())
 }
 
@@ -391,8 +457,7 @@ fn profile_connector_registry_entry(
                 let source_id =
                     require_connector_source_id(path, &resolved, header.source_id.as_deref())?;
                 validate_connector_source_id_override(path, &resolved, connector, &source_id)?;
-                let field_mapping =
-                    require_runtime_executable_import_field_mapping(path, manifest, connector)?;
+                let field_mapping = require_import_field_mapping(path, manifest, connector)?;
                 (
                     header.kind,
                     Some(header.schema_version),
@@ -417,8 +482,7 @@ fn profile_connector_registry_entry(
                     resolved.display(),
                     expected_extension
                 );
-                let field_mapping =
-                    require_runtime_executable_import_field_mapping(path, manifest, connector)?;
+                let field_mapping = require_import_field_mapping(path, manifest, connector)?;
                 (
                     connector
                         .connector_type
@@ -570,7 +634,7 @@ fn ensure_no_file_field_mapping(
     Ok(())
 }
 
-fn require_runtime_executable_import_field_mapping(
+fn require_import_field_mapping(
     profile_path: &Path,
     manifest: &ProfilePackManifest,
     connector: &ProfileConnectorRef,
@@ -582,24 +646,51 @@ fn require_runtime_executable_import_field_mapping(
             connector.connector_type.as_str()
         )
     })?;
-    ensure!(
-        field_mapping.is_runtime_executable(),
-        "profile pack {} connector {} field_mapping {} is a valid mapping ref but is not executable by the current import runtime; current import runtime executes only {}",
-        profile_path.display(),
-        connector.connector_type.as_str(),
-        field_mapping.as_str(),
-        RUNTIME_EXECUTABLE_FIELD_MAPPING_IDS.join(",")
-    );
-    ensure!(
-        manifest
-            .supported_content_kinds
-            .iter()
-            .any(|kind| kind.as_str() == "event"),
-        "profile pack {} connector {} field_mapping event_v1 requires supported_content_kinds to include event",
-        profile_path.display(),
-        connector.connector_type.as_str()
-    );
+    let runtime_contract = field_mapping_runtime_contract(profile_path, manifest, field_mapping)?;
+    if runtime_contract == ProfileConnectorFieldMappingRuntime::RuntimeExecutable {
+        ensure!(
+            manifest
+                .supported_content_kinds
+                .iter()
+                .any(|kind| kind.as_str() == "event"),
+            "profile pack {} connector {} field_mapping event_v1 requires supported_content_kinds to include event",
+            profile_path.display(),
+            connector.connector_type.as_str()
+        );
+    }
     Ok(field_mapping.clone())
+}
+
+fn ensure_field_mapping_declared_or_builtin(
+    profile_path: &Path,
+    manifest: &ProfilePackManifest,
+    field_mapping: &ProfileConnectorFieldMapping,
+) -> Result<()> {
+    let _ = field_mapping_runtime_contract(profile_path, manifest, field_mapping)?;
+    Ok(())
+}
+
+fn field_mapping_runtime_contract(
+    profile_path: &Path,
+    manifest: &ProfilePackManifest,
+    field_mapping: &ProfileConnectorFieldMapping,
+) -> Result<ProfileConnectorFieldMappingRuntime> {
+    if field_mapping.is_runtime_executable() {
+        return Ok(ProfileConnectorFieldMappingRuntime::RuntimeExecutable);
+    }
+
+    let custom_contract = manifest
+        .field_mapping_contracts
+        .iter()
+        .find(|contract| contract.mapping_id.as_str() == field_mapping.as_str())
+        .with_context(|| {
+            format!(
+                "profile pack {} field_mapping {} must be declared in field_mapping_contracts or use built-in event_v1",
+                profile_path.display(),
+                field_mapping.as_str()
+            )
+        })?;
+    Ok(custom_contract.runtime)
 }
 
 fn is_field_mapping_ref(value: &str) -> bool {

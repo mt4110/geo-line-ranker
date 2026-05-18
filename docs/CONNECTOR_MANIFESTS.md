@@ -34,8 +34,10 @@ Profile validation resolves connector paths and checks the stable matrix:
 - YAML-backed `source_id` values come from the referenced manifest; a profile
   override is allowed only when it matches that value exactly.
 - File import `source_id` values are declared by the profile connector.
-- `field_mapping` refs may be parsed as portable identifiers, but only
-  `event_v1` is executable by the current import runtime.
+- `field_mapping` refs may be parsed as portable identifiers. Built-in
+  `event_v1` remains runtime executable. Custom refs must be declared in
+  `field_mapping_contracts` with `runtime: contract_only` and are not
+  executable by `import profile-source` yet.
 - Archive manifests must declare a same-directory archive path, checksum, and
   bounded archive entries. The current runtime imports exactly one `events`
   logical entry after unpacking.

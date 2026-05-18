@@ -13,9 +13,11 @@ use sha2::{Digest, Sha256};
 mod profile_connectors;
 
 pub use profile_connectors::{
-    profile_connector_schema_contracts, ProfileConnectorFieldMapping, ProfileConnectorRef,
-    ProfileConnectorRegistryEntry, ProfileConnectorSafetyMetadata, ProfileConnectorSchemaContract,
-    ProfileConnectorType, ProfileSourceClass, PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION,
+    profile_connector_schema_contracts, ProfileConnectorFieldMapping,
+    ProfileConnectorFieldMappingContractRef, ProfileConnectorFieldMappingRuntime,
+    ProfileConnectorRef, ProfileConnectorRegistryEntry, ProfileConnectorSafetyMetadata,
+    ProfileConnectorSchemaContract, ProfileConnectorType, ProfileSourceClass,
+    PROFILE_CONNECTOR_SCHEMA_CONTRACT_VERSION,
 };
 
 pub const DEFAULT_POSTGRES_POOL_MAX_SIZE: usize = 16;
@@ -649,6 +651,8 @@ pub struct ProfilePackManifest {
     pub fixtures: Vec<ProfileFixtureRef>,
     #[serde(default)]
     pub connectors: Vec<ProfileConnectorRef>,
+    #[serde(default)]
+    pub field_mapping_contracts: Vec<ProfileConnectorFieldMappingContractRef>,
     #[serde(default)]
     pub evaluation: Option<ProfileEvaluationRef>,
     #[serde(default)]
@@ -2251,9 +2255,10 @@ fn validate_profile_pack_contract(path: &Path, manifest: &ProfilePackManifest) -
     for fixture in &manifest.fixtures {
         validate_portable_relative_path(path, "fixtures.path", &fixture.path)?;
     }
+    profile_connectors::validate_profile_field_mapping_contracts(path, manifest)?;
     for connector in &manifest.connectors {
         validate_portable_relative_path(path, "connectors.manifest", &connector.manifest)?;
-        profile_connectors::validate_profile_connector_ref_contract(path, connector)?;
+        profile_connectors::validate_profile_connector_ref_contract(path, manifest, connector)?;
     }
     if let Some(evaluation) = &manifest.evaluation {
         validate_portable_relative_path(
@@ -4382,6 +4387,9 @@ fallback_policy: example_default
 ranking_config_dir: ../../ranking
 reason_catalog: reasons.yaml
 article_support: reserved
+field_mapping_contracts:
+    - mapping_id: custom_event_v1
+      runtime: contract_only
 connectors:
   - type: csv_import
     manifest: sources/events.csv
@@ -4445,7 +4453,7 @@ connectors:
     }
 
     #[test]
-    fn runtime_validation_rejects_non_executable_file_field_mapping() {
+    fn rejects_file_field_mapping_missing_contract_declaration() {
         let temp = tempdir().expect("tempdir");
         let profile_dir = temp.path().join("profiles").join("example-profile");
         let ranking_dir = temp.path().join("ranking");
@@ -4491,11 +4499,128 @@ connectors:
         .expect("profile");
 
         let error =
-            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("runtime mapping");
+            lint_profile_pack_file(profile_dir.join("profile.yaml")).expect_err("mapping contract");
         let rendered = format!("{error:#}");
 
-        assert!(rendered.contains("field_mapping custom_event_v1 is a valid mapping ref"));
-        assert!(rendered.contains("current import runtime executes only event_v1"));
+        assert!(rendered
+            .contains("field_mapping custom_event_v1 must be declared in field_mapping_contracts"));
+    }
+
+    #[test]
+    fn lint_accepts_contract_only_file_field_mapping_ref() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("example-profile");
+        let ranking_dir = temp.path().join("ranking");
+        let source_dir = profile_dir.join("sources");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::create_dir_all(&ranking_dir).expect("ranking dir");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        copy_default_configs(&ranking_dir);
+        write_minimal_reason_catalog(&profile_dir.join("reasons.yaml"), "example-profile");
+        fs::write(source_dir.join("events.csv"), "event_id,title\n").expect("source");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+field_mapping_contracts:
+  - mapping_id: custom_event_v1
+    runtime: contract_only
+connectors:
+  - type: csv_import
+    manifest: sources/events.csv
+    source_id: example-events
+    field_mapping: custom_event_v1
+"#,
+        )
+        .expect("profile");
+
+        let lint = lint_profile_pack_file(profile_dir.join("profile.yaml"))
+            .expect("contract-only mapping should lint");
+
+        assert_eq!(lint.connector_count, 1);
+        assert_eq!(
+            lint.connector_registry[0]
+                .field_mapping
+                .as_ref()
+                .map(|mapping| mapping.as_str()),
+            Some("custom_event_v1")
+        );
+        assert_eq!(
+            lint.connector_registry[0]
+                .field_mapping
+                .as_ref()
+                .map(|mapping| mapping.is_runtime_executable()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn rejects_runtime_executable_custom_field_mapping_contract() {
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("profile.yaml");
+        fs::write(
+            &manifest_path,
+            r#"schema_version: 2
+kind: profile_pack
+manifest_version: 1
+profile_id: example-profile
+display_name: Example Profile
+compatibility_level: experimental
+content_kinds:
+  - school
+  - event
+supported_content_kinds:
+  - school
+  - event
+context_inputs:
+  - station
+placements:
+  - home
+  - search
+  - detail
+  - mypage
+fallback_policy: example_default
+ranking_config_dir: ../../ranking
+reason_catalog: reasons.yaml
+article_support: reserved
+field_mapping_contracts:
+  - mapping_id: custom_event_v1
+    runtime: runtime_executable
+connectors:
+  - type: csv_import
+    manifest: sources/events.csv
+    source_id: example-events
+    field_mapping: custom_event_v1
+"#,
+        )
+        .expect("profile");
+
+        let error = load_profile_pack_manifest(&manifest_path)
+            .expect_err("custom runtime executable field mapping contract");
+
+        assert!(format!("{error:#}")
+            .contains("custom field_mapping contracts must use runtime: contract_only"));
     }
 
     #[test]
@@ -5464,6 +5589,7 @@ article_support: reserved
             article_support: ArticleSupport::Reserved,
             fixtures: vec![],
             connectors: vec![],
+            field_mapping_contracts: vec![],
             evaluation: None,
             source_manifests: vec![],
             event_csv_examples: vec![],

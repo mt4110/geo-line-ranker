@@ -96,6 +96,10 @@ Each `profile.yaml` declares:
   manifest path, derives source class, manifest kind, profile compatibility,
   field mapping, and safety metadata, and keeps the references local. This is
   not dynamic runtime connector loading or arbitrary mapping execution.
+- `field_mapping_contracts`: optional contract registry for non-built-in
+  mapping refs. Each entry declares `mapping_id` and `runtime`; custom mapping
+  refs must use `runtime: contract_only`. Built-in `event_v1` stays
+  runtime-executable and must not be redeclared.
   `doctor profile-pack` and `doctor ingest-quality` report the stable connector
   schema contract version, currently
   `local_stable_connector_manifest_schema_v1`, plus each supported connector
@@ -140,8 +144,10 @@ limits. Connector `source_id` values use the same portable lowercase letters,
 digits, and hyphens rule as `profile_id`; `field_mapping` refs use lowercase
 letters, digits, underscores, and hyphens, with no leading or trailing
 separator. Only `field_mapping: event_v1` is executable today. Unsupported
-mapping refs fail `profile validate`, `doctor profile-pack`, and
-`import profile-source` instead of being treated as partial support.
+mapping refs must be declared in `field_mapping_contracts`; undeclared refs
+fail `profile validate` and `doctor profile-pack`. Declared
+`runtime: contract_only` refs are accepted as manifest contracts but still fail
+`import profile-source` until runtime execution support is added.
 YAML-backed connector refs must also declare `schema_version: 1`; CSV and
 NDJSON refs are raw files and therefore report `manifest_schema_version: none`.
 Optional `source_id` values on YAML-backed connectors must match the referenced
