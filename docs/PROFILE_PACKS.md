@@ -194,14 +194,20 @@ cargo run -p cli -- doctor storage-compatibility
 
 Use that command when reviewing storage/cache/index support levels. Use
 `profile validate`, `doctor profile-pack`, or `doctor ranking-config` when
+cargo run -p cli -- profile pack --id school-event-jp
 reviewing profile compatibility levels.
 
-```bash
+`profile list`, `profile validate`, `profile inspect`, and `profile pack` reuse
+the same
 cargo run -p cli -- config lint
 ```
 
 Use the profile CLI when you only need the profile-pack surface:
 
+
+`profile pack` writes deterministic local artifacts under
+`target/profile-packs` by default: `<profile_id>.tar.gz`,
+`<profile_id>.manifest.json`, and `<profile_id>.sha256`.
 ```bash
 cargo run -p cli -- profile list
 cargo run -p cli -- profile validate

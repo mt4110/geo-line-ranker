@@ -1,8 +1,8 @@
-#[cfg(feature = "api-docs")]
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{ensure, Context};
 use clap::{Parser, Subcommand};
 #[cfg(feature = "storage-backends")]
 use cli::{
@@ -36,7 +36,10 @@ use config::{
     ProfilePackRegistry, RankingConfigLintSummary, DEFAULT_ALGORITHM_VERSION, DEFAULT_PROFILE_ID,
     DEFAULT_PROFILE_PACKS_DIR, DEFAULT_RANKING_CONFIG_DIR,
 };
+use flate2::{write::GzEncoder, Compression};
 use generic_csv::{lint_source_manifest_dir, SourceManifestLintSummary};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 #[cfg(feature = "storage-backends")]
 use storage::{
     EvaluationRunCaseRecord, EvaluationRunCaseStatus, EvaluationRunKind, EvaluationRunRecord,
@@ -47,6 +50,9 @@ use storage::{
 use storage_opensearch::ProjectionSyncService;
 #[cfg(feature = "storage-backends")]
 use storage_postgres::{run_migrations, seed_fixture, PgRepository};
+use tar::{Builder as TarBuilder, Header as TarHeader};
+
+const DEFAULT_PROFILE_PACK_ARTIFACT_DIR: &str = "target/profile-packs";
 
 #[derive(Debug, Parser)]
 #[command(name = "geo-line-ranker-cli")]
@@ -507,6 +513,28 @@ enum ProfileCommand {
             help = "Profile pack root directory or explicit profile.yaml file to inspect. Defaults to PROFILE_PACKS_DIR or configs/profiles."
         )]
         profiles_path: Option<PathBuf>,
+    },
+    #[command(
+        about = "Package one validated profile pack as a local deterministic artifact",
+        long_about = "Package one validated profile pack as a local deterministic artifact. This validates the selected profile with the same manifest, reason catalog, ranking config, fixture, and connector checks used by `profile inspect`, then emits a tar.gz archive plus sidecar manifest/checksum files.\n\nExamples:\n  geo-line-ranker-cli profile pack --id school-event-jp\n  geo-line-ranker-cli profile pack --id local-discovery-generic --out-dir target/profile-packs"
+    )]
+    Pack {
+        #[arg(
+            long = "id",
+            visible_alias = "profile-id",
+            help = "Profile id to package. Defaults to PROFILE_ID, the selected profile.yaml file id, or local-discovery-generic."
+        )]
+        id: Option<String>,
+        #[arg(
+            long,
+            help = "Profile pack root directory or explicit profile.yaml file to package. Defaults to PROFILE_PACKS_DIR or configs/profiles."
+        )]
+        profiles_path: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Output directory for generated archive, manifest, and checksum files. Defaults to target/profile-packs."
+        )]
+        out_dir: Option<PathBuf>,
     },
 }
 
@@ -1001,6 +1029,29 @@ async fn main() -> anyhow::Result<()> {
                         &runtime_selection
                     )
                 );
+            }
+            ProfileCommand::Pack {
+                id,
+                profiles_path,
+                out_dir,
+            } => {
+                let profiles_path = profiles_path.unwrap_or(env_path_or_default(
+                    "PROFILE_PACKS_DIR",
+                    PathBuf::from(DEFAULT_PROFILE_PACKS_DIR),
+                )?);
+                let registry = ProfilePackRegistry::new(&profiles_path);
+                let env_profile_id = config::env_optional_non_empty("PROFILE_ID")?;
+                let profile_id = registry.selected_profile_id(
+                    id.as_deref().or(env_profile_id.as_deref()),
+                    DEFAULT_PROFILE_ID,
+                )?;
+                let manifest_path = registry.manifest_path_for_profile_id(&profile_id)?;
+                let _ = load_and_lint_profile_pack_file(&manifest_path)?;
+                let out_dir = resolve_runtime_path(
+                    out_dir.unwrap_or_else(|| PathBuf::from(DEFAULT_PROFILE_PACK_ARTIFACT_DIR)),
+                );
+                let artifact = package_profile_pack(&profile_id, &manifest_path, &out_dir)?;
+                println!("{}", format_profile_pack_summary(&artifact));
             }
         },
         #[cfg(feature = "storage-backends")]
@@ -1921,6 +1972,264 @@ fn format_profile_inspect_summary(
     lines.join("\n")
 }
 
+#[derive(Debug, Clone)]
+struct ProfilePackArtifactSummary {
+    profile_id: String,
+    manifest_path: PathBuf,
+    archive_path: PathBuf,
+    checksum_path: PathBuf,
+    archive_checksum_sha256: String,
+    file_count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ProfilePackArchiveEntry {
+    archive_path: String,
+    source_path: PathBuf,
+    size_bytes: u64,
+    sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfilePackArtifactManifest {
+    schema_version: u32,
+    kind: String,
+    profile_id: String,
+    source_manifest_path: String,
+    archive_path: String,
+    archive_checksum_sha256: String,
+    entries: Vec<ProfilePackArtifactManifestEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfilePackArtifactManifestEntry {
+    path: String,
+    size_bytes: u64,
+    sha256: String,
+}
+
+fn package_profile_pack(
+    profile_id: &str,
+    profile_manifest_path: &Path,
+    out_dir: &Path,
+) -> anyhow::Result<ProfilePackArtifactSummary> {
+    fs::create_dir_all(out_dir).with_context(|| {
+        format!(
+            "failed to create profile pack output dir {}",
+            out_dir.display()
+        )
+    })?;
+
+    let profile_dir = profile_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let canonical_profile_dir = profile_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize profile pack directory {}",
+            profile_dir.display()
+        )
+    })?;
+    let canonical_out_dir = out_dir.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize profile pack output dir {}",
+            out_dir.display()
+        )
+    })?;
+    ensure!(
+        !canonical_out_dir.starts_with(&canonical_profile_dir),
+        "profile pack output dir {} must not be inside profile directory {}",
+        out_dir.display(),
+        profile_dir.display()
+    );
+
+    let entries = collect_profile_pack_archive_entries(profile_manifest_path)?;
+    let archive_name = format!("{profile_id}.tar.gz");
+    let archive_path = out_dir.join(&archive_name);
+    write_profile_pack_archive(&archive_path, &entries)?;
+
+    let archive_raw = fs::read(&archive_path)
+        .with_context(|| format!("failed to read {}", archive_path.display()))?;
+    let archive_checksum_sha256 = hex_sha256(&archive_raw);
+
+    let manifest_path = out_dir.join(format!("{profile_id}.manifest.json"));
+    let checksum_path = out_dir.join(format!("{profile_id}.sha256"));
+    let manifest = ProfilePackArtifactManifest {
+        schema_version: 1,
+        kind: "profile_pack_artifact_manifest".to_string(),
+        profile_id: profile_id.to_string(),
+        source_manifest_path: profile_manifest_path
+            .strip_prefix(profile_dir)
+            .with_context(|| {
+                format!(
+                    "failed to derive deterministic source manifest path for {}",
+                    profile_manifest_path.display()
+                )
+            })?
+            .to_string_lossy()
+            .replace('\\', "/"),
+        archive_path: archive_name.clone(),
+        archive_checksum_sha256: archive_checksum_sha256.clone(),
+        entries: entries
+            .iter()
+            .map(|entry| ProfilePackArtifactManifestEntry {
+                path: entry.archive_path.clone(),
+                size_bytes: entry.size_bytes,
+                sha256: entry.sha256.clone(),
+            })
+            .collect(),
+    };
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest)
+            .context("failed to serialize profile pack manifest")?,
+    )
+    .with_context(|| {
+        format!(
+            "failed to write profile pack manifest {}",
+            manifest_path.display()
+        )
+    })?;
+    fs::write(
+        &checksum_path,
+        format!("{}  {}\n", archive_checksum_sha256, archive_name),
+    )
+    .with_context(|| {
+        format!(
+            "failed to write profile pack checksum {}",
+            checksum_path.display()
+        )
+    })?;
+
+    Ok(ProfilePackArtifactSummary {
+        profile_id: profile_id.to_string(),
+        manifest_path,
+        archive_path,
+        checksum_path,
+        archive_checksum_sha256,
+        file_count: entries.len(),
+    })
+}
+
+fn collect_profile_pack_archive_entries(
+    profile_manifest_path: &Path,
+) -> anyhow::Result<Vec<ProfilePackArchiveEntry>> {
+    let profile_dir = profile_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let mut files = Vec::new();
+    collect_profile_pack_files_recursive(profile_dir, &mut files)?;
+    files.sort();
+
+    let mut entries = Vec::with_capacity(files.len());
+    for source_path in files {
+        let relative = source_path.strip_prefix(profile_dir).with_context(|| {
+            format!(
+                "failed to derive profile pack relative path for {}",
+                source_path.display()
+            )
+        })?;
+        let archive_path = relative.to_string_lossy().replace('\\', "/");
+        let raw = fs::read(&source_path).with_context(|| {
+            format!("failed to read profile pack file {}", source_path.display())
+        })?;
+        entries.push(ProfilePackArchiveEntry {
+            archive_path,
+            source_path,
+            size_bytes: raw.len() as u64,
+            sha256: hex_sha256(&raw),
+        });
+    }
+    Ok(entries)
+}
+
+fn collect_profile_pack_files_recursive(
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read profile pack directory {}", dir.display()))?
+        .map(|entry| entry.map(|item| item.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to list profile pack directory {}", dir.display()))?;
+    entries.sort();
+
+    for entry in entries {
+        let metadata = fs::symlink_metadata(&entry).with_context(|| {
+            format!(
+                "failed to inspect profile pack entry metadata {}",
+                entry.display()
+            )
+        })?;
+        ensure!(
+            !metadata.file_type().is_symlink(),
+            "profile pack {} contains unsupported symlink entry {}",
+            dir.display(),
+            entry.display()
+        );
+        if entry.is_dir() {
+            collect_profile_pack_files_recursive(&entry, files)?;
+        } else if entry.is_file() {
+            files.push(entry);
+        }
+    }
+    Ok(())
+}
+
+fn write_profile_pack_archive(
+    archive_path: &Path,
+    entries: &[ProfilePackArchiveEntry],
+) -> anyhow::Result<()> {
+    let archive_file = fs::File::create(archive_path)
+        .with_context(|| format!("failed to create {}", archive_path.display()))?;
+    let encoder = GzEncoder::new(archive_file, Compression::default());
+    let mut builder = TarBuilder::new(encoder);
+
+    for entry in entries {
+        let raw = fs::read(&entry.source_path).with_context(|| {
+            format!(
+                "failed to read profile pack file {}",
+                entry.source_path.display()
+            )
+        })?;
+        let mut header = TarHeader::new_gnu();
+        header
+            .set_path(&entry.archive_path)
+            .with_context(|| format!("invalid archive entry path {}", entry.archive_path))?;
+        header.set_size(raw.len() as u64);
+        header.set_mode(0o644);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
+        header.set_cksum();
+        builder
+            .append(&header, Cursor::new(raw))
+            .with_context(|| format!("failed to append archive entry {}", entry.archive_path))?;
+    }
+
+    let encoder = builder
+        .into_inner()
+        .with_context(|| format!("failed to finalize archive {}", archive_path.display()))?;
+    encoder
+        .finish()
+        .with_context(|| format!("failed to finish archive {}", archive_path.display()))?;
+    Ok(())
+}
+
+fn hex_sha256(raw: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(raw))
+}
+
+fn format_profile_pack_summary(summary: &ProfilePackArtifactSummary) -> String {
+    let mut lines = vec![format!(
+        "profile pack ok: profile_id={} files={} archive_checksum_sha256={}",
+        summary.profile_id, summary.file_count, summary.archive_checksum_sha256
+    )];
+    lines.push(format!("archive={}", summary.archive_path.display()));
+    lines.push(format!("manifest={}", summary.manifest_path.display()));
+    lines.push(format!("checksum={}", summary.checksum_path.display()));
+    lines.join("\n")
+}
+
 fn push_profile_ref_summary(lines: &mut Vec<String>, label: &str, refs: &[String]) {
     if refs.is_empty() {
         lines.push(format!("{label}=none"));
@@ -1960,6 +2269,11 @@ mod tests {
     };
     use domain::PlacementKind;
     use std::{collections::BTreeMap, fs};
+
+    use flate2::read::GzDecoder;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+    use tar::Archive;
 
     fn repo_ranking_config_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/ranking")
@@ -2213,6 +2527,154 @@ fallback_ladder:
             panic!("expected doctor profile-pack command");
         };
         assert!(persist);
+    }
+
+    #[test]
+    fn profile_pack_accepts_id_alias_and_out_dir() {
+        let cli = Cli::parse_from([
+            "cli",
+            "profile",
+            "pack",
+            "--id",
+            "school-event-jp",
+            "--out-dir",
+            "target/profile-packs",
+        ]);
+
+        let Command::Profile {
+            target:
+                ProfileCommand::Pack {
+                    id,
+                    profiles_path,
+                    out_dir,
+                },
+        } = cli.command
+        else {
+            panic!("expected profile pack command");
+        };
+
+        assert_eq!(id.as_deref(), Some("school-event-jp"));
+        assert_eq!(profiles_path, None);
+        assert_eq!(out_dir, Some(PathBuf::from("target/profile-packs")));
+    }
+
+    #[test]
+    fn profile_pack_writes_archive_manifest_and_checksum() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("school-event-jp");
+        let out_dir = temp.path().join("out");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            "profile: school-event-jp\n",
+        )
+        .expect("profile manifest");
+        fs::write(profile_dir.join("reasons.yaml"), "reasons: []\n").expect("reasons");
+
+        let summary = package_profile_pack(
+            "school-event-jp",
+            &profile_dir.join("profile.yaml"),
+            &out_dir,
+        )
+        .expect("package profile pack");
+        let second_summary = package_profile_pack(
+            "school-event-jp",
+            &profile_dir.join("profile.yaml"),
+            &out_dir,
+        )
+        .expect("package profile pack again");
+
+        assert!(summary.archive_path.exists());
+        assert!(summary.manifest_path.exists());
+        assert!(summary.checksum_path.exists());
+        assert_eq!(
+            summary.archive_checksum_sha256,
+            second_summary.archive_checksum_sha256
+        );
+
+        let manifest_raw = fs::read(&summary.manifest_path).expect("manifest file");
+        let manifest_json: serde_json::Value =
+            serde_json::from_slice(&manifest_raw).expect("manifest json");
+        assert_eq!(manifest_json["profile_id"], "school-event-jp");
+        assert_eq!(manifest_json["source_manifest_path"], "profile.yaml");
+        assert_eq!(manifest_json["archive_path"], "school-event-jp.tar.gz");
+        assert_eq!(manifest_json["entries"].as_array().map(Vec::len), Some(2));
+
+        let checksum = fs::read_to_string(&summary.checksum_path).expect("checksum file");
+        assert!(checksum.contains(&summary.archive_checksum_sha256));
+        assert!(checksum.contains("school-event-jp.tar.gz"));
+
+        let archive_file = fs::File::open(&summary.archive_path).expect("archive file");
+        let decoder = GzDecoder::new(archive_file);
+        let mut archive = Archive::new(decoder);
+        let mut paths = archive
+            .entries()
+            .expect("archive entries")
+            .map(|entry| {
+                let entry = entry.expect("entry");
+                entry
+                    .path()
+                    .expect("entry path")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        assert_eq!(paths, vec!["profile.yaml", "reasons.yaml"]);
+    }
+
+    #[test]
+    fn profile_pack_rejects_output_dir_inside_profile_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("local-discovery-generic");
+        let out_dir = profile_dir.join("artifacts");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            "profile: local-discovery-generic\n",
+        )
+        .expect("profile manifest");
+
+        let error = package_profile_pack(
+            "local-discovery-generic",
+            &profile_dir.join("profile.yaml"),
+            &out_dir,
+        )
+        .expect_err("output dir inside profile dir should fail");
+
+        assert!(error
+            .to_string()
+            .contains("must not be inside profile directory"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_pack_rejects_symlink_entries() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles").join("local-discovery-generic");
+        let out_dir = temp.path().join("out");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::write(
+            profile_dir.join("profile.yaml"),
+            "profile: local-discovery-generic\n",
+        )
+        .expect("profile manifest");
+        fs::write(profile_dir.join("reasons.yaml"), "reasons: []\n").expect("reasons");
+        fs::write(temp.path().join("outside.txt"), "outside").expect("outside file");
+        symlink(
+            temp.path().join("outside.txt"),
+            profile_dir.join("link-to-outside.txt"),
+        )
+        .expect("create symlink");
+
+        let error = package_profile_pack(
+            "local-discovery-generic",
+            &profile_dir.join("profile.yaml"),
+            &out_dir,
+        )
+        .expect_err("symlink should fail");
+
+        assert!(error.to_string().contains("unsupported symlink entry"));
     }
 
     #[test]

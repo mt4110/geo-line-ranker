@@ -31,6 +31,7 @@ jp-school = { path = "../../crates/connectors/jp-school" }
 openapi = { path = "../../crates/openapi", optional = true }
 ranking = { path = "../../crates/ranking" }
 csv.workspace = true
+flate2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
@@ -38,6 +39,7 @@ sha2.workspace = true
 storage = { path = "../../crates/storage" }
 storage-opensearch = { path = "../../crates/storage-opensearch", optional = true }
 storage-postgres = { path = "../../crates/storage-postgres", optional = true }
+tar.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 
