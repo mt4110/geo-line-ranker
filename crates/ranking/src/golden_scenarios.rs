@@ -1,34 +1,34 @@
 /// Golden scenarios for validating geo-first ranking stability.
 /// These are deterministic acceptance tests ensuring no remote surprises and
 /// correct fallback behavior.
-/// 
+///
 /// # Usage (Phase 2)
-/// 
+///
 /// These scenarios will be integrated into the acceptance test harness during
 /// Phase 2 (Candidate Plan Execution). They define the hard constraints that
 /// fallback ladder and retrieval planning must satisfy:
-/// 
+///
 /// - **hokkaido_tokyo_no_okinawa**: Geo-first rule — user location must not be
 ///   violated by fallback distance. Tokyo results must prioritize over Okinawa
 ///   for Hokkaido residents.
-/// 
+///
 /// - **area_only_no_remote_jump**: Area-context rule — requests with city context
 ///   must expand only to adjacent areas, never skip to remote regions.
-/// 
+///
 /// - **line_identity_preserved**: Line-context rule — requests with line info
 ///   must keep line intent visible through fallback chain reasoning.
-/// 
+///
 /// # Implementation Notes
-/// 
+///
 /// - Scenarios are framework definitions; actual validation happens in ranking
 ///   engine acceptance tests.
 /// - `TestContextBuilder` is for unit test setup; prefer `ContextNormalizer::resolve_hierarchy`
 ///   for production context resolution.
-
-use context::{AreaContext, AreaContextInput, ContextInput, ContextSource, RankingContext};
+use context::{AreaContext, AreaContextInput, ContextSource, RankingContext};
 
 /// A golden scenario specification for testing ranking behavior.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct GoldenScenario {
     pub name: &'static str,
     pub description: &'static str,
@@ -39,6 +39,7 @@ pub struct GoldenScenario {
     pub forbidden_prefectures: Vec<&'static str>,
 }
 
+#[allow(dead_code)]
 impl GoldenScenario {
     /// Scenario: Hokkaido user searching near Tokyo must not recommend Okinawa.
     pub fn hokkaido_tokyo_no_okinawa() -> Self {
@@ -69,7 +70,7 @@ impl GoldenScenario {
             request_station_id: None,
             request_area: Some(AreaContextInput {
                 prefecture_code: Some("13".to_string()), // Tokyo
-                city_code: Some("13103".to_string()), // Minato
+                city_code: Some("13103".to_string()),    // Minato
                 city_name: Some("Minato".to_string()),
                 ..Default::default()
             }),
@@ -96,6 +97,7 @@ impl GoldenScenario {
 
 /// Context builder for testing resolver behavior.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct TestContextBuilder {
     source: Option<ContextSource>,
     confidence: f64,
@@ -103,6 +105,7 @@ pub struct TestContextBuilder {
     prefecture_code: Option<String>,
 }
 
+#[allow(dead_code)]
 impl TestContextBuilder {
     pub fn new() -> Self {
         Self::default()
@@ -198,7 +201,10 @@ mod tests {
     fn hokkaido_and_okinawa_are_not_adjacent() {
         use geo::GeoGraph;
         let graph = GeoGraph::new();
-        assert!(!graph.are_adjacent("01", "47"), "Hokkaido and Okinawa must not be adjacent");
+        assert!(
+            !graph.are_adjacent("01", "47"),
+            "Hokkaido and Okinawa must not be adjacent"
+        );
     }
 
     #[test]
@@ -207,6 +213,9 @@ mod tests {
         let graph = GeoGraph::new();
         let neighbors = graph.adjacent_prefectures("13");
         // Tokyo (13) should have Saitama, Chiba, Kanagawa as neighbors
-        assert!(neighbors.len() >= 3, "Tokyo should have at least 3 neighbors");
+        assert!(
+            neighbors.len() >= 3,
+            "Tokyo should have at least 3 neighbors"
+        );
     }
 }

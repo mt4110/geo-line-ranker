@@ -1,6 +1,5 @@
 /// Context normalization and resolution logic.
 /// Implements deterministic area/line context normalization with evidence tracking.
-
 use crate::{AreaContext, AreaContextInput, ContextInput, ContextSource, RankingContext};
 
 /// Normalizes request context into a ranked context for retrieval planning.
@@ -9,7 +8,7 @@ pub struct ContextNormalizer;
 impl ContextNormalizer {
     /// Normalizes area-only context (no station ID) into retrieval context.
     /// Used when request has prefecture/city but no specific station.
-    /// 
+    ///
     /// Note: fallback_policy and gate_policy are hard-coded to school_event_jp profile defaults.
     /// Profile-pack override is deferred to phase 2.
     pub fn normalize_area_context(
@@ -41,14 +40,15 @@ impl ContextNormalizer {
         }
     }
 
-    /// Resolves context hierarchy: request > session > user profile > safe fallback.
-    /// 
+    /// Resolves context hierarchy: request > user profile > safe fallback.
+    ///
     /// Priority (highest to lowest):
     /// 1. Request station (confidence 0.95)
-    /// 2. Request area (confidence 0.85)
-    /// 3. User profile area (confidence 0.60)
-    /// 4. Default safe context (confidence 0.20)
-    /// 
+    /// 2. Request line (confidence 0.90)
+    /// 3. Request area (confidence 0.85)
+    /// 4. User profile area (confidence 0.60)
+    /// 5. Default safe context (confidence 0.20)
+    ///
     /// Note: StationContext is created with empty station_name; rank resolution phase
     /// must look up the name from storage (station catalog). This separation enables
     /// lightweight context resolution without DB lookups.
@@ -78,14 +78,41 @@ impl ContextNormalizer {
                 }
             }
 
+            let line_id = ctx
+                .line_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let line_name = ctx
+                .line_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+
+            if line_id.is_some() || line_name.is_some() {
+                return RankingContext {
+                    context_source: ContextSource::RequestLine,
+                    confidence: 0.90,
+                    area: ctx.area.as_ref().map(|a| AreaContext::from(a.clone())),
+                    line: Some(crate::LineContext {
+                        line_id,
+                        line_name: line_name.unwrap_or_default(),
+                        operator_name: None,
+                    }),
+                    station: None,
+                    privacy_level: crate::PrivacyLevel::CoarseArea,
+                    fallback_policy: "school_event_jp_default".to_string(),
+                    gate_policy: "geo_line_default".to_string(),
+                    warnings: Vec::new(),
+                };
+            }
+
             if let Some(area) = ctx.area.as_ref() {
                 if !area.is_empty() {
                     // Area context is second priority
-                    return Self::normalize_area_context(
-                        area,
-                        ContextSource::RequestArea,
-                        0.85,
-                    );
+                    return Self::normalize_area_context(area, ContextSource::RequestArea, 0.85);
                 }
             }
         }
@@ -103,9 +130,9 @@ impl ContextNormalizer {
 
     /// Decay confidence based on evidence age.
     /// Used for time-based context freshness.
-    /// 
+    ///
     /// Formula: confidence * (1 - (age / max_age)²)
-    /// 
+    ///
     /// Rationale: Non-linear decay makes recent evidence much stronger
     /// (e.g., 24h-old evidence retains ~74%, 72h-old retains ~10%).
     /// This prevents stale session data from overriding fresh request context.
@@ -185,6 +212,33 @@ mod tests {
     }
 
     #[test]
+    fn resolve_hierarchy_uses_request_line_when_station_missing() {
+        let request_context = ContextInput {
+            line_id: Some("line_yamanote".to_string()),
+            line_name: Some("JR Yamanote Line".to_string()),
+            area: Some(AreaContextInput {
+                prefecture_code: Some("13".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let resolved = ContextNormalizer::resolve_hierarchy(Some(&request_context), None);
+
+        assert_eq!(resolved.context_source, ContextSource::RequestLine);
+        assert_eq!(resolved.confidence, 0.90);
+        assert_eq!(
+            resolved
+                .line
+                .as_ref()
+                .and_then(|line| line.line_id.as_deref()),
+            Some("line_yamanote")
+        );
+        assert_eq!(resolved.line_name(), Some("JR Yamanote Line"));
+        assert_eq!(resolved.prefecture_code(), Some("13"));
+    }
+
+    #[test]
     fn resolve_hierarchy_uses_user_profile_when_no_request() {
         let user_area = AreaContextInput {
             prefecture_code: Some("01".to_string()),
@@ -195,7 +249,10 @@ mod tests {
 
         assert_eq!(resolved.context_source, ContextSource::UserProfileArea);
         assert_eq!(resolved.prefecture_code(), Some("01"));
-        assert_eq!(resolved.confidence, 0.60, "User profile should have lower confidence");
+        assert_eq!(
+            resolved.confidence, 0.60,
+            "User profile should have lower confidence"
+        );
     }
 
     #[test]
