@@ -42,14 +42,19 @@ Use this order when adding or adjusting a profile pack:
 
 5. Update example README files only when their role, request samples, or data
    inputs change. Update versioning or testing docs only when the profile
+  cargo run -p cli -- profile pack --id school-event-jp
    contract or validation workflow changes.
 
-Validation failures should be deterministic and local. Do not add OpenSearch,
+  `profile list`, `profile validate`, `profile inspect`, and `profile pack` reuse the same
 full mode, live crawler operation, managed infrastructure, runtime plugin ABI,
 or marketplace assumptions to the profile-author starting path.
 
 ## Contract
 
+
+  `profile pack` writes deterministic local artifacts under
+  `target/profile-packs` by default: `<profile_id>.tar.gz`,
+  `<profile_id>.manifest.json`, and `<profile_id>.sha256`.
 Each `profile.yaml` declares:
 
 - `schema_version`: profile pack document schema. The current generic boundary
