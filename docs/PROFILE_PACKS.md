@@ -42,19 +42,14 @@ Use this order when adding or adjusting a profile pack:
 
 5. Update example README files only when their role, request samples, or data
    inputs change. Update versioning or testing docs only when the profile
-  cargo run -p cli -- profile pack --id school-event-jp
    contract or validation workflow changes.
 
-  `profile list`, `profile validate`, `profile inspect`, and `profile pack` reuse the same
+Validation failures should be deterministic and local. Do not add OpenSearch,
 full mode, live crawler operation, managed infrastructure, runtime plugin ABI,
 or marketplace assumptions to the profile-author starting path.
 
 ## Contract
 
-
-  `profile pack` writes deterministic local artifacts under
-  `target/profile-packs` by default: `<profile_id>.tar.gz`,
-  `<profile_id>.manifest.json`, and `<profile_id>.sha256`.
 Each `profile.yaml` declares:
 
 - `schema_version`: profile pack document schema. The current generic boundary
@@ -199,14 +194,20 @@ cargo run -p cli -- doctor storage-compatibility
 
 Use that command when reviewing storage/cache/index support levels. Use
 `profile validate`, `doctor profile-pack`, or `doctor ranking-config` when
+cargo run -p cli -- profile pack --id school-event-jp
 reviewing profile compatibility levels.
 
-```bash
+`profile list`, `profile validate`, `profile inspect`, and `profile pack` reuse
+the same
 cargo run -p cli -- config lint
 ```
 
 Use the profile CLI when you only need the profile-pack surface:
 
+
+`profile pack` writes deterministic local artifacts under
+`target/profile-packs` by default: `<profile_id>.tar.gz`,
+`<profile_id>.manifest.json`, and `<profile_id>.sha256`.
 ```bash
 cargo run -p cli -- profile list
 cargo run -p cli -- profile validate

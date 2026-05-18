@@ -2043,7 +2043,8 @@ fn package_profile_pack(
     );
 
     let entries = collect_profile_pack_archive_entries(profile_manifest_path)?;
-    let archive_path = out_dir.join(format!("{profile_id}.tar.gz"));
+    let archive_name = format!("{profile_id}.tar.gz");
+    let archive_path = out_dir.join(&archive_name);
     write_profile_pack_archive(&archive_path, &entries)?;
 
     let archive_raw = fs::read(&archive_path)
@@ -2056,8 +2057,17 @@ fn package_profile_pack(
         schema_version: 1,
         kind: "profile_pack_artifact_manifest".to_string(),
         profile_id: profile_id.to_string(),
-        source_manifest_path: profile_manifest_path.display().to_string(),
-        archive_path: archive_path.display().to_string(),
+        source_manifest_path: profile_manifest_path
+            .strip_prefix(profile_dir)
+            .with_context(|| {
+                format!(
+                    "failed to derive deterministic source manifest path for {}",
+                    profile_manifest_path.display()
+                )
+            })?
+            .to_string_lossy()
+            .replace('\\', "/"),
+        archive_path: archive_name.clone(),
         archive_checksum_sha256: archive_checksum_sha256.clone(),
         entries: entries
             .iter()
@@ -2079,10 +2089,6 @@ fn package_profile_pack(
             manifest_path.display()
         )
     })?;
-    let archive_name = archive_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("archive path is missing a valid file name")?;
     fs::write(
         &checksum_path,
         format!("{}  {}\n", archive_checksum_sha256, archive_name),
@@ -2590,6 +2596,8 @@ fallback_ladder:
         let manifest_json: serde_json::Value =
             serde_json::from_slice(&manifest_raw).expect("manifest json");
         assert_eq!(manifest_json["profile_id"], "school-event-jp");
+        assert_eq!(manifest_json["source_manifest_path"], "profile.yaml");
+        assert_eq!(manifest_json["archive_path"], "school-event-jp.tar.gz");
         assert_eq!(manifest_json["entries"].as_array().map(Vec::len), Some(2));
 
         let checksum = fs::read_to_string(&summary.checksum_path).expect("checksum file");
