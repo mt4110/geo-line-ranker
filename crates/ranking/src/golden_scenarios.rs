@@ -82,7 +82,7 @@ impl GoldenScenario {
             }),
             user_profile_area: None,
             expected_min_confidence: 0.6,
-            forbidden_prefectures: vec!["47", "02", "37"], // No Okinawa, Aomori, Fukuoka
+            forbidden_prefectures: vec!["47", "02", "40"], // No Okinawa, Aomori, Fukuoka
         }
     }
 
