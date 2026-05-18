@@ -1,3 +1,7 @@
+mod normalizer;
+
+pub use normalizer::ContextNormalizer;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -130,9 +134,54 @@ impl RankingContext {
             .and_then(|area| area.prefecture_name.as_deref())
     }
 
+    pub fn prefecture_code(&self) -> Option<&str> {
+        self.area
+            .as_ref()
+            .and_then(|area| area.prefecture_code.as_deref())
+    }
+
     pub fn evidence_summary(&self) -> ContextEvidenceSummary {
         ContextEvidenceSummary::from_context_source(&self.context_source, self.confidence)
     }
+}
+
+/// Individual context evidence contributing to resolution.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct ContextEvidence {
+    pub kind: ContextEvidenceKind,
+    pub strength: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub age_hours: Option<f64>,
+}
+
+impl ContextEvidence {
+    pub fn new(kind: ContextEvidenceKind, strength: f64) -> Self {
+        Self {
+            kind,
+            strength,
+            age_hours: None,
+        }
+    }
+
+    pub fn with_age(kind: ContextEvidenceKind, strength: f64, age_hours: f64) -> Self {
+        Self {
+            kind,
+            strength,
+            age_hours: Some(age_hours),
+        }
+    }
+}
+
+/// Full context resolution trace for debugging and validation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct ContextResolutionTrace {
+    pub resolved_context: Option<RankingContext>,
+    pub evidence_chain: Vec<ContextEvidence>,
+    pub chosen_source: Option<ContextSource>,
+    #[serde(default)]
+    pub resolution_notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
