@@ -57,6 +57,7 @@ impl GeoGraph {
             ("17", vec!["16", "18", "22"]),       // Toyama - Niigata, Nagano, Aichi
             ("18", vec!["16", "17", "19", "06"]), // Nagano - Niigata, Toyama, Yamanashi, Yamagata
             ("19", vec!["13", "15", "18", "22"]), // Yamanashi - Tokyo, Shizuoka, Nagano, Aichi
+            ("20", vec!["16", "17", "19", "06"]), // Nagano (canonical JIS) - mirrors legacy 18 mapping
             ("21", vec!["22", "24"]),             // Gifu - Aichi, Kyoto
             ("22", vec!["15", "17", "19", "21", "23"]), // Aichi - Shizuoka, Toyama, Yamanashi, Gifu, Mie
             ("23", vec!["15", "22", "24"]),             // Mie - Shizuoka, Aichi, Kyoto
@@ -106,9 +107,19 @@ impl GeoGraph {
 
     /// Checks if two prefectures are adjacent.
     pub fn are_adjacent(&self, code1: &str, code2: &str) -> bool {
-        self.adjacent_prefectures
+        let forward = self
+            .adjacent_prefectures
             .get(code1)
-            .map(|codes| codes.contains(&code2.to_string()))
+            .map(|codes| codes.iter().any(|code| code == code2))
+            .unwrap_or(false);
+
+        if forward {
+            return true;
+        }
+
+        self.adjacent_prefectures
+            .get(code2)
+            .map(|codes| codes.iter().any(|code| code == code1))
             .unwrap_or(false)
     }
 }
@@ -148,5 +159,21 @@ mod tests {
         assert!(neighbors.contains(&"11")); // Saitama
         assert!(neighbors.contains(&"12")); // Chiba
         assert!(neighbors.contains(&"14")); // Kanagawa
+    }
+
+    #[test]
+    fn canonical_nagano_code_has_neighbors() {
+        let graph = GeoGraph::new();
+        let neighbors = graph.adjacent_prefectures("20");
+        assert!(!neighbors.is_empty());
+    }
+
+    #[test]
+    fn adjacency_is_order_independent() {
+        let graph = GeoGraph::new();
+        assert_eq!(
+            graph.are_adjacent("29", "30"),
+            graph.are_adjacent("30", "29")
+        );
     }
 }
