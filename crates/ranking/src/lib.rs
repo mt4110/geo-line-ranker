@@ -1445,4 +1445,414 @@ mod tests {
             .filter(|component| component.feature == "user_affinity_bonus")
             .all(|component| component.details.is_some()));
     }
+
+    // --- Golden scenario acceptance tests ---
+    // These tests wire the GoldenScenario specifications defined in golden_scenarios.rs
+    // into the ranking engine, validating that geo-first constraints hold end-to-end.
+
+    #[test]
+    fn golden_scenario_hokkaido_tokyo_does_not_return_okinawa_acceptance() {
+        let scenario = crate::golden_scenarios::GoldenScenario::hokkaido_tokyo_no_okinawa();
+
+        // Two Tokyo schools directly at Tamachi (hop=0) satisfy strict_min_candidates=2;
+        // one Okinawa school at a remote station can only appear via SafeGlobalPopular.
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "gs_tokyo_a".to_string(),
+                    name: "Tokyo School A".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_gs_tokyo_a".to_string(),
+                },
+                School {
+                    id: "gs_tokyo_b".to_string(),
+                    name: "Tokyo School B".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_gs_tokyo_b".to_string(),
+                },
+                School {
+                    id: "gs_okinawa".to_string(),
+                    name: "Okinawa School".to_string(),
+                    area: "Naha".to_string(),
+                    prefecture_name: Some("Okinawa".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_gs_okinawa".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_tamachi".to_string(),
+                    name: "Tamachi".to_string(),
+                    line_name: "JR Yamanote Line".to_string(),
+                    line_id: Some("line_jr_yamanote".to_string()),
+                    area_id: None,
+                    latitude: 35.6457,
+                    longitude: 139.7476,
+                },
+                Station {
+                    id: "st_naha_omoromachi".to_string(),
+                    name: "Omoromachi".to_string(),
+                    line_name: "Yui Rail".to_string(),
+                    line_id: None,
+                    area_id: None,
+                    latitude: 26.22,
+                    longitude: 127.71,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "gs_tokyo_a".to_string(),
+                    station_id: "st_tamachi".to_string(),
+                    walking_minutes: 3,
+                    distance_meters: 250,
+                    hop_distance: 0,
+                    line_name: "JR Yamanote Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "gs_tokyo_b".to_string(),
+                    station_id: "st_tamachi".to_string(),
+                    walking_minutes: 5,
+                    distance_meters: 450,
+                    hop_distance: 0,
+                    line_name: "JR Yamanote Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "gs_okinawa".to_string(),
+                    station_id: "st_naha_omoromachi".to_string(),
+                    walking_minutes: 4,
+                    distance_meters: 350,
+                    hop_distance: 0,
+                    line_name: "Yui Rail".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+
+        // Default strict_min_candidates=2; Tokyo has 2 direct matches → StrictStation selected.
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "golden-hokkaido-tokyo");
+        let result = engine
+            .recommend(
+                &dataset,
+                &query(
+                    scenario
+                        .request_station_id
+                        .expect("scenario has station id"),
+                    PlacementKind::Search,
+                ),
+            )
+            .expect("recommendation result");
+
+        assert_eq!(
+            result.fallback_stage,
+            FallbackStage::StrictStation,
+            "scenario '{}': must not fall back past StrictStation when Tokyo has sufficient direct candidates",
+            scenario.name
+        );
+        let forbidden_ids: Vec<&str> = dataset
+            .schools
+            .iter()
+            .filter(|s| s.prefecture_name.as_deref() == Some("Okinawa"))
+            .map(|s| s.id.as_str())
+            .collect();
+        for item in &result.items {
+            assert!(
+                !forbidden_ids.contains(&item.school_id.as_str()),
+                "scenario '{}': forbidden school '{}' (Okinawa/pref47) must not appear in results",
+                scenario.name,
+                item.school_id
+            );
+        }
+    }
+
+    #[test]
+    fn golden_scenario_area_only_does_not_jump_to_remote_prefectures_acceptance() {
+        let scenario = crate::golden_scenarios::GoldenScenario::area_only_no_remote_jump();
+
+        // Fixture dataset has Minato/Tokyo schools that satisfy SameCity threshold.
+        // Append schools from the forbidden prefectures so the engine has them as candidates;
+        // they must stay invisible because SameCity is sufficient.
+        let mut dataset = load_fixture_dataset(fixture_root()).expect("fixture dataset");
+        dataset.schools.extend([
+            School {
+                id: "gs_forbidden_okinawa".to_string(),
+                name: "Okinawa Far School".to_string(),
+                area: "Naha".to_string(),
+                prefecture_name: Some("Okinawa".to_string()),
+                school_type: "high_school".to_string(),
+                group_id: "group_gs_forbidden_okinawa".to_string(),
+            },
+            School {
+                id: "gs_forbidden_aomori".to_string(),
+                name: "Aomori Far School".to_string(),
+                area: "Aomori".to_string(),
+                prefecture_name: Some("Aomori".to_string()),
+                school_type: "high_school".to_string(),
+                group_id: "group_gs_forbidden_aomori".to_string(),
+            },
+            School {
+                id: "gs_forbidden_fukuoka".to_string(),
+                name: "Fukuoka Far School".to_string(),
+                area: "Fukuoka".to_string(),
+                prefecture_name: Some("Fukuoka".to_string()),
+                school_type: "high_school".to_string(),
+                group_id: "group_gs_forbidden_fukuoka".to_string(),
+            },
+        ]);
+        dataset.stations.extend([
+            Station {
+                id: "st_naha_far".to_string(),
+                name: "Naha Airport".to_string(),
+                line_name: "Yui Rail".to_string(),
+                line_id: None,
+                area_id: None,
+                latitude: 26.19,
+                longitude: 127.65,
+            },
+            Station {
+                id: "st_aomori_far".to_string(),
+                name: "Aomori".to_string(),
+                line_name: "JR Tohoku".to_string(),
+                line_id: None,
+                area_id: None,
+                latitude: 40.82,
+                longitude: 140.75,
+            },
+            Station {
+                id: "st_fukuoka_far".to_string(),
+                name: "Hakata".to_string(),
+                line_name: "JR Sanyo".to_string(),
+                line_id: None,
+                area_id: None,
+                latitude: 33.59,
+                longitude: 130.42,
+            },
+        ]);
+        dataset.school_station_links.extend([
+            SchoolStationLink {
+                school_id: "gs_forbidden_okinawa".to_string(),
+                station_id: "st_naha_far".to_string(),
+                walking_minutes: 5,
+                distance_meters: 400,
+                hop_distance: 0,
+                line_name: "Yui Rail".to_string(),
+            },
+            SchoolStationLink {
+                school_id: "gs_forbidden_aomori".to_string(),
+                station_id: "st_aomori_far".to_string(),
+                walking_minutes: 5,
+                distance_meters: 400,
+                hop_distance: 0,
+                line_name: "JR Tohoku".to_string(),
+            },
+            SchoolStationLink {
+                school_id: "gs_forbidden_fukuoka".to_string(),
+                station_id: "st_fukuoka_far".to_string(),
+                walking_minutes: 5,
+                distance_meters: 400,
+                hop_distance: 0,
+                line_name: "JR Sanyo".to_string(),
+            },
+        ]);
+
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        let engine = RankingEngine::new(profiles, "golden-area-only");
+        let mut q = query("st_tamachi", PlacementKind::Search);
+        q.context = Some(request_area_context(Some("Minato"), Some("Tokyo")));
+
+        let result = engine
+            .recommend(&dataset, &q)
+            .expect("recommendation result");
+
+        assert_eq!(
+            result.fallback_stage,
+            FallbackStage::SameCity,
+            "scenario '{}': area-only city context must resolve to SameCity when Minato has sufficient candidates",
+            scenario.name
+        );
+        let forbidden_ids: Vec<&str> = dataset
+            .schools
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.prefecture_name.as_deref(),
+                    Some("Okinawa") | Some("Aomori") | Some("Fukuoka")
+                )
+            })
+            .map(|s| s.id.as_str())
+            .collect();
+        for item in &result.items {
+            assert!(
+                !forbidden_ids.contains(&item.school_id.as_str()),
+                "scenario '{}': forbidden school '{}' must not appear when SameCity has sufficient candidates",
+                scenario.name,
+                item.school_id
+            );
+        }
+    }
+
+    #[test]
+    fn golden_scenario_line_identity_preserved_acceptance() {
+        let scenario = crate::golden_scenarios::GoldenScenario::line_identity_preserved();
+
+        let line_id = scenario
+            .request_line_id
+            .expect("line_identity scenario must have request_line_id");
+        let line_name = scenario
+            .request_line_name
+            .expect("line_identity scenario must have request_line_name");
+
+        // The scenario specifies request_station_id: None (pure line-only request).
+        // RankingQuery always requires a target_station_id, so we pass "st_tamachi" as
+        // the query anchor — but no schools are linked to st_tamachi at hop_distance=0,
+        // so StrictStation returns 0 candidates and SameLine takes over, as intended.
+        // This matches the scenario's intent: line context must drive fallback selection.
+        let dataset = RankingDataset {
+            schools: vec![
+                School {
+                    id: "gs_yamanote_a".to_string(),
+                    name: "Yamanote School A".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_yamanote_a".to_string(),
+                },
+                School {
+                    id: "gs_yamanote_b".to_string(),
+                    name: "Yamanote School B".to_string(),
+                    area: "Minato".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_yamanote_b".to_string(),
+                },
+                School {
+                    id: "gs_chuo_line".to_string(),
+                    name: "Chuo Line School".to_string(),
+                    area: "Chuo".to_string(),
+                    prefecture_name: Some("Tokyo".to_string()),
+                    school_type: "high_school".to_string(),
+                    group_id: "group_chuo_line".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            stations: vec![
+                Station {
+                    id: "st_tamachi".to_string(),
+                    name: "Tamachi".to_string(),
+                    line_name: "JR Yamanote Line".to_string(),
+                    line_id: Some(line_id.to_string()),
+                    area_id: None,
+                    latitude: 35.6457,
+                    longitude: 139.7476,
+                },
+                Station {
+                    id: "st_shinbashi_yamanote".to_string(),
+                    name: "Shinbashi".to_string(),
+                    line_name: "JR Yamanote Line".to_string(),
+                    line_id: Some(line_id.to_string()),
+                    area_id: None,
+                    latitude: 35.6659,
+                    longitude: 139.7580,
+                },
+                Station {
+                    id: "st_akihabara_chuo".to_string(),
+                    name: "Akihabara".to_string(),
+                    line_name: "JR Chuo Line".to_string(),
+                    line_id: Some("line_jr_chuo".to_string()),
+                    area_id: None,
+                    latitude: 35.6984,
+                    longitude: 139.7731,
+                },
+            ],
+            school_station_links: vec![
+                SchoolStationLink {
+                    school_id: "gs_yamanote_a".to_string(),
+                    station_id: "st_shinbashi_yamanote".to_string(),
+                    walking_minutes: 5,
+                    distance_meters: 400,
+                    hop_distance: 1,
+                    line_name: "JR Yamanote Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "gs_yamanote_b".to_string(),
+                    station_id: "st_shinbashi_yamanote".to_string(),
+                    walking_minutes: 7,
+                    distance_meters: 600,
+                    hop_distance: 1,
+                    line_name: "JR Yamanote Line".to_string(),
+                },
+                SchoolStationLink {
+                    school_id: "gs_chuo_line".to_string(),
+                    station_id: "st_akihabara_chuo".to_string(),
+                    walking_minutes: 4,
+                    distance_meters: 350,
+                    hop_distance: 1,
+                    line_name: "JR Chuo Line".to_string(),
+                },
+            ],
+            popularity_snapshots: Vec::new(),
+            user_affinity_snapshots: Vec::new(),
+            area_affinity_snapshots: Vec::new(),
+        };
+
+        // No schools at hop=0 → StrictStation gets 0 candidates.
+        // SameLine (Yamanote) gets 2 candidates (≥ default min_results=2) → SameLine selected.
+        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
+        profiles.schools.strict_min_candidates = 1;
+        let engine = RankingEngine::new(profiles, "golden-line-identity");
+
+        let mut q = query("st_tamachi", PlacementKind::Search);
+        q.context = Some(RankingContext {
+            context_source: ContextSource::RequestLine,
+            confidence: 0.95,
+            area: None,
+            line: Some(LineContext {
+                line_id: Some(line_id.to_string()),
+                line_name: line_name.to_string(),
+                operator_name: None,
+            }),
+            station: None,
+            privacy_level: PrivacyLevel::CoarseArea,
+            fallback_policy: "school_event_jp_default".to_string(),
+            gate_policy: "geo_line_default".to_string(),
+            warnings: Vec::new(),
+        });
+
+        let result = engine
+            .recommend(&dataset, &q)
+            .expect("recommendation result");
+
+        assert_eq!(
+            result.fallback_stage,
+            FallbackStage::SameLine,
+            "scenario '{}': line context must resolve to SameLine stage, preserving line intent",
+            scenario.name
+        );
+        let yamanote_ids: Vec<&str> = dataset
+            .schools
+            .iter()
+            .filter(|s| s.id.starts_with("gs_yamanote_"))
+            .map(|s| s.id.as_str())
+            .collect();
+        for item in &result.items {
+            assert!(
+                yamanote_ids.contains(&item.school_id.as_str()),
+                "scenario '{}': non-Yamanote school '{}' appeared in results; line identity must be preserved",
+                scenario.name,
+                item.school_id
+            );
+            assert_eq!(
+                item.line_name, "JR Yamanote Line",
+                "scenario '{}': item '{}' has line_name='{}', expected 'JR Yamanote Line'",
+                scenario.name, item.school_id, item.line_name
+            );
+        }
+    }
 }
