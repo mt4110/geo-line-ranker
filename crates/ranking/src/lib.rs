@@ -199,8 +199,7 @@ mod tests {
     use config::RankingProfiles;
     use context::{
         AreaContext, ContextInput, ContextNormalizer, ContextSource, ContextWarning, LineContext,
-        PrivacyLevel, RankingContext,
-        StationContext,
+        PrivacyLevel, RankingContext, StationContext,
     };
     use domain::{
         CandidatePlanStageStatus, FallbackStage, PlacementKind, PopularitySnapshot, RankingDataset,
@@ -1685,8 +1684,15 @@ mod tests {
 
         let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
         let engine = RankingEngine::new(profiles, "golden-area-only");
+        let request_context = ContextInput {
+            area: scenario.request_area.clone(),
+            ..Default::default()
+        };
         let mut q = query("st_tamachi", PlacementKind::Search);
-        q.context = Some(request_area_context(Some("Minato"), Some("Tokyo")));
+        q.context = Some(ContextNormalizer::resolve_hierarchy(
+            Some(&request_context),
+            scenario.user_profile_area.as_ref(),
+        ));
 
         let result = engine
             .recommend(&dataset, &q)
@@ -1828,22 +1834,16 @@ mod tests {
         let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
         let engine = RankingEngine::new(profiles, "golden-line-identity");
 
+        let request_context = ContextInput {
+            line_id: Some(line_id.to_string()),
+            line_name: Some(line_name.to_string()),
+            ..Default::default()
+        };
         let mut q = query("st_akihabara_chuo", PlacementKind::Search);
-        q.context = Some(RankingContext {
-            context_source: ContextSource::RequestLine,
-            confidence: 0.95,
-            area: None,
-            line: Some(LineContext {
-                line_id: Some(line_id.to_string()),
-                line_name: line_name.to_string(),
-                operator_name: None,
-            }),
-            station: None,
-            privacy_level: PrivacyLevel::CoarseArea,
-            fallback_policy: "school_event_jp_default".to_string(),
-            gate_policy: "geo_line_default".to_string(),
-            warnings: Vec::new(),
-        });
+        q.context = Some(ContextNormalizer::resolve_hierarchy(
+            Some(&request_context),
+            None,
+        ));
 
         let result = engine
             .recommend(&dataset, &q)
