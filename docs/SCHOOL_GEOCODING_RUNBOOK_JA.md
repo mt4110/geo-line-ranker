@@ -11,18 +11,17 @@
 
 ## 1. 最短起動導線（納品先向け）
 
-リポジトリ root で実行（`just dev` は起動後に前面で動き続けるため、`just smoke` は別ターミナルで実行）:
+リポジトリ root で実行（`just dev` は常駐するため、先に `just smoke` を実行）:
 
 ```bash
-# ターミナル1
 just setup
-just dev
-
-# ターミナル2
 just smoke
+
+# terminal A（常駐）
+just dev
 ```
 
-最低受け入れ確認:
+最低受け入れ確認（別ターミナル）:
 
 ```bash
 curl -X POST http://127.0.0.1:4000/v1/recommendations \
