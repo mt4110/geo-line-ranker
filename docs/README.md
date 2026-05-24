@@ -44,6 +44,7 @@ Run these from the repository root after reading the first-run path:
 | Task | Start here | Then check |
 |---|---|---|
 | Run the baseline locally | [First 15 Minutes](FIRST_15_MINUTES.md), then `just setup` and `just dev` | [Quickstart](QUICKSTART.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
+| Geocode school addresses without external APIs for ZIP handoff | [School Geocoding RunBook (JA)](SCHOOL_GEOCODING_RUNBOOK_JA.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md) |
 | Make a bounded code change | [Local Contributing Guide](CONTRIBUTING_LOCAL.md), then `just smoke` | [Testing](TESTING.md), [Architecture](ARCHITECTURE.md) |
 | Check docs routing | `just docs` | [First 15 Minutes](FIRST_15_MINUTES.md), [Quickstart](QUICKSTART.md), [Testing](TESTING.md) |
 | Check SDK or frontend build health | `just ts-sdk-check` or `just frontend-smoke` | [Testing](TESTING.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md) |
@@ -111,6 +112,8 @@ workspace easy to verify, but they do not change the fixed public-MVP boundary.
 
 - [Operations](OPERATIONS.md): service operation, profiles, replay evaluation,
   worker recovery, imports, crawler notes, and Docker notes.
+- [School Geocoding RunBook (JA)](SCHOOL_GEOCODING_RUNBOOK_JA.md): external API-free
+  school address geocoding handoff flow for Rust backend operators.
 - [MVP Acceptance](MVP_ACCEPTANCE.md): fixed SQL-only public-MVP gate.
 - [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md): read-only
   intake-to-inventory handoff for optional evidence review and closeout.
