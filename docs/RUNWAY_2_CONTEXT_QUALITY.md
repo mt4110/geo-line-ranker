@@ -187,7 +187,7 @@ Trade-off: Canonical borders are simplified; real routes may differ.
 
 ### 4. Lazy GoldenScenario Implementation
 Scenarios defined and wired into ranking engine acceptance tests. All three scenarios validate
-geo-first constraints against an inline dataset via `RankingEngine::recommend`.
+geo-first constraints against an in-memory dataset (inline or fixture) via `RankingEngine::recommend`.
 
 ---
 

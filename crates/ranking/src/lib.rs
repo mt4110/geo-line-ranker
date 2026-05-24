@@ -1710,10 +1710,10 @@ mod tests {
             .expect("line_identity scenario must have request_line_name");
 
         // The scenario specifies request_station_id: None (pure line-only request).
-        // RankingQuery always requires a target_station_id, so we pass "st_tamachi" as
-        // the query anchor — but no schools are linked to st_tamachi at hop_distance=0,
-        // so StrictStation returns 0 candidates and SameLine takes over, as intended.
-        // This matches the scenario's intent: line context must drive fallback selection.
+        // RankingQuery always requires a target_station_id, so this test must use
+        // an anchor station that does NOT imply the requested line. Using a
+        // different-line anchor ensures the test fails if the engine accidentally
+        // derives line intent from the anchor station instead of q.context.line.
         let dataset = RankingDataset {
             schools: vec![
                 School {
@@ -1804,11 +1804,10 @@ mod tests {
 
         // No schools at hop=0 → StrictStation gets 0 candidates.
         // SameLine (Yamanote) gets 2 candidates (≥ default min_results=2) → SameLine selected.
-        let mut profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
-        profiles.schools.strict_min_candidates = 1;
+        let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
         let engine = RankingEngine::new(profiles, "golden-line-identity");
 
-        let mut q = query("st_tamachi", PlacementKind::Search);
+        let mut q = query("st_akihabara_chuo", PlacementKind::Search);
         q.context = Some(RankingContext {
             context_source: ContextSource::RequestLine,
             confidence: 0.95,
