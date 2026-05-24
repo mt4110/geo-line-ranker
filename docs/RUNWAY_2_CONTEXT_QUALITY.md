@@ -186,7 +186,8 @@ Why: Prevents unlikely fallback jumps (e.g., Tokyo → Okinawa).
 Trade-off: Canonical borders are simplified; real routes may differ.
 
 ### 4. Lazy GoldenScenario Implementation
-Scenarios defined but not yet integrated into CI. Next step: wire into ranking engine tests.
+Scenarios defined and wired into ranking engine acceptance tests. All three scenarios validate
+geo-first constraints against an in-memory dataset (inline or fixture) via `RankingEngine::recommend`.
 
 ---
 
@@ -194,18 +195,18 @@ Scenarios defined but not yet integrated into CI. Next step: wire into ranking e
 
 ### Phase 2: Candidate Plan Execution
 - [ ] Integrate `GeoGraph` into fallback ladder
-- [ ] Implement candidate plan stages (strict_station, same_line, same_city, same_prefecture, neighbor_area, safe_global_popular)
-- [ ] Wire golden scenarios into acceptance test harness
+- [x] Implement candidate plan stages (strict_station, same_line, same_city, same_prefecture, neighbor_area, safe_global_popular)
+- [x] Wire golden scenarios into acceptance test harness
 
 ### Phase 3: Session & Profile Context
-- [ ] Add `search_execute` context evidence to trace
+- [x] Add `search_execute` context evidence to trace
 - [ ] Implement session behavior resolver
-- [ ] Add user profile coarse location loading
+- [x] Add user profile coarse location loading
 
 ### Phase 4: Context Resolution Endpoint (Optional)
-- [ ] Add `POST /v1/context/resolve` CLI equivalent
-- [ ] Return `ContextResolutionTrace` for debugging
-- [ ] Document context priority order
+- [x] Add `POST /v1/context/resolve` CLI equivalent
+- [x] Return `ContextResolutionTrace` for debugging
+- [x] Document context priority order
 
 ---
 
