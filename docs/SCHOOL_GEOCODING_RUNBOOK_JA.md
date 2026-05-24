@@ -11,11 +11,14 @@
 
 ## 1. 最短起動導線（納品先向け）
 
-リポジトリ root で実行:
+リポジトリ root で実行（`just dev` は起動後に前面で動き続けるため、`just smoke` は別ターミナルで実行）:
 
 ```bash
+# ターミナル1
 just setup
 just dev
+
+# ターミナル2
 just smoke
 ```
 
