@@ -198,7 +198,8 @@ impl Default for ReasonCatalog {
 mod tests {
     use config::RankingProfiles;
     use context::{
-        AreaContext, ContextSource, ContextWarning, LineContext, PrivacyLevel, RankingContext,
+        AreaContext, ContextInput, ContextNormalizer, ContextSource, ContextWarning, LineContext,
+        PrivacyLevel, RankingContext,
         StationContext,
     };
     use domain::{
@@ -1538,18 +1539,38 @@ mod tests {
         // Default strict_min_candidates=2; Tokyo has 2 direct matches → StrictStation selected.
         let profiles = RankingProfiles::load_from_dir(config_root()).expect("profiles");
         let engine = RankingEngine::new(profiles, "golden-hokkaido-tokyo");
+        let request_context = ContextInput {
+            station_id: scenario.request_station_id.map(str::to_string),
+            area: scenario.request_area.clone(),
+            ..Default::default()
+        };
+        let mut q = query(
+            scenario
+                .request_station_id
+                .expect("scenario has station id"),
+            PlacementKind::Search,
+        );
+        q.context = Some(ContextNormalizer::resolve_hierarchy(
+            Some(&request_context),
+            scenario.user_profile_area.as_ref(),
+        ));
+        let resolved_context = q.context.as_ref().expect("resolved scenario context");
         let result = engine
-            .recommend(
-                &dataset,
-                &query(
-                    scenario
-                        .request_station_id
-                        .expect("scenario has station id"),
-                    PlacementKind::Search,
-                ),
-            )
+            .recommend(&dataset, &q)
             .expect("recommendation result");
 
+        assert_eq!(
+            resolved_context.context_source,
+            ContextSource::RequestStation,
+            "scenario '{}': station request should remain top-priority context source",
+            scenario.name
+        );
+        assert_eq!(
+            resolved_context.prefecture_code(),
+            Some("13"),
+            "scenario '{}': resolved context should retain Tokyo request-area metadata",
+            scenario.name
+        );
         assert_eq!(
             result.fallback_stage,
             FallbackStage::StrictStation,
