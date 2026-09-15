@@ -1,7 +1,7 @@
 # Portfolio Demo
 
 This is the M1/M2 demo pack for showing `geo-line-ranker` as an explainable
-school event and local discovery ranking engine. It keeps the existing
+school/event and local discovery ranking engine. It keeps the existing
 public-MVP boundary: SQL-only candidate retrieval, `event-csv` operational
 content, PostgreSQL/PostGIS, Redis as cache only, no AI/ML/vector search, and
 no required live crawler.
@@ -15,25 +15,40 @@ Show one deterministic story:
 3. The response explains the ranking with stable reason codes.
 4. Placement changes the mix or order without changing the profile version.
 
-Use the maintained JP reference profile:
+Use the default runnable profile and fixture set:
 
-- profile manifest: `configs/profiles/school-event-jp/profile.yaml`
-- reason catalog: `configs/profiles/school-event-jp/reasons.yaml`
+- profile manifest: `configs/profiles/local-discovery-generic/profile.yaml`
+- reason catalog: `configs/profiles/local-discovery-generic/reasons.yaml`
 - default small fixture: `storage/fixtures/minimal/`
 - portfolio-oriented request samples: `examples/school-event-jp/requests/`
 
+The `school-event-jp` profile pack remains the maintained JP adapter reference,
+but the command path below intentionally uses the default profile from
+`.env.example` so a clean checkout demonstrates the same profile and fixture
+that `just setup` prepares.
+
 ## Start The Demo
 
-Use the same narrow path as [First 15 Minutes](FIRST_15_MINUTES.md):
+Use the same narrow path as [First 15 Minutes](FIRST_15_MINUTES.md).
 
 ```bash
+# terminal A: one-time setup
 just setup
+```
+
+Then start the long-running worker/API loop:
+
+```bash
+# terminal B: keep running while you try the demo requests
 just dev
 ```
 
-If you want the manual form, use the commands in
-[Quickstart](QUICKSTART.md). Do not add OpenSearch, full mode, live crawler
-operation, or managed infrastructure for this demo.
+`just dev` stays in the foreground until you press `Ctrl-C`. Run the request
+commands below from a separate terminal while terminal B is running.
+
+If you want the manual setup form, use the commands in [Quickstart](QUICKSTART.md).
+Do not add OpenSearch, full mode, live crawler operation, or managed
+infrastructure for this demo.
 
 ## Three Requests
 
@@ -43,6 +58,7 @@ This is the fixed first demo anchor. It should remain easy to remember and easy
 to inspect in fixtures because `st_tamachi` has direct school links.
 
 ```bash
+# terminal C: send demo requests while `just dev` is running
 curl -X POST http://127.0.0.1:4000/v1/recommendations \
   -H "content-type: application/json" \
   -d @examples/school-event-jp/requests/station.request.json
@@ -93,6 +109,7 @@ This shows that the same engine can recommend from a route-level intent without
 hardcoding one school.
 
 ```bash
+# terminal C
 curl -X POST http://127.0.0.1:4000/v1/recommendations \
   -H "content-type: application/json" \
   -d @examples/school-event-jp/requests/line.request.json
@@ -112,6 +129,7 @@ This shows area-first discovery when a visitor knows the neighborhood but not a
 specific station.
 
 ```bash
+# terminal C
 curl -X POST http://127.0.0.1:4000/v1/recommendations \
   -H "content-type: application/json" \
   -d @examples/school-event-jp/requests/area.request.json
@@ -172,8 +190,7 @@ It deliberately does not prove:
 
 Those are covered by separate evidence:
 
-- `cargo run -p cli -- eval golden --profile-id school-event-jp` for DB-free
-  ranking scenario coverage
+- `cargo run -p cli -- eval golden` for DB-free ranking scenario coverage
 - `DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` for strict
   release evidence
 - `just release-readiness` for the M3 release-candidate command plan

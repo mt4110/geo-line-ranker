@@ -112,7 +112,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 次に読む docs:
 
 - [First 15 Minutes](docs/FIRST_15_MINUTES.md): 初回 contributor / operator 向けの読む順、起動順、sample inspection、touch map
-- [Portfolio Demo](docs/PORTFOLIO_DEMO.md): `school-event-jp` を主役にした学校イベント推薦の3リクエスト demo pack
+- [Portfolio Demo](docs/PORTFOLIO_DEMO.md): default profile で動く学校/event推薦の3リクエスト demo pack
 - [Quickstart](docs/QUICKSTART.md): 初回運用者向けの順序つき local runbook
 - [MVP Acceptance](docs/MVP_ACCEPTANCE.md): 固定 public-MVP gate
 - [Operations](docs/OPERATIONS.md): worker jobs、replay、doctor、運用確認
