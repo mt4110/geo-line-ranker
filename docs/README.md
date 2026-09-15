@@ -10,6 +10,7 @@ audience and task. For the actual first-run sequence, use
 |---|---|
 | [Project README](../README.md) | First impression, project principles, shortest local path, and the first success state. |
 | [First 15 Minutes](FIRST_15_MINUTES.md) | The first reading path, baseline commands, default sample inspection, fixed-vs-optional boundary, and touch map. |
+| [Portfolio Demo](PORTFOLIO_DEMO.md) | Three-request default-profile story for showing station, line, and area-driven school/event ranking. |
 | This index | Choosing the next document by audience or by task after the first-run guide. |
 | [Quickstart](QUICKSTART.md) | Command-by-command local runbook for the SQL-only public-MVP path and optional follow-on paths. |
 
@@ -44,6 +45,7 @@ Run these from the repository root after reading the first-run path:
 | Task | Start here | Then check |
 |---|---|---|
 | Run the baseline locally | [First 15 Minutes](FIRST_15_MINUTES.md), then `just setup` and `just dev` | [Quickstart](QUICKSTART.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
+| Show the portfolio demo | [Portfolio Demo](PORTFOLIO_DEMO.md) | [Local Discovery Generic](../examples/local-discovery-generic/README.md), [Reason Catalog](REASON_CATALOG.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
 | Geocode school addresses without external APIs for ZIP handoff | [School Geocoding RunBook (JA)](SCHOOL_GEOCODING_RUNBOOK_JA.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md) |
 | Make a bounded code change | [Local Contributing Guide](CONTRIBUTING_LOCAL.md), then `just smoke` | [Testing](TESTING.md), [Architecture](ARCHITECTURE.md) |
 | Check docs routing | `just docs` | [First 15 Minutes](FIRST_15_MINUTES.md), [Quickstart](QUICKSTART.md), [Testing](TESTING.md) |
@@ -84,6 +86,9 @@ workspace easy to verify, but they do not change the fixed public-MVP boundary.
 
 - [Quickstart](QUICKSTART.md): first-time SQL-only loop, default sample, and
   demo commands.
+- [Portfolio Demo](PORTFOLIO_DEMO.md): the demo-ready default-profile story,
+  request set, expected ranking differences, reason-code reading guide, and
+  E2E evidence boundary.
 - [Local Contributing Guide](CONTRIBUTING_LOCAL.md): validation commands,
   database modes, and contributor workflow.
 - [Testing](TESTING.md): unit, integration, compatibility, release-gate, and

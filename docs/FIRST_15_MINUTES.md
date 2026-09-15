@@ -28,11 +28,14 @@ Start with these docs in order:
 2. This guide: the 15-minute reading and inspection path.
 3. [Quickstart](QUICKSTART.md): the command-by-command local runbook.
 4. [MVP Acceptance](MVP_ACCEPTANCE.md): the fixed six-case public-MVP gate.
-5. [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md): review inventory
+5. [Portfolio Demo](PORTFOLIO_DEMO.md): the three-request school/event story
+   to show after the first API response works.
+6. [Optional Evidence Handoff](OPTIONAL_EVIDENCE_HANDOFF.md): review inventory
    for optional evidence.
 
 The mental model is simple: README orients you, this guide tells you what to
-notice first, Quickstart gets the system running, and MVP Acceptance defines the
+notice first, Quickstart gets the system running, Portfolio Demo turns the
+baseline into a demo-ready school/event story, and MVP Acceptance defines the
 fixed gate.
 
 ## Minute 3-8: Start The Baseline
@@ -126,7 +129,9 @@ Success means:
 - event items include `event_id` and `event_title`
 
 After that, use [Quickstart](QUICKSTART.md) sections 8-10 to compare
-placements, track one user event, and choose the next document.
+placements, track one user event, and choose the next document. If the goal is
+a portfolio walkthrough, continue with [Portfolio Demo](PORTFOLIO_DEMO.md)
+before broadening to optional paths.
 
 ## Fixed vs Optional
 
