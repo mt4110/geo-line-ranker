@@ -46,6 +46,7 @@ Run these from the repository root after reading the first-run path:
 |---|---|---|
 | Run the baseline locally | [First 15 Minutes](FIRST_15_MINUTES.md), then `just setup` and `just dev` | [Quickstart](QUICKSTART.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
 | Show the portfolio demo | [Portfolio Demo](PORTFOLIO_DEMO.md) | [Local Discovery Generic](../examples/local-discovery-generic/README.md), [Reason Catalog](REASON_CATALOG.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
+| Review M3 release evidence | [M3 Release Evidence 2026-09-15](M3_RELEASE_EVIDENCE_2026-09-15.md) | [MVP Acceptance](MVP_ACCEPTANCE.md), [Testing](TESTING.md), [Operations](OPERATIONS.md) |
 | Geocode school addresses without external APIs for ZIP handoff | [School Geocoding RunBook (JA)](SCHOOL_GEOCODING_RUNBOOK_JA.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md) |
 | Make a bounded code change | [Local Contributing Guide](CONTRIBUTING_LOCAL.md), then `just smoke` | [Testing](TESTING.md), [Architecture](ARCHITECTURE.md) |
 | Check docs routing | `just docs` | [First 15 Minutes](FIRST_15_MINUTES.md), [Quickstart](QUICKSTART.md), [Testing](TESTING.md) |
@@ -117,6 +118,8 @@ workspace easy to verify, but they do not change the fixed public-MVP boundary.
 
 - [Operations](OPERATIONS.md): service operation, profiles, replay evaluation,
   worker recovery, imports, crawler notes, and Docker notes.
+- [M3 Release Evidence 2026-09-15](M3_RELEASE_EVIDENCE_2026-09-15.md):
+  captured release-candidate evidence for the current public-MVP boundary.
 - [School Geocoding RunBook (JA)](SCHOOL_GEOCODING_RUNBOOK_JA.md): external API-free
   school address geocoding handoff flow for Rust backend operators.
 - [MVP Acceptance](MVP_ACCEPTANCE.md): fixed SQL-only public-MVP gate.
