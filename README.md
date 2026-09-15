@@ -1,5 +1,6 @@
 # geo-line-ranker
 
+学校説明会・地域探索の説明可能ランキングエンジンです。
 地域探索向けの、地理優先・路線優先の決定論的推薦エンジンです。
 PostgreSQL/PostGIS を基準ストアにし、最終ランキングは Rust 内に閉じます。Redis は任意の cache、OpenSearch は full mode の候補取得だけに使い、allowlist crawler は任意の補助経路として扱います。AI / ML / embeddings / vector search は使いません。
 
@@ -111,6 +112,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 次に読む docs:
 
 - [First 15 Minutes](docs/FIRST_15_MINUTES.md): 初回 contributor / operator 向けの読む順、起動順、sample inspection、touch map
+- [Portfolio Demo](docs/PORTFOLIO_DEMO.md): `school-event-jp` を主役にした学校イベント推薦の3リクエスト demo pack
 - [Quickstart](docs/QUICKSTART.md): 初回運用者向けの順序つき local runbook
 - [MVP Acceptance](docs/MVP_ACCEPTANCE.md): 固定 public-MVP gate
 - [Operations](docs/OPERATIONS.md): worker jobs、replay、doctor、運用確認
@@ -177,6 +179,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 - [English README](README_EN.md)
 - [Documentation Index](docs/README.md)
 - [Profile Packs](docs/PROFILE_PACKS.md)
+- [Portfolio Demo](docs/PORTFOLIO_DEMO.md)
 - [Local Discovery Generic](examples/local-discovery-generic/README.md)
 - [School Event JP Reference](examples/school-event-jp/README.md)
 - [Reason Catalog](docs/REASON_CATALOG.md)

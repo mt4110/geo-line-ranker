@@ -1,5 +1,6 @@
 # geo-line-ranker
 
+Explainable ranking engine for school event and local discovery demos.
 Deterministic geo-first and line-first recommendation engine for local discovery.
 PostgreSQL/PostGIS is the reference store, ranking stays inside Rust, Redis is optional cache only, OpenSearch is optional candidate retrieval for full mode, and allowlist crawl remains an optional side path. No AI, ML, embeddings, or vector search.
 
@@ -163,6 +164,7 @@ imports, and config.
 
 - [Japanese README](README.md)
 - [Documentation Index](docs/README.md): audience and task map
+- [Portfolio Demo](docs/PORTFOLIO_DEMO.md): `school-event-jp` three-request demo pack
 - [Non-engineer Friendly Design Docs](docs/design_document/README_JA.md)
 - [Contributor Rules](AGENTS.md)
 - [First 15 Minutes](docs/FIRST_15_MINUTES.md)

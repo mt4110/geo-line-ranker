@@ -11,6 +11,7 @@ required_files=(
   README_EN.md
   docs/README.md
   docs/FIRST_15_MINUTES.md
+  docs/PORTFOLIO_DEMO.md
   docs/QUICKSTART.md
   docs/CONTRIBUTING_LOCAL.md
   docs/TESTING.md
