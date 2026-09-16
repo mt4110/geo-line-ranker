@@ -11,6 +11,7 @@ audience and task. For the actual first-run sequence, use
 | [Project README](../README.md) | First impression, project principles, shortest local path, and the first success state. |
 | [First 15 Minutes](FIRST_15_MINUTES.md) | The first reading path, baseline commands, default sample inspection, fixed-vs-optional boundary, and touch map. |
 | [Portfolio Demo](PORTFOLIO_DEMO.md) | Three-request default-profile story for showing station, line, and area-driven school/event ranking. |
+| [v0.3.0 Release Notes Draft](RELEASE_NOTES_v0.3.0.md) | Public release note draft for the portfolio-ready release after M4 polish and M5 publication approval. |
 | This index | Choosing the next document by audience or by task after the first-run guide. |
 | [Quickstart](QUICKSTART.md) | Command-by-command local runbook for the SQL-only public-MVP path and optional follow-on paths. |
 
@@ -47,6 +48,7 @@ Run these from the repository root after reading the first-run path:
 | Run the baseline locally | [First 15 Minutes](FIRST_15_MINUTES.md), then `just setup` and `just dev` | [Quickstart](QUICKSTART.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
 | Show the portfolio demo | [Portfolio Demo](PORTFOLIO_DEMO.md) | [Local Discovery Generic](../examples/local-discovery-generic/README.md), [Reason Catalog](REASON_CATALOG.md), [MVP Acceptance](MVP_ACCEPTANCE.md) |
 | Review M3 release evidence | [M3 Release Evidence 2026-09-15](M3_RELEASE_EVIDENCE_2026-09-15.md) | [MVP Acceptance](MVP_ACCEPTANCE.md), [Testing](TESTING.md), [Operations](OPERATIONS.md) |
+| Prepare v0.3.0 publication | [v0.3.0 Release Notes Draft](RELEASE_NOTES_v0.3.0.md) | [M3 Release Evidence 2026-09-15](M3_RELEASE_EVIDENCE_2026-09-15.md), [Portfolio Demo](PORTFOLIO_DEMO.md), [Testing](TESTING.md) |
 | Geocode school addresses without external APIs for ZIP handoff | [School Geocoding RunBook (JA)](SCHOOL_GEOCODING_RUNBOOK_JA.md) | [Quickstart](QUICKSTART.md), [Operations](OPERATIONS.md), [Local Contributing Guide](CONTRIBUTING_LOCAL.md) |
 | Make a bounded code change | [Local Contributing Guide](CONTRIBUTING_LOCAL.md), then `just smoke` | [Testing](TESTING.md), [Architecture](ARCHITECTURE.md) |
 | Check docs routing | `just docs` | [First 15 Minutes](FIRST_15_MINUTES.md), [Quickstart](QUICKSTART.md), [Testing](TESTING.md) |
@@ -120,6 +122,9 @@ workspace easy to verify, but they do not change the fixed public-MVP boundary.
   worker recovery, imports, crawler notes, and Docker notes.
 - [M3 Release Evidence 2026-09-15](M3_RELEASE_EVIDENCE_2026-09-15.md):
   captured release-candidate evidence for the current public-MVP boundary.
+- [v0.3.0 Release Notes Draft](RELEASE_NOTES_v0.3.0.md): release notes,
+  metadata suggestions, evidence summary, and publication checklist for the
+  portfolio-ready release.
 - [School Geocoding RunBook (JA)](SCHOOL_GEOCODING_RUNBOOK_JA.md): external API-free
   school address geocoding handoff flow for Rust backend operators.
 - [MVP Acceptance](MVP_ACCEPTANCE.md): fixed SQL-only public-MVP gate.
