@@ -182,8 +182,8 @@ The API exposes:
 
 ## Docker Runtime Notes
 
-The committed Dockerfiles build release binaries in a Rust builder stage, then
-run slim runtime images as a non-root user. The compose files set
+The committed Dockerfiles build release binaries in a current stable Rust
+builder stage, then run slim runtime images as a non-root user. The compose files set
 `no-new-privileges`, drop Linux capabilities for app containers, and mount
 `/tmp` as writable tmpfs while keeping the container filesystem read-only.
 

@@ -4,6 +4,18 @@
 地域探索向けの、地理優先・路線優先の決定論的推薦エンジンです。
 PostgreSQL/PostGIS を基準ストアにし、最終ランキングは Rust 内に閉じます。Redis は任意の cache、OpenSearch は full mode の候補取得だけに使い、allowlist crawler は任意の補助経路として扱います。AI / ML / embeddings / vector search は使いません。
 
+## Portfolio path
+
+外から見るときは、まずこの順で確認します。
+
+- [First 15 Minutes](docs/FIRST_15_MINUTES.md): SQL-only + PostgreSQL/PostGIS + Redis の最短起動
+- [Portfolio Demo](docs/PORTFOLIO_DEMO.md): `st_tamachi`、`JR Yamanote Line`、`Minato` の3リクエスト demo
+- [M3 Release Evidence 2026-09-15](docs/M3_RELEASE_EVIDENCE_2026-09-15.md): public-MVP gate と strict data-quality CI 証跡
+- [v0.3.0 Release Notes Draft](docs/RELEASE_NOTES_v0.3.0.md): tag / GitHub Release 前の公開文面
+
+成功状態は、Swagger UI が開き、`POST /v1/recommendations` が非空の
+`items`、`fallback_stage`、`candidate_counts`、stable reason codes を返すことです。
+
 ## 現在の中身
 
 - `api` / `cli` / `worker` / `crawler` を含む Rust workspace
@@ -118,6 +130,7 @@ curl -X POST http://127.0.0.1:4000/v1/track \
 - [Operations](docs/OPERATIONS.md): worker jobs、replay、doctor、運用確認
 - [Optional Evidence Handoff](docs/OPTIONAL_EVIDENCE_HANDOFF.md): crawler/full/OpenSearch/managed infrastructure などの任意証跡の handoff
 - [Documentation Index](docs/README.md): audience / task 別の読み先
+- [v0.3.0 Release Notes Draft](docs/RELEASE_NOTES_v0.3.0.md): release publication 前に確認する公開文面
 
 ## Response 例
 
