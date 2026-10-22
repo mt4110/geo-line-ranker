@@ -58,6 +58,16 @@ PostgreSQL/PostGIS を基準ストアにし、最終ランキングは Rust 内�
 - `article` は候補種別として予約されていますが、現在は profile pack と ranking config の両方で明示的に拒否します。`supported_content_kinds`、`enabled_content_kinds`、`score_boosts`、`content_kind_max_ratio` に `article` を追加するには、記事 read model、dataset 入力、scoring / diversity tests、fixtures、API の形が変わる場合の OpenAPI / API docs を同じ変更で用意します。
 - release candidate の判断は `just release-readiness` で手順を確認し、`just mvp-acceptance` を固定ゲート、`DATA_QUALITY_FAIL_ON_WARNING=true just data-quality-doctor` を必須証跡として扱います。
 
+## Nix Node.js environment
+
+`nix develop` provides Node.js 22.23.4 with shared Brotli 1.2.1 from a separate,
+locked nixpkgs 26.05 security backport. The existing Rust toolchain input stays
+unchanged. This includes the [2026-10-21 Node.js security update](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases).
+
+Run `nix flake check` to check the actual Node/Brotli versions and a basic
+compression/decompression round trip. This functionality check is not an exploit
+regression test.
+
 ## Quickstart
 
 最初の 15 分の読み方は [docs/FIRST_15_MINUTES.md](docs/FIRST_15_MINUTES.md)、
